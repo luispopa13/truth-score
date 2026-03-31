@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+<meta charset="UTF-8"/>
+<title>TruthScore – Configurare</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#0f0f13;--bg2:#1a1a24;--bg3:#22222f;--border:#2e2e40;--text:#e8e8f0;--text2:#9090a8;--accent:#6c63ff;--green:#22c55e;--radius:10px}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;min-height:100vh;display:flex;justify-content:center;padding:40px 20px}
+.container{width:100%;max-width:580px}
+.logo{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.logo-icon{width:36px;height:36px;background:linear-gradient(135deg,#6c63ff,#a855f7);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px}
+h1{font-size:22px;font-weight:700}
+.sub{color:var(--text2);font-size:13px;margin-bottom:28px}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px}
+.card-title{font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:14px}
+.field{margin-bottom:14px}
+label{display:block;font-size:12px;color:var(--text2);margin-bottom:5px;font-weight:500}
+input[type=text],input[type=url]{width:100%;padding:9px 12px;background:var(--bg3);border:1.5px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;outline:none;transition:border-color .2s;font-family:monospace}
+input:focus{border-color:var(--accent)}
+input::placeholder{color:#505068;font-family:inherit}
+.help{font-size:11px;color:var(--text2);margin-top:4px}
+.help a{color:var(--accent);text-decoration:none}
+.help a:hover{text-decoration:underline}
+.btn-row{display:flex;gap:8px;align-items:center;margin-top:20px}
+.btn-save{background:var(--accent);color:#fff;padding:9px 22px;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;transition:background .2s}
+.btn-save:hover{background:#7c74ff}
+.btn-test{background:var(--bg3);color:var(--text2);border:1px solid var(--border);padding:9px 16px;border-radius:8px;font-size:13px;cursor:pointer;transition:all .2s}
+.btn-test:hover{color:var(--text)}
+.toast{display:none;padding:10px 14px;background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.3);color:var(--green);border-radius:8px;font-size:13px;margin-top:12px}
+.toast.active{display:block}
+.test-result{display:none;padding:10px 14px;border-radius:8px;font-size:12px;margin-top:8px;border:1px solid}
+.test-result.ok{background:rgba(34,197,94,.08);border-color:rgba(34,197,94,.25);color:var(--green)}
+.test-result.err{background:rgba(239,68,68,.08);border-color:rgba(239,68,68,.25);color:#fca5a5}
+.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;margin-left:6px}
+.badge-free{background:rgba(34,197,94,.15);color:var(--green);border:1px solid rgba(34,197,94,.3)}
+.badge-opt{background:rgba(108,99,255,.15);color:#a0a0ff;border:1px solid rgba(108,99,255,.3)}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="logo">
+    <div class="logo-icon">🔍</div>
+    <div>
+      <h1>TruthScore</h1>
+      <div class="sub">Configurare API — MSc Thesis</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">🐍 Backend Python <span class="badge badge-opt">necesar</span></div>
+    <div class="field">
+      <label>URL Backend FastAPI</label>
+      <input type="url" id="backendUrl" placeholder="http://localhost:8000" value="http://localhost:8000"/>
+      <div class="help">Rulează backendrul: <code style="color:#a0a0ff">uvicorn main:app --reload</code></div>
+    </div>
+    <button class="btn-test" onclick="testBackend()">🔌 Test conexiune</button>
+    <div class="test-result" id="testResult"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">🤖 HuggingFace <span class="badge badge-free">gratis</span></div>
+    <div class="field">
+      <label>HF Token (setat în .env pe backend)</label>
+      <input type="text" id="hfInfo" placeholder="Setat în truthscore-backend/.env" disabled style="opacity:.5"/>
+      <div class="help">
+        Model: <strong style="color:#a0a0ff">MoritzLaurer/deberta-v3-large-zeroshot-v2</strong><br>
+        Obține token gratuit: <a href="https://huggingface.co/settings/tokens" target="_blank">huggingface.co/settings/tokens</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">🔎 Google Fact Check <span class="badge badge-free">gratis</span></div>
+    <div class="field">
+      <label>Google API Key (setat în .env pe backend)</label>
+      <input type="text" id="gcInfo" placeholder="Setat în truthscore-backend/.env" disabled style="opacity:.5"/>
+      <div class="help">
+        Activează <em>Fact Check Tools API</em> în:
+        <a href="https://console.cloud.google.com/apis/library/factchecktools.googleapis.com" target="_blank">Google Cloud Console</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="btn-row">
+    <button class="btn-save" onclick="saveSettings()">💾 Salvează</button>
+  </div>
+  <div class="toast" id="toast">✅ Salvat cu succes!</div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  chrome.storage.sync.get(['backendUrl'], r => {
+    if (r.backendUrl) document.getElementById('backendUrl').value = r.backendUrl;
+  });
+});
+
+function saveSettings() {
+  chrome.storage.sync.set({
+    backendUrl: document.getElementById('backendUrl').value.trim() || 'http://localhost:8000',
+  }, () => {
+    const t = document.getElementById('toast');
+    t.classList.add('active');
+    setTimeout(() => t.classList.remove('active'), 3000);
+  });
+}
+
+async function testBackend() {
+  const url = document.getElementById('backendUrl').value.trim() || 'http://localhost:8000';
+  const el = document.getElementById('testResult');
+  el.style.display = 'block';
+  el.className = 'test-result';
+  el.textContent = '⏳ Se testează conexiunea...';
+  try {
+    const r = await fetch(`${url}/health`);
+    const d = await r.json();
+    el.className = 'test-result ok';
+    el.textContent = `✅ Backend online! Model: ${d.model || 'N/A'}`;
+  } catch {
+    el.className = 'test-result err';
+    el.textContent = '❌ Nu s-a putut conecta. Verifică dacă backendrul rulează.';
+  }
+}
+</script>
+</body>
+</html>

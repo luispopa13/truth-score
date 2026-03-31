@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TruthScore</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f0f13;
+      --bg2: #1a1a24;
+      --bg3: #22222f;
+      --border: #2e2e40;
+      --text: #e8e8f0;
+      --text2: #9090a8;
+      --accent: #6c63ff;
+      --green: #22c55e;
+      --yellow: #f59e0b;
+      --red: #ef4444;
+      --radius: 10px;
+    }
+
+    body {
+      width: 380px;
+      min-height: 480px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    /* ── Header ── */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 16px 12px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg2);
+    }
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 700;
+      font-size: 16px;
+      letter-spacing: -0.3px;
+    }
+    .logo-icon {
+      width: 28px; height: 28px;
+      background: linear-gradient(135deg, #6c63ff, #a855f7);
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px;
+    }
+    .logo-sub { font-size: 11px; color: var(--text2); font-weight: 400; }
+    .settings-btn {
+      background: none; border: none; cursor: pointer;
+      color: var(--text2); font-size: 16px; padding: 4px;
+      border-radius: 6px; transition: color 0.2s;
+    }
+    .settings-btn:hover { color: var(--text); }
+
+    /* ── Main content ── */
+    .content { padding: 16px; }
+
+    /* Input area */
+    .input-wrapper {
+      position: relative;
+      margin-bottom: 12px;
+    }
+    textarea {
+      width: 100%;
+      min-height: 90px;
+      padding: 10px 12px;
+      background: var(--bg3);
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-size: 13px;
+      font-family: inherit;
+      resize: vertical;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    textarea::placeholder { color: var(--text2); }
+    textarea:focus { border-color: var(--accent); }
+
+    .input-actions {
+      display: flex; gap: 8px; margin-bottom: 12px;
+    }
+    .btn {
+      padding: 8px 14px;
+      border: none; border-radius: 8px;
+      cursor: pointer; font-size: 13px; font-weight: 600;
+      transition: all 0.2s;
+    }
+    .btn-primary {
+      background: var(--accent); color: #fff;
+      flex: 1;
+    }
+    .btn-primary:hover { background: #7c74ff; }
+    .btn-primary:disabled {
+      background: var(--bg3); color: var(--text2); cursor: not-allowed;
+    }
+    .btn-secondary {
+      background: var(--bg3); color: var(--text2);
+      border: 1px solid var(--border);
+    }
+    .btn-secondary:hover { color: var(--text); border-color: var(--text2); }
+
+    /* Loading */
+    .loading {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      padding: 24px 0;
+    }
+    .loading.active { display: flex; }
+    .spinner {
+      width: 32px; height: 32px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-text { color: var(--text2); font-size: 12px; }
+
+    /* Result */
+    .result { display: none; }
+    .result.active { display: block; }
+
+    /* Score ring */
+    .score-section {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 14px;
+      background: var(--bg3);
+      border-radius: var(--radius);
+      margin-bottom: 12px;
+      border: 1px solid var(--border);
+    }
+    .score-ring {
+      position: relative;
+      width: 72px; height: 72px;
+      flex-shrink: 0;
+    }
+    .score-ring svg { transform: rotate(-90deg); }
+    .score-ring-bg { fill: none; stroke: var(--border); stroke-width: 5; }
+    .score-ring-fill { fill: none; stroke-width: 5; stroke-linecap: round;
+      transition: stroke-dashoffset 0.8s ease, stroke 0.5s;
+    }
+    .score-number {
+      position: absolute; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px; font-weight: 800;
+    }
+    .score-info { flex: 1; min-width: 0; }
+    .verdict-badge {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 3px 10px;
+      border-radius: 20px;
+      font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+      margin-bottom: 6px;
+    }
+    .verdict-TRUE { background: rgba(34,197,94,0.15); color: var(--green); border: 1px solid rgba(34,197,94,0.3); }
+    .verdict-FALSE { background: rgba(239,68,68,0.15); color: var(--red); border: 1px solid rgba(239,68,68,0.3); }
+    .verdict-UNCERTAIN { background: rgba(245,158,11,0.15); color: var(--yellow); border: 1px solid rgba(245,158,11,0.3); }
+    .verdict-ERROR { background: rgba(100,100,120,0.2); color: var(--text2); border: 1px solid var(--border); }
+    .explanation { font-size: 12px; color: var(--text2); line-height: 1.5; }
+
+    /* Sources */
+    .sources-label {
+      font-size: 11px; font-weight: 600; color: var(--text2);
+      letter-spacing: 0.5px; text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+    .sources-list { display: flex; flex-direction: column; gap: 6px; }
+    .source-item {
+      display: flex; align-items: flex-start; gap: 8px;
+      padding: 8px 10px;
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      text-decoration: none;
+      color: var(--text);
+      transition: border-color 0.2s;
+    }
+    .source-item:hover { border-color: var(--accent); }
+    .source-icon { font-size: 14px; flex-shrink: 0; margin-top: 1px; }
+    .source-title {
+      font-size: 12px; font-weight: 500;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      max-width: 240px;
+    }
+    .source-meta { font-size: 11px; color: var(--text2); }
+    .source-rating {
+      font-size: 10px; font-weight: 700; padding: 1px 6px;
+      border-radius: 10px; margin-left: auto; flex-shrink: 0;
+    }
+    .rating-high { background: rgba(34,197,94,0.15); color: var(--green); }
+    .rating-medium { background: rgba(245,158,11,0.15); color: var(--yellow); }
+    .rating-low { background: rgba(239,68,68,0.15); color: var(--red); }
+
+    /* AI breakdown */
+    .breakdown {
+      margin-top: 12px;
+      padding: 10px 12px;
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+    }
+    .breakdown-title { font-size: 11px; color: var(--text2); font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+    .breakdown-row {
+      display: flex; align-items: center; gap: 8px;
+      margin-bottom: 5px; font-size: 11px;
+    }
+    .breakdown-label { flex: 1; color: var(--text2); }
+    .breakdown-bar-bg {
+      width: 100px; height: 5px;
+      background: var(--border); border-radius: 3px; overflow: hidden;
+    }
+    .breakdown-bar { height: 100%; border-radius: 3px;
+      transition: width 0.6s ease; }
+    .breakdown-pct { width: 30px; text-align: right; color: var(--text); }
+
+    /* No result yet */
+    .empty-state {
+      text-align: center; padding: 28px 16px; color: var(--text2);
+    }
+    .empty-icon { font-size: 36px; margin-bottom: 8px; }
+    .empty-title { font-size: 14px; color: var(--text); font-weight: 600; margin-bottom: 4px; }
+    .empty-desc { font-size: 12px; }
+
+    /* Error */
+    .error-box {
+      display: none;
+      padding: 10px 12px;
+      background: rgba(239,68,68,0.1);
+      border: 1px solid rgba(239,68,68,0.25);
+      border-radius: 8px;
+      color: #fca5a5;
+      font-size: 12px;
+      margin-bottom: 10px;
+    }
+    .error-box.active { display: block; }
+
+    /* Footer */
+    .footer {
+      border-top: 1px solid var(--border);
+      padding: 8px 16px;
+      display: flex; justify-content: space-between; align-items: center;
+      background: var(--bg2);
+    }
+    .footer-model { font-size: 10px; color: var(--text2); }
+    .footer-link { font-size: 10px; color: var(--accent); text-decoration: none; cursor: pointer; }
+    .footer-link:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <div class="logo">
+    <div class="logo-icon">🔍</div>
+    <div>
+      <div>TruthScore</div>
+      <div class="logo-sub">AI Fact Checker</div>
+    </div>
+  </div>
+  <button class="settings-btn" id="openSettings" title="Setări">⚙️</button>
+</div>
+
+<div class="content">
+  <div class="input-wrapper">
+    <textarea id="claimInput" placeholder="Introdu o afirmație pentru verificare...&#10;&#10;Ex: „Temperatura medie globală a crescut cu 1.1°C față de nivelul preindustrial."" maxlength="500"></textarea>
+  </div>
+
+  <div class="input-actions">
+    <button class="btn btn-secondary" id="pasteBtn" title="Lipește textul selectat din pagină">📋 Din pagină</button>
+    <button class="btn btn-primary" id="verifyBtn">Verifică</button>
+  </div>
+
+  <div class="error-box" id="errorBox"></div>
+
+  <!-- Loading -->
+  <div class="loading" id="loading">
+    <div class="spinner"></div>
+    <div class="loading-text" id="loadingText">Se analizează afirmația...</div>
+  </div>
+
+  <!-- Empty state -->
+  <div class="empty-state" id="emptyState">
+    <div class="empty-icon">🛡️</div>
+    <div class="empty-title">Nicio verificare activă</div>
+    <div class="empty-desc">Introdu o afirmație sau selectează text<br>pe orice pagină web cu click-dreapta.</div>
+  </div>
+
+  <!-- Result -->
+  <div class="result" id="result">
+    <div class="score-section">
+      <div class="score-ring">
+        <svg width="72" height="72" viewBox="0 0 72 72">
+          <circle class="score-ring-bg" cx="36" cy="36" r="30"/>
+          <circle class="score-ring-fill" id="scoreRingFill" cx="36" cy="36" r="30"
+            stroke-dasharray="188.5" stroke-dashoffset="188.5"/>
+        </svg>
+        <div class="score-number" id="scoreNumber">–</div>
+      </div>
+      <div class="score-info">
+        <div class="verdict-badge verdict-UNCERTAIN" id="verdictBadge">⏳ ANALIZĂ</div>
+        <div class="explanation" id="explanationText">–</div>
+      </div>
+    </div>
+
+    <!-- NLI Breakdown -->
+    <div class="breakdown" id="breakdown" style="display:none">
+      <div class="breakdown-title">🤖 Model NLI (DeBERTa-v3)</div>
+      <div id="breakdownRows"></div>
+    </div>
+
+    <!-- Sources -->
+    <div id="sourcesSection" style="margin-top:12px; display:none">
+      <div class="sources-label">📚 Surse & Evidențe</div>
+      <div class="sources-list" id="sourcesList"></div>
+    </div>
+  </div>
+</div>
+
+<div class="footer">
+  <span class="footer-model" id="modelLabel">Model: DeBERTa-v3-large ZS</span>
+  <a class="footer-link" id="openOptions">Configurare API →</a>
+</div>
+
+<script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+﻿truthscore-backend/.env
+truthscore-backend/.cache/
+truthscore-backend/__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+.DS_Store
+Thumbs.db
