@@ -493,48 +493,181 @@ async def ads_txt():
         f"google.com, pub-{pub}, DIRECT, f08c47fec0942fa0\n")
 
 
-_PRIVACY_HTML = """<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>TruthScore — Privacy Policy</title>
-<style>body{font-family:system-ui,sans-serif;max-width:720px;margin:40px auto;padding:0 20px;line-height:1.6;color:#222}
-h1{font-size:26px}h2{font-size:18px;margin-top:28px}a{color:#5b6cff}</style></head><body>
-<h1>TruthScore — Privacy Policy</h1>
-<p>Last updated: August 2026. This policy covers the TruthScore website, dashboard
-and browser extension ("the Service").</p>
+_PRIVACY_HTML = """<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Privacy Policy — TruthScore</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Syne:wght@700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#080810;--bg2:#0e0e1a;--bg3:#141424;--bg4:#1a1a2e;
+--text:#f0f0fa;--text2:#7878a0;--text3:#3a3a60;
+--accent:#5b4eff;--accent-h:#7060ff;--accent2:#8b5cf6;
+--border:rgba(255,255,255,.05);--border2:rgba(255,255,255,.09);--border3:rgba(255,255,255,.14)}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--text);font-family:'Inter',-apple-system,sans-serif;
+line-height:1.75;font-size:15px;-webkit-font-smoothing:antialiased}
+body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;background:
+radial-gradient(640px 320px at 12% -6%,rgba(91,78,255,.15),transparent 62%),
+radial-gradient(720px 360px at 92% 8%,rgba(139,92,246,.10),transparent 62%)}
+.wrap{position:relative;z-index:1;max-width:880px;margin:0 auto;padding:0 22px}
+nav{position:sticky;top:0;z-index:20;background:rgba(8,8,16,.84);border-bottom:1px solid var(--border);
+backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
+nav .wrap{display:flex;align-items:center;justify-content:space-between;height:64px}
+.brand{display:flex;align-items:center;gap:11px;text-decoration:none;color:var(--text)}
+.mark{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;color:#fff;
+font-family:'Syne',sans-serif;font-weight:800;font-size:16px;
+background:linear-gradient(135deg,var(--accent),var(--accent2));
+box-shadow:0 4px 16px rgba(91,78,255,.35)}
+.bname{font-family:'Syne',sans-serif;font-weight:700;font-size:17px;letter-spacing:-.3px}
+.pill{font-size:13px;font-weight:600;text-decoration:none;color:var(--text2);
+border:1px solid var(--border2);padding:8px 16px;border-radius:99px;transition:.18s}
+.pill:hover{color:var(--text);border-color:var(--border3);background:rgba(255,255,255,.03)}
+header{padding:56px 0 8px}
+.badge{display:inline-flex;align-items:center;gap:7px;font-family:'JetBrains Mono',monospace;
+font-size:11px;color:var(--accent-h);border:1px solid rgba(91,78,255,.35);
+background:rgba(91,78,255,.08);padding:5px 12px;border-radius:99px;margin-bottom:18px}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--accent2)}
+h1{font-family:'Syne',sans-serif;font-size:clamp(28px,5vw,40px);letter-spacing:-.8px;line-height:1.15}
+.sub{color:var(--text2);max-width:660px;margin-top:12px;font-size:15.5px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin:34px 0 8px}
+.card{background:linear-gradient(180deg,var(--bg2),var(--bg3));border:1px solid var(--border2);
+border-radius:14px;padding:18px 18px 15px;transition:.18s}
+.card:hover{border-color:var(--border3);transform:translateY(-2px)}
+.card .ic{width:36px;height:36px;border-radius:10px;display:grid;place-items:center;font-size:17px;
+background:rgba(91,78,255,.12);border:1px solid rgba(91,78,255,.25);margin-bottom:11px}
+.card b{display:block;font-size:13.5px;margin-bottom:3px}
+.card span{font-size:12.5px;color:var(--text2);line-height:1.55;display:block}
+.toc{display:flex;flex-wrap:wrap;gap:8px;margin:26px 0 36px}
+.toc a{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text2);text-decoration:none;
+border:1px solid var(--border2);border-radius:99px;padding:6px 13px;transition:.15s}
+.toc a:hover{color:var(--text);border-color:var(--accent);background:rgba(91,78,255,.07)}
+h2{font-family:'Syne',sans-serif;font-size:19px;letter-spacing:-.3px}
+section{background:linear-gradient(180deg,var(--bg2),var(--bg3));border:1px solid var(--border2);
+border-radius:18px;padding:30px 32px;margin:16px 0;scroll-margin-top:84px;transition:.18s}
+section:hover{border-color:var(--border3)}
+.sh{display:flex;align-items:center;gap:13px;margin-bottom:14px}
+.num{width:30px;height:30px;flex-shrink:0;border-radius:9px;display:grid;place-items:center;
+font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;color:var(--accent-h);
+background:rgba(91,78,255,.10);border:1px solid rgba(91,78,255,.30)}
+section p{color:#b8b8d4;margin-top:10px}
+section p:first-of-type{margin-top:0}
+ul{list-style:none;margin-top:10px}
+li{position:relative;padding:5px 0 5px 24px;color:#b8b8d4}
+li::before{content:'▸';position:absolute;left:2px;color:var(--accent);font-size:12px}
+li b{color:var(--text);font-weight:600}
+.vendors{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.vend{font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--text2);
+border:1px solid var(--border2);background:var(--bg4);border-radius:8px;padding:7px 12px}
+.vend em{font-style:normal;color:var(--text)}
+.contact{border-radius:18px;padding:1px;margin:32px 0 26px;
+background:linear-gradient(135deg,rgba(91,78,255,.55),rgba(139,92,246,.30))}
+.contact-in{border-radius:17px;background:linear-gradient(180deg,var(--bg2),var(--bg3));
+padding:30px 32px;display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap}
+.contact-in h3{font-family:'Syne',sans-serif;font-size:19px}
+.contact-in p{color:var(--text2);font-size:13.5px;margin-top:4px}
+.cta{white-space:nowrap;text-decoration:none;font-weight:600;font-size:14px;color:#fff;
+background:linear-gradient(135deg,var(--accent),var(--accent2));
+box-shadow:0 4px 18px rgba(91,78,255,.35);padding:12px 24px;border-radius:11px;transition:.18s}
+.cta:hover{filter:brightness(1.12);transform:translateY(-1px)}
+footer{border-top:1px solid var(--border);margin-top:10px}
+footer .wrap{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;
+padding-top:26px;padding-bottom:36px;color:var(--text3);font-size:12.5px}
+footer a{color:var(--text2);text-decoration:none}
+footer a:hover{color:var(--text)}
+@media(max-width:560px){section{padding:24px 20px}}
+</style></head><body>
 
-<h2>1. What we collect</h2>
+<nav><div class="wrap">
+<a class="brand" href="/"><span class="mark">T</span><span class="bname">TruthScore</span></a>
+<a class="pill" href="/">← Back to app</a>
+</div></nav>
+
+<div class="wrap">
+<header>
+<span class="badge"><span class="dot"></span>LAST UPDATED · AUGUST 2026</span>
+<p class="sub">This policy covers the TruthScore website, dashboard and browser
+extension — together, "the Service". We collect the minimum data needed to verify
+claims, keep the Service abuse-free and comply with the law. No ads, no tracking
+pixels inside the extension.</p>
+
+<div class="cards">
+<div class="card"><div class="ic">🔐</div><b>Hashed passwords</b><span>Stored only as bcrypt hashes. Never readable — even by us.</span></div>
+<div class="card"><div class="ic">🚫</div><b>No data selling</b><span>We never sell or rent personal data to anyone, ever.</span></div>
+<div class="card"><div class="ic">🧩</div><b>Clean extension</b><span>No third-party ads injected into web pages you visit.</span></div>
+</div>
+
+<div class="toc">
+<a href="#collect">1 · What we collect</a><a href="#thirdparties">2 · Third parties</a>
+<a href="#never">3 · What we never do</a><a href="#rights">4 · Your rights</a>
+<a href="#contact">5 · Contact</a>
+</div>
+
+<section id="collect">
+<div class="sh"><span class="num">01</span><h2>What we collect</h2></div>
 <ul>
 <li><b>Account data:</b> email address, bcrypt-hashed password, display name (optional).</li>
-<li><b>Verification inputs:</b> the claims or paragraphs you submit, stored to improve
-verdict quality, build calibration statistics and prevent abuse.</li>
+<li><b>Verification inputs:</b> the claims or paragraphs you submit, stored to improve verdict quality, build calibration statistics and prevent abuse.</li>
 <li><b>Feedback:</b> thumbs up/down signals you optionally send.</li>
-<li><b>Usage counters:</b> daily verification counts, rate-limit identifiers (IP address).</li>
+<li><b>Usage counters:</b> daily verification counts and rate-limit identifiers (IP address).</li>
 </ul>
+</section>
 
-<h2>2. Third parties involved in processing</h2>
+<section id="thirdparties">
+<div class="sh"><span class="num">02</span><h2>Third parties involved in processing</h2></div>
 <ul>
-<li>Large language model and search providers (Google Gemini, Groq, Tavily) receive the
-claim text solely to produce a verdict.</li>
+<li>Language-model and search providers receive the claim text <b>solely to produce a verdict</b>.</li>
 <li>MongoDB Atlas hosts our database; Upstash may host our cache.</li>
-<li>Stripe processes payments — card details never reach our servers.</li>
-<li>The dashboard may show Google AdSense advertising to free-tier visitors; see Google's
-own privacy policy.</li>
+<li>Stripe processes payments — <b>card details never reach our servers</b>.</li>
+<li>The dashboard may show Google AdSense advertising to free-tier visitors (never in the extension).</li>
 </ul>
+<div class="vendors">
+<span class="vend"><em>Gemini</em> · reasoning</span>
+<span class="vend"><em>Groq</em> · inference</span>
+<span class="vend"><em>Tavily</em> · search</span>
+<span class="vend"><em>MongoDB Atlas</em> · storage</span>
+<span class="vend"><em>Upstash</em> · cache</span>
+<span class="vend"><em>Stripe</em> · payments</span>
+<span class="vend"><em>AdSense</em> · dashboard ads</span>
+</div>
+</section>
 
-<h2>3. What we never do</h2>
+<section id="never">
+<div class="sh"><span class="num">03</span><h2>What we never do</h2></div>
 <ul>
-<li>We never sell personal data.</li>
-<li>The browser extension does not inject third-party advertising into web pages.</li>
-<li>Passwords are stored only as bcrypt hashes.</li>
+<li>We never <b>sell or rent personal data</b> — to anyone, under any circumstances.</li>
+<li>The browser extension does not inject <b>third-party advertising</b> into web pages.</li>
+<li>Passwords are stored only as <b>bcrypt hashes</b> and are never recoverable.</li>
 </ul>
+</section>
 
-<h2>4. Your rights</h2>
-<p>You may request export or deletion of your account and associated logs at any time by
-contacting us. Deletion requests are honored within 30 days.</p>
+<section id="rights">
+<div class="sh"><span class="num">04</span><h2>Your rights</h2></div>
+<p>You may request export or deletion of your account and associated logs at any
+time. Deletion requests are honored within 30 days and confirmed by email.</p>
+<ul>
+<li><b>Access &amp; export:</b> receive a machine-readable copy of your data.</li>
+<li><b>Rectification:</b> correct inaccurate account details anytime.</li>
+<li><b>Erasure:</b> full account removal, including verification logs.</li>
+<li><b>Objection:</b> opt out of dashboard advertising by upgrading to any paid plan.</li>
+</ul>
+</section>
 
-<h2>5. Contact</h2>
-<p>Privacy inquiries: <b>TODO: your contact email</b></p>
-<p><a href="/">← Back to TruthScore</a></p>
+<div class="contact" id="contact"><div class="contact-in">
+<div>
+<h3>Privacy questions?</h3>
+<p>We answer every request within 30 days.</p>
+</div>
+<a class="cta" href="mailto:privacy@truthscore.app">privacy@truthscore.app</a>
+</div></div>
+
+</div><!-- /wrap -->
+
+<footer><div class="wrap">
+<span>© 2026 TruthScore · All rights reserved</span>
+<span><a href="/">Dashboard</a> · <a href="/privacy">Privacy</a> · <a href="/docs">API docs</a></span>
+</div></footer>
 </body></html>"""
 
 
