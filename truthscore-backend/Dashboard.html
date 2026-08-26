@@ -642,7 +642,7 @@ function renderTextAnalysis(d){
   const summary={...d,topic:'general',supporting:[],contradicting:[],neutral_sources:[],
     evidence_count:(d.results||[]).reduce((n,r)=>n+(r.evidence_count||0),0),sub_claims:[],word_importance:[],latency:{}};
   renderScore(summary);
-  if(!window._rcss){window._rcss=1;const st=document.createElement('style');st.textContent='.src-line{display:flex;gap:9px;align-items:center;padding:7px 10px;border-radius:10px;color:var(--text2);text-decoration:none;font-size:12px;border:1px solid transparent;margin-bottom:2px}.src-line:hover{background:rgba(255,255,255,.04);border-color:rgba(255,255,255,.08)}.src-line.hl{animation:srchl 1.5s ease}.src-num{font-family:"JetBrains Mono",monospace;font-size:10px;font-weight:700;color:#fff;background:linear-gradient(135deg,#5b4eff,#8b5cf6);min-width:22px;height:20px;display:inline-grid;place-items:center;border-radius:6px;flex-shrink:0}.src-pub{color:var(--text);font-weight:600;white-space:nowrap}.src-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.72;min-width:0}@keyframes srchl{0%,55%{background:rgba(91,78,255,.18);border-color:rgba(91,78,255,.55)}}.ref-chip{font-family:"JetBrains Mono",monospace;font-size:10px;font-weight:700;background:transparent;border:1px solid var(--border2);color:var(--text2);border-radius:6px;padding:2px 7px;cursor:pointer;margin-right:4px;transition:.15s}.ref-chip:hover{color:#fff;border-color:#5b4eff;background:rgba(91,78,255,.18)}.proc-step{display:flex;gap:10px;align-items:flex-start;padding:7px 0;font-size:12.5px;color:#b8b8d4}.proc-step b{color:var(--text)}';document.head.appendChild(st);}
+  if(!window._rcss){window._rcss=1;const st=document.createElement('style');st.textContent='.src-line{display:flex;gap:9px;align-items:center;padding:7px 10px;border-radius:10px;color:var(--text2);text-decoration:none;font-size:12px;border:1px solid transparent;margin-bottom:2px}.src-line:hover{background:rgba(255,255,255,.04);border-color:rgba(255,255,255,.08)}.src-line.hl{animation:srchl 1.5s ease}.src-num{font-family:"JetBrains Mono",monospace;font-size:10px;font-weight:700;color:#fff;background:linear-gradient(135deg,#5b4eff,#8b5cf6);min-width:22px;height:20px;display:inline-grid;place-items:center;border-radius:6px;flex-shrink:0}.src-pub{color:var(--text);font-weight:600;white-space:nowrap}.src-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.72;min-width:0}@keyframes srchl{0%,55%{background:rgba(91,78,255,.18);border-color:rgba(91,78,255,.55)}}.ref-chip{font-family:"JetBrains Mono",monospace;font-size:10px;font-weight:700;background:transparent;border:1px solid var(--border2);color:var(--text2);border-radius:6px;padding:2px 7px;cursor:pointer;margin-right:4px;transition:.15s}.ref-chip:hover{color:#fff;border-color:#5b4eff;background:rgba(91,78,255,.18)}.proc-step{display:flex;gap:10px;align-items:flex-start;padding:7px 0;font-size:12.5px;color:#b8b8d4}.proc-step b{color:var(--text)}.src-line{min-width:0}.src-title{min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis}.src-pub{max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.src-line a{min-width:0}/*src-wrap-fix*/';document.head.appendChild(st);}
   const reg=[],regMap=new Map();
   const refOf=s=>{if(!s)return null;const k=s.url||s.publisher||s.title;if(!k)return null;if(regMap.has(k))return regMap.get(k);const n=reg.push(s);regMap.set(k,n);return n;};
   (d.results||[]).forEach(r=>{['supporting','contradicting','neutral_sources'].forEach(k=>(r[k]||[]).forEach(s=>{const n=refOf(s);if(n){s._ref=n;s._stance=k==='supporting'?'ts':k==='contradicting'?'tc':'tn';}}));});
@@ -688,37 +688,7 @@ function renderAll(d){
   document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',i===0));
   document.querySelectorAll('.tab-panel').forEach((p,i)=>p.classList.toggle('active',i===0));
 }
-
-  /* ═══════════════════════════════════════════════════════════════
-     Explicații în limba română — decouple de backend NLI.
-  ─────────────────────────────────────────────────────────────── */
-  const EXPL = {};
-  EXPL.just = {
-    TRUE: "✅ Adevărat — sursele ne căiuiesc această informație.",
-    FALSE: "❌ Fals — sursele contrazic această afirmație.",
-    UNCERTAIN: "⚠️ Incert — nu am găsit suficiente dovezi clare.",
-    MIXED: "🔀 Amestecat — unele afirmații din text sunt corecte, altele greșite."
-  };
-  function romanianVerdict(v) { return EXPL.just[v] || EXPL.just.UNCERTAIN; }
-  function explRomanian(d) {
-    const v = d.verdict || d.aggregate_verdict || "UNCERTAIN";
-    const n = d.claim_count || (d.results ? d.results.length : 0) || 1;
-    const out = [];
-    if (v === "MIXED" && d.results && d.results.length) {
-      const t = d.results.filter(r => r.verdict === "TRUE").length;
-      const f = d.results.filter(r => r.verdict === "FALSE").length;
-      let summary = `🔬 Am verificat ${n} ${n>1?"afirmații":"afirmație"}. <b>${t} sunt adevărate</b>, <b>${f} sunt false</b>.`;
-      if (n - t - f) summary += `, <b>${n-t-f} sunt incerte</b>`;
-      out.push(summary);
-      out.push("Fiecare bucată are sursele ei proprii în secțiunea dedicată.");
-    } else {
-      out.push(`🔬 Deductibil din ${n} ${n>1?"fapte":"fapt"}: <b>${romanianVerdict(v)}</b>`);
-      if (d.results && d.results[0]) out.push(`"${d.results[0].claim||''}" — ${romanianVerdict(d.results[0].verdict)}.`);
-    }
-    return out.join(" ");
-  }
-
-  function renderScore(d){
+function renderScore(d){
   const score=d.score??50,verdict=d.verdict||'UNCERTAIN';
   const color=verdict==='TRUE'?'#10b981':verdict==='FALSE'?'#ef4444':verdict==='MIXED'?'#8b5cf6':'#f59e0b';
   const icon=verdict==='TRUE'?'✅':verdict==='FALSE'?'❌':verdict==='MIXED'?'🔀':'⚠️';
@@ -744,7 +714,7 @@ function renderAll(d){
         <div class="conf-line">${d.confidence==='HIGH'?'🟢 Confidență ridicată':d.confidence==='MEDIUM'?'🟡 Medie':'🔴 Scăzută'}${d.calibrated_confidence?' · '+d.calibrated_confidence:''}</div>
       </div>
     </div>
-         <div class="expl-text">${explRomanian(d)}</div>
+       <div class="expl-text">${explRomanian(d)}</div>
     <div>
       <div class="ev-bar">
         <div style="flex:${sup+.1};background:rgba(16,185,129,.35)"></div>
@@ -785,29 +755,74 @@ function renderSources(d){
       ${grp(neu.slice(0,8),'tn','⚪ Relevante')}
     </div>`;
 }
+// ── UI-facing, human-readable explanations in Romanian ─────────
+// Pure view-layer helper: NO technical terms (NLI/embedding/etc.).
+function explRomanian(d){
+  var v=(d.verdict||'').toUpperCase();
+  var claims=d.results||[];
+  var srcTxt=function(c,k){var g=(c.supporting||[]).concat(c.contradicting||[]).concat(c.neutral_sources||[]);var out=[];for(var z=0;z<g.length&&out.length<3;z++){var p=(g[z].publisher||g[z].title||'').replace(/…+/g,'').slice(0,30);if(p)out.push(p);}return out.join(' | ');};
+  var isRo=function(t){return /[\u0103\u00E2\u00EE\u0219\u021B]/i.test(t||'');};
+  if(claims.length>0){
+    var roam=isRo((d.claim||'')+claims.map(function(c){return c.claim||''}).join(' '));
+    var t=0,f=0;claims.forEach(function(c){var q=(c.verdict||'').toUpperCase();if(q==='TRUE')t++;else if(q==='FALSE')f++;});
+    var verdictWord;
+    if(roam){verdictWord=(t>0&&f>0)?'unele afirma\u0163ii sunt <b>adev\u0103rate</b>, altele <b>false</b> (verdict amestecat)':(f===0?'aceste afirma\u0163ii sunt, pe larg, <b>adev\u0103rate</b>':'aceste afirma\u0163ii sunt, pe larg, <b>false</b>');}
+    else {verdictWord=(t>0&&f>0)?'some claims are <b>true</b>, others <b>false</b> (mixed verdict)':(f===0?'these statements are largely <b>true</b>':'these statements are largely <b>false</b>');}
+    var intro=roam?('Verdict general: '+verdictWord+'.<br><br>Detaliu pe fiecare afirma\u0163ie \u0219i sursele ei:'):('Overall verdict: '+verdictWord+'.<br><br>Each claim and the sources behind it:');
+    var itemsHtml=claims.map(function(c){
+      var q=(c.verdict||'').toUpperCase();
+      var icon=q==='TRUE'?'✅':q==='FALSE'?'❌':'⚠️';
+      var head=(c.claim||'').slice(0,90);
+      var src=srcTxt(c);
+      var tail;
+      if(roam){tail=(q==='TRUE')?'este <b>adev\u0103rat\u0103</b> \u2014 conform surselor':(q==='FALSE')?'este <b>fals\u0103</b> \u2014 sursele contrazic afirma\u0103\u0163ia':'nu se poate stabili cu siguran\u021b\u0103';}
+      else {tail=(q==='TRUE')?'is <b>true</b> \u2014 according to sources':(q==='FALSE')?'is <b>false</b> \u2014 the sources contradict it':'cannot be determined with confidence';}
+      var srcPart=src?' <span style=\"color:var(--text2)\">(\u201e'+esc(src)+'\u201d)</span>':'';
+      return '<li>'+icon+' \u201c'+esc(head)+'\u201d '+tail+srcPart+'.</li>';
+    }).join('');
+    return intro+'<ul style=\"margin:10px 0 0;padding-left:18px\">'+itemsHtml+'</ul>';
+  }
+  var roam2=isRo(d.claim||'');
+  var head=(d.claim||(roam2?'aceast\u0103 afirma\u0163ie':'this statement')).slice(0,90);
+  var src=srcTxt(d);
+  var tail;
+  if(roam2){tail=(v==='TRUE')?'este <b>adev\u0103rat\u0103</b> \u2014 conform sursei':(v==='FALSE')?'este <b>fals\u0103</b> \u2014 sursele contrazic afirma\u021b\u0103':'este <b>incert\u0103</b>';}
+  else {tail=(v==='TRUE')?'is <b>true</b> \u2014 according to sources':(v==='FALSE')?'is <b>false</b> \u2014 the sources contradict it':'is <b>uncertain</b>';}
+  var vPart=src?' <span style=\"color:var(--text2)\">(\u201e'+esc(src)+'\u201d)</span>':'';
+  return '\u201c'+esc(head)+'\u201d '+tail+vPart+'.';
+}
+
+
+function perClaimExplanation(r){
+  const v=(r.verdict||'').toUpperCase();
+  const sup=(r.supporting||[]).length, con=(r.contradicting||[]).length, tot=sup+con;
+  if(v==='TRUE')  return `✅ Adevărat — ${tot ? tot+' surse independente confirmă acest fapt ('+Math.round(sup/tot*100)+'%)' : 'surse independente confirmă acest fapt'}.`;
+  if(v==='FALSE') return `❌ Fals — datele verificate contrazic această afirmație (${tot ? '0 din '+tot+' susțin' : 'nici o sursă nu o susține'}). Faptul nu corespunde realității.`;
+  if(v==='MIXED') return `🔀 Mixt — sursele sunt divizate (${sup} susțin, ${con} contrazic).`;
+  return '⚠️ Incerț – nu există suficiente dovezi pentru un verdict sigur.';
+}
+
 function renderExplain(d){
-  const wi=d.word_importance||[],lat=d.latency||{};
-  const wiHtml=wi.length?wi.slice(0,8).map(w=>{
-    const c=w.direction==='supporting'?'var(--green)':w.direction==='contradicting'?'var(--red)':'var(--text2)';
-    return `<div class="wi-row">
-      <span class="wi-word" style="color:${c}">${esc(w.word)}</span>
-      <div class="wi-track"><div class="wi-fill" style="width:${Math.round(w.importance*100)}%;background:${c}"></div></div>
-      <span class="wi-pct">${Math.round(w.importance*100)}%</span>
-    </div>`;}).join(''):`<div style="color:var(--text2);font-size:13px;padding:4px 0">Nicio importanță a cuvintelor disponibilă.</div>`;
-
-  const latHtml=Object.keys(lat).length?`
-    <div class="sec-lbl" style="margin-top:18px;opacity:.5">Timpi de procesare</div>
-    <div class="lat-row">
-      <div class="lat-item"><div class="lat-v">${Math.round(lat.total_ms||0)}<span>ms</span></div><div class="lat-l">Total</div></div>
-      <div class="lat-item"><div class="lat-v">${Math.round(lat.retrieval_ms||0)}<span>ms</span></div><div class="lat-l">Retrieval</div></div>
-      <div class="lat-item"><div class="lat-v">${Math.round(lat.embedding_ms||0)}<span>ms</span></div><div class="lat-l">Embedding</div></div>
-      <div class="lat-item"><div class="lat-v">${Math.round(lat.nli_ms||0)}<span>ms</span></div><div class="lat-l">Raționament AI</div></div>
-    </div>`:'';
-
-  document.getElementById('tp-explain').innerHTML=`
-    <div class="sec-lbl">Importanța cuvintelor</div>
-    ${wiHtml}
-    ${latHtml}`;
+  let body='';
+  body += '<h3 style="margin:20px 0 14px">Verdict general</h3>';
+  body += `<div class="expl-text">${explRomanian(d)}</div>`;
+  if(d.results && d.results.length>0){
+    body += '<h3 style="margin:22px 0 12px">De ce am ajuns aici (pași)</h3>';
+    const PROC=[
+      ['🔍','Desfacem textul','Am extras fiecare fapt verificabil ca fiind distinct.'],
+      ['🔎','Căutăm dovezi','Pentru fiecare fapt am adus surse din domenii de încredere (academice, enciclopedice, știri).'],
+      ['⚖️','Comparăm dovezele','Unde sursele sunt de acord susțin; unde contrazic marcăm ca fals; unde sunt divizate spunem «mixt».'],
+                  ['📊','Formulăm verdictul','Fiecare fapt are propriul verdict, iar cel final reflectă procentul de acord.'],
+    ];
+    body += PROC.map(p=>`<div class="proc-step"><b>${p[0]} ${p[1]}</b><div>${p[2]}</div></div>`).join('');
+    body += '<h3 style="margin:22px 0 12px">Fiecare afirmație</h3>';
+    body += (d.results||[]).map((r,i)=>`
+      <div id="exp-${i}" class="claim-mini ${i===0?'hl':''}">
+        <div style="font-weight:650;margin-bottom:6px;cursor:pointer" onclick="jumpClaim(${i})">→ ${esc(r.claim||'')}</div>
+        <div>${perClaimExplanation(r)}</div>
+      </div>`).join('');
+  }
+  document.getElementById('tp-explain').innerHTML = body;
 }
 function renderSub(d){
   const sc=d.sub_claims||[];
