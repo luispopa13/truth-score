@@ -219,7 +219,10 @@ HTTPS cert is automatic.
 1. Apply with your own domain, site live with real content.
 2. After approval set `ADSENSE_CLIENT=ca-pub-XXXX` → redeploy.
    - `/ads.txt` is generated automatically from that env var.
-   - Units render only for anonymous/free users on the dashboard (`X-TruthScore-Show-Ads`).
+   - Units render only for anonymous/free users on the dashboard (`X-TruthScore-Show-Ads`),
+     below the results card (never overlaying the app UI).
+   - Until approved, production shows nothing; on localhost a dashed
+     "reserved space" preview marks where the unit will sit.
 3. Extension popup/page overlays stay self-promo-only — AdSense policy forbids ads
    inside extensions or injected content; direct sponsorships are allowed there.
 

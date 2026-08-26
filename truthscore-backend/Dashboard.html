@@ -397,9 +397,22 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
     </div>
   </div>
 
-  <!-- AdSense display unit — materialized by ensureAds() ONLY for free-tier
-       visitors when ADSENSE_CLIENT is configured (policy-safe injection) -->
-  <div id="adSlot" style="display:none;margin:20px auto 0;max-width:728px;text-align:center"></div>
+  <!-- AdSense unit zone — materialized by ensureAds(): live ads once
+       ADSENSE_CLIENT is set+approved; a dashed reserved-space preview on
+       localhost so placement is visible during development. Never overlays
+       app UI: it sits below all cards, in flow, own height. -->
+  <style>
+    .ad-slot{display:none;margin:28px auto 10px;max-width:760px;min-height:104px;text-align:center}
+    .ad-slot.on{display:block}
+    .ad-ghost{display:flex;align-items:center;justify-content:center;gap:11px;height:100px;
+      border:1.5px dashed rgba(255,255,255,.15);border-radius:14px;background:rgba(255,255,255,.015);
+      color:#6a6a92;font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.5px;transition:.18s}
+    .ad-ghost:hover{border-color:rgba(91,78,255,.4);color:#9191bd}
+    .ad-ghost .tg{width:22px;height:22px;flex-shrink:0;border-radius:7px;display:grid;place-items:center;
+      background:linear-gradient(135deg,#5b4eff,#8b5cf6);color:#fff;font-family:'Syne',sans-serif;
+      font-weight:800;font-size:12px;box-shadow:0 3px 12px rgba(91,78,255,.35)}
+  </style>
+  <div id="adSlot" class="ad-slot" aria-hidden="true"></div>
 </main>
 
 <footer>
@@ -482,14 +495,33 @@ function anonInc(){localStorage.setItem('ts_anon_used',anonUsed()+1)}
 // Policy-safe by design: never loaded in the extension surfaces, and no
 // script tag exists until both an env-configured publisher ID is present
 // and the current viewer is on the free tier (X-TruthScore-Show-Ads=1).
+//
+// Rendering modes of #adSlot:
+//   • LIVE   — real adsbygoogle unit, when ADSENSE_CLIENT is configured.
+//   • GHOST  — dashed reserved-space PREVIEW, dev-only (localhost), so the
+//              future ad zone is visible without an approved account.
+//   • HIDDEN — production without publisher ID: nothing renders at all.
 let _adsCfg=null;
 async function ensureAds(showAds){
   const slot=document.getElementById('adSlot');
-  if(!slot||slot.dataset.on==='1')return;
+  if(!slot||slot.dataset.on)return;
   if(!_adsCfg){try{_adsCfg=await(await fetch(`${API}/site-config`)).json();}catch(e){return;}}
-  const client=(_adsCfg&&_adsCfg.adsense_client)||'';
-  if(!showAds||!_adsCfg.ads_enabled||!client)return;
-  slot.dataset.on='1';slot.style.display='block';
+  if(!showAds||!_adsCfg.ads_enabled)return;
+  const client=(_adsCfg.adsense_client||'').trim();
+  const isDev=/^(localhost|127\.0\.0\.1)$/.test(location.hostname);
+
+  // DEV preview: show the reserved zone even before AdSense approval.
+  if(!client){
+    if(!isDev)return;
+    slot.dataset.on='ghost';
+    slot.classList.add('on');
+    slot.innerHTML=`<div class="ad-ghost"><span class="tg">T</span>ZONĂ RECLAME · SE ACTIVEAZĂ DUPĂ APROBAREA ADSENSE</div>`;
+    return;
+  }
+
+  // LIVE ads: lazy-load the AdSense library and push one responsive unit.
+  slot.dataset.on='live';
+  slot.classList.add('on');
   const s=document.createElement('script');s.async=true;s.crossOrigin='anonymous';
   s.src='https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client='+encodeURIComponent(client);
   document.head.appendChild(s);
