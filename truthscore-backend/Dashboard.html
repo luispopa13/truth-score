@@ -617,15 +617,19 @@ function renderTextAnalysis(d){
       const label=r.verdict==='TRUE'?'✅ ADEVĂRAT':r.verdict==='FALSE'?'❌ FALS':'⚠️ INCERT';
       const DIC={web:'🌐',wikipedia:'📖',wikidata:'🗄️',academic:'🎓',news:'📰',factcheck:'🔎'};
       const dsrc=(g,c,gl,lb)=>{g=g||[];if(!g.length)return'';
-        const rows=g.slice(0,2).map(s=>`<a href="${esc(s.url||'#')}" target="_blank" rel="noopener" style="display:flex;gap:5px;align-items:center;font-size:10px;color:var(--text2);text-decoration:none;margin-top:3px;min-width:0"><span style="color:${c};flex-shrink:0">${gl}</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${DIC[s.type]||'📄'} ${esc((s.publisher||s.title||'sursă').slice(0,70))}</span></a>`).join('');
+        const rows=g.slice(0,2).map(s=>`<a href="${esc(s.url||'#')}" target="_blank" rel="noopener" style="display:flex;gap:5px;align-items:center;font-size:10px;color:var(--text2);text-decoration:none;margin-top:3px;min-width:0"><span style="color:${c};flex-shrink:0">${gl}</span><span title="${esc(r.claim||'')}" style="flex-shrink:0;font-family:'JetBrains Mono',monospace;font-size:8px;font-weight:700;color:${c};border:1px solid ${c};border-radius:4px;padding:0 3px;opacity:.85">#${i+1}</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${DIC[s.type]||'📄'} ${esc((s.publisher||s.title||'sursă').slice(0,70))}</span></a>`).join('');
         return `<div style="margin-top:6px;padding-top:5px;border-top:1px dashed rgba(128,128,160,.25)"><span style="font-size:9px;font-weight:800;color:${c};text-transform:uppercase;letter-spacing:.4px">${lb} (${g.length})</span>${rows}${g.length>2?`<div style="font-size:9px;color:var(--text2);opacity:.7;margin-top:2px">+${g.length-2} alte surse</div>`:''}</div>`;};
       const sup=r.supporting||[],con=r.contradicting||[],neu=r.neutral_sources||[];
       const srcBlock=(sup.length||con.length)?dsrc(sup,'var(--green)','✓','susțin')+dsrc(con,'var(--red)','✗','contrazic'):dsrc(neu,'var(--text2)','•','relevante');
       return `<div class="sub-item" onclick="showParagraphClaim(${i})" style="display:block;border-left:3px solid ${color};margin-bottom:8px;cursor:pointer">
-        <div style="display:flex;justify-content:space-between;gap:12px;color:${color};font-size:11px;font-weight:800"><span>${label}</span><span>${TOPIC_ICONS[r.topic]||'🔍'} ${esc(TOPIC_LABELS[r.topic]||r.topic)} · ${r.score}</span></div>
+        <div style="display:flex;justify-content:space-between;gap:12px;color:${color};font-size:11px;font-weight:800"><span>${label}</span><span>${TOPIC_ICONS[r.topic]||'🔍'} ${esc(TOPIC_LABELS[r.topic]||r.topic)} · ${r.score}%</span></div>
         <div style="font-size:13px;font-weight:650;margin-top:7px">${esc(r.claim||'')}</div>
         <div style="font-size:11px;color:var(--text2);margin-top:5px">${esc((r.explanation||'').slice(0,220))}</div>
-        <div style="margin-top:4px;font-size:9px;font-weight:700;color:var(--text2);opacity:.75">📎 Sursele acestei afirmații</div>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:7px">
+          <div style="flex:1;height:4px;border-radius:99px;background:rgba(128,128,160,.22);overflow:hidden"><div style="height:100%;width:${Math.max(3,r.score)}%;background:${color};border-radius:99px"></div></div>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;color:${color}">${r.score}%</span>
+        </div>
+        <div style="margin-top:7px;font-size:9px;font-weight:700;color:var(--text2);opacity:.8">📎 SURSE PENTRU AFIRMAȚIA #${i+1} <span style="font-weight:500;opacity:.7">· „${esc((r.claim||'').slice(0,46))}${(r.claim||'').length>46?'…':''}"</span></div>
         ${srcBlock||'<div style="font-size:10px;color:var(--text2);opacity:.65;margin-top:4px">fără dovezi directe</div>'}
       </div>`;
     }).join('')}

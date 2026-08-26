@@ -391,8 +391,8 @@ function renderParagraph(d) {
     UNCERTAIN:["#f59e0b","⚠️ INCERT"], MIXED:["#8b5cf6","🔀 MIXT"]
   };
   const DICS={web:"🌐",wikipedia:"📖",wikidata:"🗄️",academic:"🎓",news:"📰",factcheck:"🔎"};
-  const msrc=(g,clr,gl,lb)=>{g=g||[];if(!g.length)return"";
-    const rows=g.slice(0,2).map(s=>`<a href="${esc(s.url||"#")}" target="_blank" rel="noopener" style="display:flex;gap:5px;align-items:center;font-size:10px;color:var(--text2);text-decoration:none;margin-top:3px;min-width:0"><span style="color:${clr};flex-shrink:0">${gl}</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${DICS[s.type]||"📄"} ${esc((s.publisher||s.title||"sursă").slice(0,70))}</span></a>`).join("");
+  const msrc=(g,clr,gl,lb,ref)=>{g=g||[];if(!g.length)return"";
+    const rows=g.slice(0,2).map(s=>`<a href="${esc(s.url||"#")}" target="_blank" rel="noopener" style="display:flex;gap:5px;align-items:center;font-size:10px;color:var(--text2);text-decoration:none;margin-top:3px;min-width:0"><span style="color:${clr};flex-shrink:0">${gl}</span>${ref?`<span style="flex-shrink:0;font-family:'JetBrains Mono',monospace;font-size:8px;font-weight:700;color:${clr};border:1px solid ${clr};border-radius:3px;padding:0 3px;opacity:.85">${ref}</span>`:""}<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${DICS[s.type]||"📄"} ${esc((s.publisher||s.title||"sursă").slice(0,70))}</span></a>`).join("");
     return `<div style="margin-top:6px;padding-top:5px;border-top:1px dashed var(--border)"><span style="font-size:9px;font-weight:800;color:${clr};text-transform:uppercase;letter-spacing:.4px">${lb} (${g.length})</span>${rows}${g.length>2?`<div style="font-size:9px;color:var(--text2);opacity:.7;margin-top:2px">+${g.length-2} alte surse</div>`:""}</div>`;};
   document.getElementById("sourcesWrap").innerHTML = `
     <div class="sec-label">Rezultat pe fiecare afirmație (${d.claim_count||d.results.length})</div>
@@ -400,13 +400,17 @@ function renderParagraph(d) {
       const p=palette[r.verdict]||palette.UNCERTAIN;
       const sup=r.supporting||[], con=r.contradicting||[], neu=r.neutral_sources||[];
       const srcBlock=(sup.length||con.length)
-        ? msrc(sup,"#22c55e","✓","susțin")+msrc(con,"#ef4444","✗","contrazic")
-        : msrc(neu,"#9090a8","•","relevante");
+        ? msrc(sup,"#22c55e","✓","susțin",`#${i+1}`)+msrc(con,"#ef4444","✗","contrazic",`#${i+1}`)
+        : msrc(neu,"#9090a8","•","relevante",`#${i+1}`);
       return `<button class="paragraph-claim" data-claim-index="${i}" style="display:block;width:100%;text-align:left;background:var(--bg3);border:1px solid var(--border);border-left:3px solid ${p[0]};border-radius:8px;padding:9px;margin:6px 0;color:var(--text);cursor:pointer">
-        <div style="display:flex;justify-content:space-between;gap:8px;font-size:10px;color:${p[0]};font-weight:700"><span>${p[1]}</span><span>${esc(TOPIC_LABELS[r.topic]||r.topic||"General")} · ${r.score}</span></div>
+        <div style="display:flex;justify-content:space-between;gap:8px;font-size:10px;color:${p[0]};font-weight:700"><span>${p[1]}</span><span>${esc(TOPIC_LABELS[r.topic]||r.topic||"General")} · ${r.score}%</span></div>
         <div style="font-size:12px;font-weight:600;margin-top:5px">${esc(r.claim||"")}</div>
         <div style="font-size:10px;color:var(--text2);margin-top:4px">${esc((r.explanation||"").slice(0,160))}</div>
-        <div style="margin-top:4px;font-size:9px;font-weight:700;color:var(--text2);opacity:.75">📎 Sursele acestei afirmații</div>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
+          <div style="flex:1;height:4px;border-radius:99px;background:rgba(128,128,160,.22);overflow:hidden"><div style="height:100%;width:${Math.max(3,r.score)}%;background:${p[0]};border-radius:99px"></div></div>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:700;color:${p[0]}">${r.score}%</span>
+        </div>
+        <div style="margin-top:6px;font-size:9px;font-weight:700;color:var(--text2);opacity:.8">📎 SURSE · AFIRMAȚIA #${i+1} <span style="font-weight:500;opacity:.7">· „${esc((r.claim||"").slice(0,40))}${(r.claim||"").length>40?"…":""}"</span></div>
         ${srcBlock||'<div style="font-size:10px;color:var(--text2);opacity:.65;margin-top:4px">fără dovezi directe</div>'}
       </button>`;
     }).join("")}

@@ -329,24 +329,29 @@ function showParagraphResult(p, text, d) {
   const lbl   = verdict==="TRUE"?"ADEVĂRAT":verdict==="FALSE"?"FALS":verdict==="MIXED"?"MIXT (parțial adevărat)":"INCERT";
   const icons={web:"🌐",wikipedia:"📖",wikidata:"🗄️",academic:"🎓",news:"📰",factcheck:"🔎"};
 
-  const mini=(g,clr,gl)=>{g=g||[];if(!g.length)return"";
+  const mini=(g,clr,gl,ref)=>{g=g||[];if(!g.length)return"";
     const rows=g.slice(0,2).map(s=>`<a class="tsp-src" href="${esc(s.url||"#")}" target="_blank" rel="noopener" style="border-left:3px solid ${clr}">
       <span class="tsp-src-icon">${icons[s.type]||"📄"}</span>
       <div class="tsp-src-body"><div class="tsp-src-title">${esc((s.publisher||s.title||"sursă").slice(0,60))}</div></div>
+      ${ref?`<span style="flex-shrink:0;font-family:'JetBrains Mono',monospace;font-size:8px;font-weight:700;color:${clr};border:1px solid ${clr};border-radius:3px;padding:0 3px;opacity:.85">${ref}</span>`:""}
       <span style="color:${clr};font-size:10px">${gl}</span></a>`).join("");
     return rows+(g.length>2?`<div style="font-size:9px;color:#9090a8;margin:2px 0 4px">+${g.length-2} alte surse</div>`:"");};
 
-  const cards=(d.results||[]).map(r=>{
+  const cards=(d.results||[]).map((r,idx)=>{
     const c =r.verdict==="TRUE"?"#22c55e":r.verdict==="FALSE"?"#ef4444":"#f59e0b";
     const ci=r.verdict==="TRUE"?"✅":r.verdict==="FALSE"?"❌":"⚠️";
     const cl=r.verdict==="TRUE"?"ADEVĂRAT":r.verdict==="FALSE"?"FALS":"INCERT";
     const sup=r.supporting||[], con=r.contradicting||[], neu=r.neutral_sources||[];
-    const srcs=(sup.length||con.length)?mini(sup,c,"✓")+mini(con,"#ef4444","✗"):mini(neu,"#9090a8","•");
+    const srcs=(sup.length||con.length)?mini(sup,c,"✓",`#${idx+1}`)+mini(con,"#ef4444","✗",`#${idx+1}`):mini(neu,"#9090a8","•",`#${idx+1}`);
     return `<div style="border:1px solid rgba(128,128,160,.25);border-left:3px solid ${c};border-radius:8px;padding:7px;margin-top:7px;background:rgba(255,255,255,.02)">
-      <div style="display:flex;justify-content:space-between;gap:8px;font-size:10px;font-weight:800;color:${c}"><span>${ci} ${cl}</span><span>📊 ${r.score}${r.topic?" · "+esc(r.topic):""}</span></div>
+      <div style="display:flex;justify-content:space-between;gap:8px;font-size:10px;font-weight:800;color:${c}"><span>${ci} ${cl} <span style="font-size:8px;border:1px solid ${c};border-radius:3px;padding:0 3px;opacity:.85">#${idx+1}</span></span><span>📊 ${r.score}%${r.topic?" · "+esc(r.topic):""}</span></div>
       <div style="font-size:11.5px;font-weight:600;margin-top:4px">${esc(r.claim||"")}</div>
       <div style="font-size:10px;color:#9090a8;margin-top:3px">${esc((r.explanation||"").slice(0,140))}</div>
-      <div style="font-size:9px;font-weight:700;color:#9090a8;opacity:.85;margin-top:5px">📎 Sursele acestei afirmații</div>
+      <div style="display:flex;align-items:center;gap:7px;margin-top:5px">
+        <div style="flex:1;height:3px;border-radius:99px;background:rgba(128,128,160,.25);overflow:hidden"><div style="height:100%;width:${Math.max(3,r.score)}%;background:${c};border-radius:99px"></div></div>
+        <span style="flex-shrink:0;font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:700;color:${c}">${r.score}%</span>
+      </div>
+      <div style="font-size:9px;font-weight:700;color:#9090a8;opacity:.85;margin-top:5px">📎 SURSE PENTRU AFIRMAȚIA #${idx+1}${r.claim?` · „${esc(r.claim.slice(0,42))}${r.claim.length>42?"…":""}"`:""}</div>
       ${srcs||'<div style="font-size:10px;color:#9090a8;opacity:.6;margin-top:3px">fără dovezi directe</div>'}
     </div>`;}).join("");
 
