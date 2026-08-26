@@ -382,7 +382,10 @@ async def split_claims(text: str) -> list[str]:
     try:
         import asyncio as _asyncio, json as _json
         prompt = (
-            'Split this into individual verifiable claims (max 4). '
+            'Split this into individual verifiable claims (max 6). '
+            'EXACTLY ONE fact per string — never merge two facts, even if both are '
+            'true or both false. If a sentence joins two facts with "și", "iar", "dar", '
+            '"and" or "but", split it into separate strings. '
             'Return JSON array of strings only: ["claim1","claim2"]\n\n'
             f'Text: "{text[:300]}"'
         )

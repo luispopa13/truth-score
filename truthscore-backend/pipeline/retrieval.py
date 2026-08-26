@@ -185,7 +185,7 @@ async def search_semantic_scholar(claim: str) -> list[Source]:
                 "query": kw, "limit": 5,
                 "fields": "title,abstract,year,authors,url,venue,openAccessPdf",
             },
-            headers={"User-Agent": "TruthScore/3.0 "},
+            headers={"User-Agent": "TruthScore/3.0"},
         )
         if r.status_code != 200: return []
         sources = []
@@ -331,7 +331,7 @@ async def search_core(claim: str) -> list[Source]:
         r = await client.get("https://api.core.ac.uk/v3/search/works", params={
             "q": kw, "limit": 5,
             "fields": "title,abstract,yearPublished,authors,sourceFulltextUrls,doi",
-        }, headers={"User-Agent": "TruthScore/3.0 "})
+        }, headers={"User-Agent": "TruthScore/3.0"})
         if r.status_code != 200: return []
         sources = []
         for p in r.json().get("results", [])[:5]:
@@ -395,7 +395,7 @@ async def search_doaj(claim: str) -> list[Source]:
         r = await client.get(
             "https://doaj.org/api/v3/search/articles",
             params={"q": kw, "pageSize": 5, "sort": "score"},
-            headers={"User-Agent": "TruthScore/3.0 "},
+            headers={"User-Agent": "TruthScore/3.0"},
         )
         if r.status_code != 200:
             return []
@@ -575,7 +575,7 @@ async def search_europeana(claim: str) -> list[Source]:
             "https://api.europeana.eu/record/v2/search.json",
             params={"query": kw, "rows": 5, "profile": "minimal",
                     "type": "IMAGE,TEXT", "reusability": "open"},
-            headers={"User-Agent": "TruthScore/3.0 "},
+            headers={"User-Agent": "TruthScore/3.0"},
         )
         if r.status_code != 200: return []
         items = r.json().get("items", [])
@@ -1583,7 +1583,7 @@ async def search_nominatim(claim: str) -> list[Source]:
         r = await client.get("https://nominatim.openstreetmap.org/search",
             params={"q": query, "format": "json", "limit": 4,
                     "addressdetails": 1, "extratags": 1},
-            headers={"User-Agent": "TruthScore/4.0 "})
+            headers={"User-Agent": "TruthScore/4.0"})
         if r.status_code != 200: return []
         sources = []
         for item in r.json()[:4]:
@@ -2978,7 +2978,7 @@ async def search_wikidata(claim: str) -> list[Source]:
     """Wikidata structured knowledge -- curated facts, reliable."""
     kw = extract_keywords(claim)
     if not kw: return []
-    headers = {"User-Agent": "TruthScore/3.0  Python/httpx"}
+    headers = {"User-Agent": "TruthScore/3.0 Python/httpx"}
     sources = []
 
     async with httpx.AsyncClient(timeout=10.0, headers=headers) as client:

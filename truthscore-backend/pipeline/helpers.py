@@ -241,31 +241,49 @@ async def split_claims(text: str) -> list[str]:
 
 
 async def _split_claims_uncached(clean: str) -> list[str]:
-    """Extract up to five self-contained, independently verifiable claims."""
+    """Extract self-contained, independently verifiable claims (one fact each)."""
+
+    # Pre-normalize: ensure a space after sentence punctuation so glued
+    # sentences like "Hamlet.Apa pură" split correctly downstream.
+    clean = re.sub(r"([.!?])(?=[^\s.!?;:,)\]])", r"\1 ", clean)
 
     # Keep atomic inputs on the fast path: no extra model call.
     sentence_marks = len(re.findall(r"[.!?]+(?:\s|$)", clean))
-    has_joiner = any(c in clean.lower() for c in (" și ", " and ", ";", ","))
+    has_joiner = any(j in clean.lower() for j in
+                     (" și ", " and ", " iar ", " dar ", " but ", ";", ","))
     if len(clean.split()) < 12 and sentence_marks <= 1 and not has_joiner:
         return [clean]
 
     # Deterministic fallback if extraction is unavailable or malformed.
-    sentence_fallback = [s.strip(" -•\t") for s in re.split(r"(?<=[.!?])\s+|[;\n]+", clean)
-                         if len(s.strip(" -•\t")) > 5]
-    sentence_fallback = sentence_fallback[:5] or [clean]
+    parts = [s.strip(" -•\t") for s in re.split(r"(?<=[.!?])\s+|[;\n]+", clean)]
+    # Contrastive conjunctions ("iar", "dar", "but") almost always join two
+    # independent claims — split there too. ("și/and" is excluded on purpose:
+    # compound subjects like "Mihai și Andrei" are ONE claim.)
+    CONTRA = re.compile(r"\b(?:iar|dar|însă|but|however)\b", re.IGNORECASE)
+    sentences: list[str] = []
+    for part in parts:
+        pieces = [p.strip(" ,") for p in CONTRA.split(part) if len(p.strip(" ,")) > 5]
+        sentences.extend(pieces if pieces else [part])
+    sentence_fallback = [s for s in sentences if len(s) > 5][:8] or [clean]
     if not gemini_client:
         return sentence_fallback
 
     try:
         import asyncio as _asyncio, json as _json
         prompt = f"""Extract every independently verifiable factual claim from the text below.
-Return a JSON array of at most 5 strings and nothing else.
+Return a JSON array of at most 8 strings and nothing else.
 Rules:
-- One atomic fact per string; split mixed or compound statements.
+- EXACTLY ONE fact per string. NEVER merge two facts into one string, even when both are true or both are false.
+- If one sentence contains two facts joined by a connector (și, iar, dar, and, but, while), split them into separate strings.
+- Sentences glued together without a space (e.g. "...Hamlet.Apa pură...") are separate claims.
 - Preserve qualifiers, dates, quantities, negations and the original language.
 - Resolve pronouns using context so each claim is self-contained.
 - Exclude opinions, commands, questions and non-factual filler.
 - Do not add facts that are not present in the text.
+
+Example:
+Text: "Parisul este capitala Franței.Everest are 8849 m iar Luna se rotește în jurul Pământului."
+Output: ["Parisul este capitala Franței.", "Everest are 8849 m.", "Luna se rotește în jurul Pământului."]
 
 TEXT:
 {clean[:4000]}
@@ -276,7 +294,7 @@ TEXT:
             lambda: gemini_client.models.generate_content(
                 model=GEMINI_MODEL,
                 contents=prompt,
-                config=make_gemini_config(max_tokens=500, use_search=False, thinking_budget=0),
+                config=make_gemini_config(max_tokens=700, use_search=False, thinking_budget=0),
             ),
         )
         raw = resp.text.strip().replace("```json", "").replace("```", "").strip()
@@ -293,7 +311,7 @@ TEXT:
                     claims.append(claim[:1000])
             if claims:
                 print(f"  [SPLIT] {len(claims)} atomic claim(s) found")
-                return claims[:5]
+                return claims[:8]
     except Exception as exc:
         print(f"  [SPLIT] Error: {exc}")
     return sentence_fallback

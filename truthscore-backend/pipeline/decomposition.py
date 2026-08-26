@@ -144,6 +144,9 @@ async def decompose_into_atomic_facts(claim: str) -> list:
         prompt = (
             f'Afirmatie: "{claim}"\n\n'
             'Descompune in fapte atomice independente. Maxim 5 fapte.\n'
+            'REGULA CRITICA: fiecare fapt contine EXACT o afirmatie verificabila — '
+            'nu uni doi fapti intr-unul singur, nici daca amandoi sunt adevarati sau falsi. '
+            'Daca o propozitie leaga doi fapti prin "si", "iar" sau "dar", desparte-i.\n'
             'Raspunde STRICT cu JSON: {"facts": ["fapt1", "fapt2"]}'
         )
     else:
@@ -151,6 +154,8 @@ async def decompose_into_atomic_facts(claim: str) -> list:
             f'Claim: "{claim}"\n\n'
             'Decompose this claim into atomic, independently verifiable facts.\n'
             'Rules:\n'
+            '- CRITICAL: each fact contains EXACTLY ONE verifiable assertion; never merge two facts into one, even when both are true or both false.\n'
+            '- If one sentence joins two facts with a connector (and, but, while), split them into separate facts.\n'
             '- Each fact must be a single, simple statement\n'
             '- No compound sentences\n'
             '- Include all implied sub-claims and hidden assumptions\n'
