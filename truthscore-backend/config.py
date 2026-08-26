@@ -33,6 +33,19 @@ CURATED SOURCES BY DOMAIN:
 
 from pathlib import Path
 from dotenv import load_dotenv
+# ── Console encoding hardening (must run before any print) ──────
+# On Windows stdout defaults to legacy cp1252; any print() containing
+# Romanian diacritics (ă/ș/ț…) raised UnicodeEncodeError and killed an
+# in-flight verification. Force UTF-8 with lossy replacement so logging
+# can never crash a request, whatever the language.
+import sys as _sys
+
+for _stream in (_sys.stdout, _sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 # Load .env from the same directory as config.py
 import pathlib as _pathlib
 _env_path = _pathlib.Path(__file__).parent / ".env"
