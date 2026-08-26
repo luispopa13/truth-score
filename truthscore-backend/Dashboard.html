@@ -688,7 +688,37 @@ function renderAll(d){
   document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',i===0));
   document.querySelectorAll('.tab-panel').forEach((p,i)=>p.classList.toggle('active',i===0));
 }
-function renderScore(d){
+
+  /* ═══════════════════════════════════════════════════════════════
+     Explicații în limba română — decouple de backend NLI.
+  ─────────────────────────────────────────────────────────────── */
+  const EXPL = {};
+  EXPL.just = {
+    TRUE: "✅ Adevărat — sursele ne căiuiesc această informație.",
+    FALSE: "❌ Fals — sursele contrazic această afirmație.",
+    UNCERTAIN: "⚠️ Incert — nu am găsit suficiente dovezi clare.",
+    MIXED: "🔀 Amestecat — unele afirmații din text sunt corecte, altele greșite."
+  };
+  function romanianVerdict(v) { return EXPL.just[v] || EXPL.just.UNCERTAIN; }
+  function explRomanian(d) {
+    const v = d.verdict || d.aggregate_verdict || "UNCERTAIN";
+    const n = d.claim_count || (d.results ? d.results.length : 0) || 1;
+    const out = [];
+    if (v === "MIXED" && d.results && d.results.length) {
+      const t = d.results.filter(r => r.verdict === "TRUE").length;
+      const f = d.results.filter(r => r.verdict === "FALSE").length;
+      let summary = `🔬 Am verificat ${n} ${n>1?"afirmații":"afirmație"}. <b>${t} sunt adevărate</b>, <b>${f} sunt false</b>.`;
+      if (n - t - f) summary += `, <b>${n-t-f} sunt incerte</b>`;
+      out.push(summary);
+      out.push("Fiecare bucată are sursele ei proprii în secțiunea dedicată.");
+    } else {
+      out.push(`🔬 Deductibil din ${n} ${n>1?"fapte":"fapt"}: <b>${romanianVerdict(v)}</b>`);
+      if (d.results && d.results[0]) out.push(`"${d.results[0].claim||''}" — ${romanianVerdict(d.results[0].verdict)}.`);
+    }
+    return out.join(" ");
+  }
+
+  function renderScore(d){
   const score=d.score??50,verdict=d.verdict||'UNCERTAIN';
   const color=verdict==='TRUE'?'#10b981':verdict==='FALSE'?'#ef4444':verdict==='MIXED'?'#8b5cf6':'#f59e0b';
   const icon=verdict==='TRUE'?'✅':verdict==='FALSE'?'❌':verdict==='MIXED'?'🔀':'⚠️';
@@ -714,7 +744,7 @@ function renderScore(d){
         <div class="conf-line">${d.confidence==='HIGH'?'🟢 Confidență ridicată':d.confidence==='MEDIUM'?'🟡 Medie':'🔴 Scăzută'}${d.calibrated_confidence?' · '+d.calibrated_confidence:''}</div>
       </div>
     </div>
-    <div class="expl-text">${esc(d.explanation||'')}</div>
+         <div class="expl-text">${explRomanian(d)}</div>
     <div>
       <div class="ev-bar">
         <div style="flex:${sup+.1};background:rgba(16,185,129,.35)"></div>
