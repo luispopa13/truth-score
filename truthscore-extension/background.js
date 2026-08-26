@@ -51,9 +51,42 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     verifyClaim(msg.text)
       .then(sendResponse)
       .catch((err) => sendResponse({ error: err.message }));
-    return true; // keep channel open for async response
+    return true;
+  }
+  if (msg.type === "DETECT_CLAIMS") {
+    detectClaims(msg.text)
+      .then(sendResponse)
+      .catch((err) => sendResponse({ error: err.message }));
+    return true;
+  }
+  if (msg.type === "DETECT_AI_CONTENT") {
+    detectAI(msg.text)
+      .then(sendResponse)
+      .catch((err) => sendResponse({ error: err.message }));
+    return true;
+  }
+  if (msg.type === "SUBMIT_FEEDBACK") {
+    submitFeedback(msg.data)
+      .then(sendResponse)
+      .catch((err) => sendResponse({ error: err.message }));
+    return true;
   }
 });
+
+async function applyAuthHeaders(headers) {
+  // Prefer a stable API key if present, else the login JWT token
+  try {
+    const { ts_api_key } = await chrome.storage.local.get("ts_api_key");
+    if (ts_api_key) {
+      headers["Authorization"] = "Bearer " + ts_api_key;
+      return;
+    }
+  } catch (e) {}
+  try {
+    const { ts_token } = await chrome.storage.local.get("ts_token");
+    if (ts_token) headers["Authorization"] = "Bearer " + ts_token;
+  } catch (e) {}
+}
 
 // ── Verify claim via Python backend ──────────────────────────
 async function verifyClaim(text) {
@@ -64,11 +97,15 @@ async function verifyClaim(text) {
   const settings = await chrome.storage.sync.get("backendUrl");
   const apiBase  = settings.backendUrl || BACKEND_URL;
 
+  const headers = { "Content-Type": "application/json" };
+  await applyAuthHeaders(headers);
+
   let res;
   try {
-    res = await fetch(`${apiBase}/verify`, {
+    const isParagraph = text.length > 220 || ((text.match(/[.!?]+(?:\s|$)/g) || []).length > 1);
+    res = await fetch(`${apiBase}${isParagraph ? "/analyze-text" : "/verify"}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: headers,
       body: JSON.stringify({ text: text.trim() }),
     });
   } catch {
@@ -76,25 +113,48 @@ async function verifyClaim(text) {
   }
 
   if (!res.ok) {
-    const detail = await res.text().catch(() => "");
-    throw new Error(`Backend ${res.status}: ${detail.slice(0, 150)}`);
+    // 429 = rate limit hit
+    let detail = "";
+    try { const j = await res.json(); detail = j.detail || ""; } catch (_) {}
+    const msg = detail || (await res.text().catch(() => "")).slice(0, 150);
+    throw new Error(`Backend ${res.status}: ${msg}`);
   }
 
   const d = await res.json();
 
-  // Normalize v3 response format for content.js / popup.js
+  // Free-tier UX signals (headers exposed via CORS expose_headers)
+  const showAds   = res.headers.get("X-TruthScore-Show-Ads") === "1";
+  const quotaHdr  = res.headers.get("X-TruthScore-Quota-Left");
+  const quotaLeft = quotaHdr !== null && quotaHdr !== "" ? parseInt(quotaHdr, 10) : null;
+
+  // Paragraph responses already contain normalized per-claim VerifyResponse items.
+  if (Array.isArray(d.results)) {
+    return {
+      ...d,
+      models_used: [],
+      results: d.results.map(item => ({ ...item, models_used: [] })),
+      show_ads: showAds,
+      quota_left: Number.isFinite(quotaLeft) ? quotaLeft : null,
+    };
+  }
+
+  // Normalize a single-claim response for content.js / popup.js
   return {
     claim:       d.claim,
     score:       d.score,
     verdict:     d.verdict,
     confidence:  d.confidence,
     explanation: d.explanation,
+    topic:       d.topic || "general",
     supporting:     d.supporting     || [],
     contradicting:  d.contradicting  || [],
     neutral_sources: d.neutral_sources || [],
     evidence_count:  d.evidence_count  || 0,
-    models_used:     d.models_used     || [],
+    // Never trust/passthrough provider metadata, even if backend leaks it.
+    models_used:     [],
     cached:      d.cached || false,
+    show_ads:    showAds,
+    quota_left:  Number.isFinite(quotaLeft) ? quotaLeft : null,
     // Legacy fields for popup.js compatibility
     hfResult: null,
     factCheckSources: (d.contradicting || []).concat(d.supporting || [])
@@ -102,4 +162,59 @@ async function verifyClaim(text) {
     wikiSources: [...(d.supporting||[]),...(d.contradicting||[]),...(d.neutral_sources||[])]
       .filter(s => s.type === "wikipedia"),
   };
+}
+
+// ── Claim detection via backend ───────────────────────────────
+async function detectClaims(text) {
+  const settings = await chrome.storage.sync.get("backendUrl");
+  const apiBase  = settings.backendUrl || BACKEND_URL;
+  let res;
+  try {
+    res = await fetch(`${apiBase}/detect-claims`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: text.slice(0, 30000), max_claims: 12 }),
+    });
+  } catch {
+    throw new Error("Backend offline. Rulează: uvicorn main:app --reload");
+  }
+  if (!res.ok) {
+    const d = await res.text().catch(() => "");
+    throw new Error(`Backend ${res.status}: ${d.slice(0, 150)}`);
+  }
+  return await res.json();
+}
+
+// ── Feedback submission ───────────────────────────────────────
+async function submitFeedback(data) {
+  const settings = await chrome.storage.sync.get("backendUrl");
+  const apiBase  = settings.backendUrl || BACKEND_URL;
+  const res = await fetch(`${apiBase}/feedback`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error(`Feedback ${res.status}`);
+  return await res.json();
+}
+
+// ── AI Content Detection ──────────────────────────────────────
+async function detectAI(text) {
+  const settings = await chrome.storage.sync.get("backendUrl");
+  const apiBase  = settings.backendUrl || BACKEND_URL;
+  let res;
+  try {
+    res = await fetch(`${apiBase}/detect-ai`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: text.slice(0, 4000) }),
+    });
+  } catch {
+    throw new Error("Backend offline. Rulează: uvicorn main:app --reload");
+  }
+  if (!res.ok) {
+    const d = await res.text().catch(() => "");
+    throw new Error(`Backend ${res.status}: ${d.slice(0, 150)}`);
+  }
+  return await res.json();
 }

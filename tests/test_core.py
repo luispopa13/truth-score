@@ -1,0 +1,160 @@
+"""
+TruthScore -- core tests (no network, no API keys required).
+Run:  pytest tests/ -v   (or: python -m pytest tests/)
+"""
+import os
+import sys
+import asyncio
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "truthscore-backend"))
+
+# ── Unit tests (pure logic, cheap) ─────────────────────────────
+
+def test_normalize_cache_key():
+    from pipeline.helpers import normalize_claim
+    assert normalize_claim("Vaccines cause autism?") == normalize_claim("vaccines cause autism")
+    assert normalize_claim("  Space  is silent ! ") == normalize_claim("space is silent")
+
+
+def test_claim_signature_strips_diacritics():
+    from pipeline.helpers import normalize_claim
+    assert normalize_claim("România") == normalize_claim("Romania")
+
+
+def test_rate_limiter_limits_align_with_auth():
+    from utils.rate_limiter import PLAN_LIMITS
+    from auth import _PLAN_DAILY
+    for plan in ("free", "pro", "business", "enterprise"):
+        assert PLAN_LIMITS[plan] == _PLAN_DAILY[plan], f"plan {plan} out of sync"
+
+
+def test_all_plans_present():
+    from auth import PLANS
+    assert set(PLANS.keys()) == {"free", "pro", "business", "enterprise"}
+    assert PLANS["free"]["daily_limit"] >= 1
+    assert PLANS["pro"]["daily_limit"] > PLANS["free"]["daily_limit"]
+    assert PLANS["business"]["price"] == 29.99
+
+
+def test_eco_thresholds_protect_margin():
+    """Eco-mode kicks in below the daily cap — margin armor for heavy days."""
+    from auth import _ECO_AFTER, _PLAN_DAILY
+    assert _ECO_AFTER["pro"] < _PLAN_DAILY["pro"]
+    assert _ECO_AFTER["business"] < _PLAN_DAILY["business"]
+    # Free users never hit eco (they're capped way below anyway)
+    assert _ECO_AFTER["free"] > _PLAN_DAILY["free"]
+
+
+def test_disposable_email_blocking():
+    from utils.abuse import is_disposable_email
+    assert is_disposable_email("scammer@mailinator.com") is True
+    assert is_disposable_email("user@gmail.com") is False
+    assert is_disposable_email("not-an-email") is False
+
+
+def test_model_routing_hard_signals():
+    """Nuance/strict-domain claims ALWAYS go to Gemini, never cheap."""
+    from pipeline.reasoning import pick_model
+    assert pick_model("Space is completely silent", "physics") == "gemini"
+    assert pick_model("Coffee cures cancer says new study", "medical") == "gemini"
+
+
+def test_model_routing_easy_claims():
+    """Short simple claims route to the cheap model (env-overridable)."""
+    from pipeline.reasoning import pick_model
+    m = pick_model("The Eiffel Tower is in Paris", "geography")
+    assert m in ("groq-gpt-oss-120b", "gemini")   # env-dependent but valid alias/gemini
+
+
+def test_verdict_cache_l1_roundtrip():
+    """L1 in-process cache serves repeats with zero I/O."""
+    import asyncio
+    from utils.semantic_cache import semantic_store, semantic_lookup
+
+    async def _run():
+        await semantic_store("unique l1 probe claim xyz", {"verdict": "FALSE", "score": 12})
+        return await semantic_lookup("unique l1 probe claim xyz")
+
+    hit = asyncio.run(_run())
+    assert hit and hit["cached"] is True and hit["verdict"] == "FALSE"
+
+
+def test_thinking_disabled():
+    import config
+    assert config.THINKING_CONFIG is not None
+    assert config.THINKING_CONFIG.thinking_budget == 0
+
+
+def test_semantic_cache_signature():
+    from utils.semantic_cache import _claim_signature
+    assert _claim_signature("vaccines cause autism") == _claim_signature("Vaccines cause autism?")
+    assert _claim_signature("România") == _claim_signature("Romania")
+
+
+def test_api_key_generation():
+    from utils.api_keys import generate_api_key, hash_api_key
+    k1 = generate_api_key()
+    k2 = generate_api_key()
+    assert k1.startswith("ts_") and k2.startswith("ts_")
+    assert k1 != k2  # unique
+    # hash is stable and differs per key
+    assert hash_api_key(k1) != hash_api_key(k2)
+    assert hash_api_key(k1) == hash_api_key(k1)
+
+
+def test_cost_estimate_positive_margin():
+    from utils.metrics import estimate_cost_per_claim
+    pro = estimate_cost_per_claim("pro")
+    assert pro["estimated_cost_per_claim_usd"] > 0
+    assert pro["margin_usd"] > 0  # pro plan is profitable
+
+
+# ── FastAPI endpoint tests ──────────────────────────────────────
+
+def _make_client():
+    from fastapi.testclient import TestClient
+    import main
+    return TestClient(main.app)
+
+
+def test_health_ok():
+    c = _make_client()
+    r = c.get("/health")
+    assert r.status_code == 200
+    assert r.json()["status"] == "ok"
+
+
+def test_plans_include_business():
+    c = _make_client()
+    plans = c.get("/plans").json()
+    assert "business" in plans
+    assert plans["pro"]["daily_limit"] == 200
+
+
+def test_metrics_cost_ok():
+    c = _make_client()
+    r = c.get("/metrics/cost")
+    assert r.status_code == 200
+    assert "cost_usd" in r.json()
+
+
+def test_anonymous_verify_limited():
+    """Anonymous visitors: 3/day via Redis when present; dev-no-Redis allows."""
+    c = _make_client()
+    r = c.post("/verify", json={"text": "the moon is made of green cheese"})
+    assert r.status_code in (200, 429)
+    if r.status_code == 200:
+        assert "verdict" in r.json()
+
+
+def test_detect_claims_without_auth():
+    """detect-claims can stay lightweight/open for usability."""
+    c = _make_client()
+    r = c.post("/detect-claims", json={"text": "Vaccines cause autism. The earth is flat."})
+    assert r.status_code == 200
+    assert "claims" in r.json()
+
+
+if __name__ == "__main__":
+    import pytest
+    raise SystemExit(pytest.main([__file__, "-x"]))

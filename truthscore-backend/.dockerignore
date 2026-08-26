@@ -1,0 +1,11 @@
+__pycache__
+*.pyc
+.env
+.git
+.venv
+venv
+data/case_study/*.jsonl
+.truthscore_cache
+*.csv
+*.log
+node_modules

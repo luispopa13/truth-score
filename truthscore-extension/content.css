@@ -163,3 +163,82 @@
   color: #fca5a5; font-size: 12px; padding: 6px 0;
   line-height: 1.5;
 }
+
+/* Scan indicator */
+#ts-scan-indicator {
+  position: fixed;
+  top: 16px; left: 50%; transform: translateX(-50%);
+  z-index: 2147483647;
+  background: #1a1a24;
+  border: 1px solid #6c63ff;
+  border-radius: 20px;
+  padding: 8px 18px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 13px; font-weight: 600;
+  color: #e8e8f0;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+  animation: ts-pop 0.2s ease;
+}
+
+/* Summary panel */
+#ts-summary {
+  position: fixed;
+  bottom: 20px; right: 20px;
+  z-index: 2147483646;
+  width: 260px;
+  background: #0f0f13;
+  border: 1px solid #2e2e40;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0,0,0,.6);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 12px; color: #e8e8f0;
+  animation: ts-pop 0.2s ease;
+}
+.ts-sum-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 12px 8px;
+  background: #1a1a24;
+  border-bottom: 1px solid #2e2e40;
+  border-radius: 12px 12px 0 0;
+}
+#ts-sum-body { padding: 10px 12px; }
+.ts-sum-row { display: flex; gap: 8px; flex-wrap: wrap; font-size: 12px; font-weight: 600; }
+.ts-sum-footer {
+  padding: 8px 12px;
+  border-top: 1px solid #2e2e40;
+}
+#ts-sum-clear {
+  width: 100%;
+  background: #22222f;
+  border: 1px solid #2e2e40;
+  color: #9090a8;
+  padding: 6px;
+  border-radius: 6px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all .15s;
+}
+#ts-sum-clear:hover { color: #ef4444; border-color: #ef4444; }
+
+/* Feedback buttons */
+.tsp-feedback {
+  display: flex; align-items: center; gap: 6px;
+  margin-top: 8px; padding-top: 8px;
+  border-top: 1px solid #2e2e40;
+  font-size: 11px;
+}
+.tsp-fb-lbl { color: #9090a8; flex: 1; }
+.tsp-fb-yes, .tsp-fb-no {
+  background: #22222f; border: 1px solid #2e2e40;
+  color: #e8e8f0; padding: 3px 9px; border-radius: 6px;
+  cursor: pointer; font-size: 11px; transition: all .15s;
+}
+.tsp-fb-yes:hover { background: rgba(34,197,94,.15); border-color: #22c55e; }
+.tsp-fb-no:hover  { background: rgba(239,68,68,.15);  border-color: #ef4444; }
+
+/* ── Free-tier sponsor line ── */
+.tsp-sponsor {
+  margin-top: 8px; padding: 7px 10px;
+  background: rgba(108,99,255,.08); border: 1px solid rgba(108,99,255,.25);
+  border-radius: 8px; font-size: 10.5px; color: #a5a0ff;
+}

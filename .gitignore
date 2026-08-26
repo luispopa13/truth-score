@@ -1,9 +1,29 @@
-﻿truthscore-backend/.env
+truthscore-backend/.env
 truthscore-backend/.cache/
+truthscore-backend/.truthscore_cache/
 truthscore-backend/__pycache__/
+**/__pycache__/
 *.pyc
 *.pyo
 venv/
 .venv/
 .DS_Store
 Thumbs.db
+node_modules/
+dist/
+build/
+test_out.txt
+tt.txt
+*.log
+
+# Local ML weights (~640 MB total — fetched at deploy time instead;
+# see scripts/download_models.py)
+truthscore-backend/models/
+
+# Runtime interaction logs / calibration data (privacy: never publish)
+truthscore-backend/data/
+
+# Local tooling
+.claude/
+.cache/
+e2e_paragraph.py
