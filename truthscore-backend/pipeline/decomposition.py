@@ -211,19 +211,20 @@ async def verify_atomic_fact(fact: str, parent_evidence: list) -> dict:
     # Use Path B stance classification on this specific fact
     if not deduped:
         return {"fact": fact, "verdict": "UNCERTAIN", "score": 50,
-                "explanation": "No evidence found"}
+                "explanation": "No evidence found", "sources": []}
 
     b_score, b_verdict, b_conf, b_expl = await reason_path_b(fact, deduped[:8])
 
     if b_score is None:
         return {"fact": fact, "verdict": "UNCERTAIN", "score": 50,
-                "explanation": "Could not classify evidence"}
+                "explanation": "Could not classify evidence", "sources": deduped[:8]}
 
     return {
         "fact":        fact,
         "verdict":     b_verdict,
         "score":       b_score,
         "explanation": b_expl or "",
+        "sources":     deduped[:8],
     }
 
 

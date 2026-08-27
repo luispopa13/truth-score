@@ -98,7 +98,12 @@ async def ip_can_register(ip: str) -> bool:
 # Curious visitors get a few free verifications WITHOUT an account —
 # the taste that drives signups. Requires Redis; without it (local dev)
 # anonymous checks are simply allowed.
-ANON_DAILY_CAP = int(os.getenv("ANON_DAILY_CAP", "3"))
+# Single source of truth for the anonymous per-IP daily cap. Default 5 (the
+# more generous of the two historical values 3/5). `used` here is POST-increment
+# (redis.incr returns the new count), so `used <= ANON_DAILY_CAP` allows exactly
+# ANON_DAILY_CAP requests and blocks the (ANON_DAILY_CAP+1)-th. All anon sites
+# use this constant and this `<=` semantics.
+ANON_DAILY_CAP = int(os.getenv("ANON_DAILY_CAP", "5"))
 
 
 async def anon_ip_check(ip: str):

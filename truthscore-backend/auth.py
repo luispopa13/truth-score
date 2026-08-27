@@ -40,6 +40,20 @@ import httpx
 
 # ── Config ─────────────────────────────────────────────────────
 SECRET_KEY   = os.getenv("JWT_SECRET", "CHANGE_THIS_SECRET_IN_PRODUCTION_32chars")
+# ── JWT secret hardening ───────────────────────────────────────
+# Refuse to boot in production with the placeholder or a too-short secret.
+# Prod is detected via ENV=production or the RENDER env var (set by Render).
+_JWT_PLACEHOLDER = "CHANGE_THIS_SECRET_IN_PRODUCTION_32chars"
+_IS_PROD = os.getenv("ENV", "").lower() == "production" or bool(os.getenv("RENDER"))
+if SECRET_KEY == _JWT_PLACEHOLDER or len(SECRET_KEY) < 32:
+    if _IS_PROD:
+        raise RuntimeError(
+            "JWT_SECRET is unset/placeholder/too-short. Set JWT_SECRET to a "
+            "random 32+ character secret before running in production."
+        )
+    import sys as _sys
+    print("[WARN] JWT_SECRET is placeholder or <32 chars — insecure, dev only. "
+          "Set JWT_SECRET to a 32+ char secret for production.", file=_sys.stderr)
 ALGORITHM    = "HS256"
 TOKEN_EXPIRE = 60 * 24 * 30  # 30 days in minutes
 
@@ -386,6 +400,10 @@ async def check_rate_limit(user, claim, client_ip: str = "") -> dict:
     # Try Redis first (atomic, fast, shared)
     redis_result = await _redis_rate_check(user, used, limit, plan_name)
     if redis_result is not None:
+        # Eco-mode flag is computed here (single source) regardless of which
+        # backend produced the dict — rate_limiter's Redis path doesn't set it.
+        r_used = redis_result.get("used", used)
+        redis_result["eco"] = r_used > _ECO_AFTER.get(plan_name, 999999)
         return redis_result
 
     # Fallback: MongoDB atomic increment
@@ -403,6 +421,7 @@ async def check_rate_limit(user, claim, client_ip: str = "") -> dict:
     new_used = result.get("usage", {}).get(today, used + 1)
     return {"allowed": True, "used": new_used, "limit": limit,
             "plan": plan_name, "reset_in_hours": _hours_until_midnight_utc(),
+            "eco": new_used > _ECO_AFTER.get(plan_name, 999999),
             "features": plan.get("features", {})}
 
 

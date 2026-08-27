@@ -1,0 +1,16 @@
+/* TruthScore — canonical design tokens (single source of truth).
+   Shared by the dashboard (truthscore-backend/Dashboard.html, served at
+   /tokens.css) and the extension (popup.html + options.html). Keep the two
+   physical copies byte-identical; the extension copy lives at
+   truthscore-extension/tokens.css. content.css is intentionally NOT included:
+   it is injected into arbitrary host pages and must not leak :root vars. */
+:root{
+  --bg:#080810;--bg2:#0e0e1a;--bg3:#141424;--bg4:#1a1a2e;
+  --border:rgba(255,255,255,.05);--border2:rgba(255,255,255,.09);--border3:rgba(255,255,255,.14);
+  --text:#f0f0fa;--text2:#7878a0;--text3:#3a3a60;
+  --accent:#5b4eff;--accent-h:#7060ff;--accent2:#8b5cf6;
+  --green:#10b981;--yellow:#f59e0b;--red:#ef4444;
+  --green-bg:rgba(16,185,129,.08);--red-bg:rgba(239,68,68,.08);--yellow-bg:rgba(245,158,11,.08);
+  --green-border:rgba(16,185,129,.18);--red-border:rgba(239,68,68,.18);--yellow-border:rgba(245,158,11,.18);
+  --radius:16px;--shadow:0 32px 80px rgba(0,0,0,.6);
+}

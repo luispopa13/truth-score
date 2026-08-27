@@ -1,11 +1,11 @@
 <!DOCTYPE html>
-<html lang="ro">
+<html lang="en">
 <head>
 <meta charset="UTF-8"/>
-<title>TruthScore – Configurare</title>
+<title>TruthScore – Settings</title>
+<link rel="stylesheet" href="tokens.css"/>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-:root{--bg:#0f0f13;--bg2:#1a1a24;--bg3:#22222f;--border:#2e2e40;--text:#e8e8f0;--text2:#9090a8;--accent:#6c63ff;--green:#22c55e;--radius:10px}
 body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;min-height:100vh;display:flex;justify-content:center;padding:40px 20px}
 .container{width:100%;max-width:580px}
 .logo{display:flex;align-items:center;gap:10px;margin-bottom:6px}
@@ -17,6 +17,8 @@ h1{font-size:22px;font-weight:700}
 .field{margin-bottom:14px}
 label{display:block;font-size:12px;color:var(--text2);margin-bottom:5px;font-weight:500}
 input[type=text],input[type=url]{width:100%;padding:9px 12px;background:var(--bg3);border:1.5px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;outline:none;transition:border-color .2s;font-family:monospace}
+select{width:100%;padding:9px 12px;background:var(--bg3);border:1.5px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;outline:none;transition:border-color .2s;font-family:inherit;cursor:pointer}
+select:focus{border-color:var(--accent)}
 input:focus{border-color:var(--accent)}
 input::placeholder{color:#505068;font-family:inherit}
 .help{font-size:11px;color:var(--text2);margin-top:4px}
@@ -43,65 +45,85 @@ input::placeholder{color:#505068;font-family:inherit}
     <div class="logo-icon">🔍</div>
     <div>
       <h1>TruthScore</h1>
-      <div class="sub">Configurare API</div>
+      <div class="sub" data-i18n="optSubtitle">Configurare API</div>
     </div>
   </div>
 
   <div class="card">
-    <div class="card-title">🐍 Backend Python <span class="badge badge-opt">necesar</span></div>
+    <div class="card-title" data-i18n="optLangCard">🌐 Limbă</div>
     <div class="field">
-      <label>URL Backend FastAPI</label>
-      <input type="url" id="backendUrl" placeholder="http://localhost:8000" value="http://localhost:8000"/>
-      <div class="help">Rulează backendrul: <code style="color:#a0a0ff">uvicorn main:app --reload</code></div>
+      <label data-i18n="optLangLabel">Limba interfeței</label>
+      <select id="langSelect">
+        <option value="en">English</option>
+        <option value="ro">Română</option>
+      </select>
+      <div class="help" data-i18n="optLangHelp">Se aplică în popup, panoul din pagină și dashboard.</div>
     </div>
-    <button class="btn-test" onclick="testBackend()">🔌 Test conexiune</button>
+  </div>
+
+  <div class="card">
+    <div class="card-title"><span data-i18n="optBackendCard">🐍 Backend Python</span> <span class="badge badge-opt" data-i18n="optRequired">necesar</span></div>
+    <div class="field">
+      <label data-i18n="optBackendUrl">URL Backend FastAPI</label>
+      <input type="url" id="backendUrl" placeholder="http://localhost:8000" value="http://localhost:8000"/>
+      <div class="help"><span data-i18n="optBackendHelp">Rulează backendul:</span> <code style="color:#a0a0ff">uvicorn main:app --reload</code></div>
+    </div>
+    <button class="btn-test" onclick="testBackend()" data-i18n="optTestBtn">🔌 Test conexiune</button>
     <div class="test-result" id="testResult"></div>
   </div>
 
   <div class="card">
-    <div class="card-title">🤖 HuggingFace <span class="badge badge-free">gratis</span></div>
+    <div class="card-title">🤖 HuggingFace <span class="badge badge-free" data-i18n="optFree">gratis</span></div>
     <div class="field">
-      <label>HF Token (setat în .env pe backend)</label>
-      <input type="text" id="hfInfo" placeholder="Setat în truthscore-backend/.env" disabled style="opacity:.5"/>
+      <label data-i18n="optHfLabel">HF Token (setat în .env pe backend)</label>
+      <input type="text" id="hfInfo" data-i18n-ph="optSetInEnv" placeholder="Setat în truthscore-backend/.env" disabled style="opacity:.5"/>
       <div class="help">
-        Model: <strong style="color:#a0a0ff">MoritzLaurer/deberta-v3-large-zeroshot-v2</strong><br>
-        Obține token gratuit: <a href="https://huggingface.co/settings/tokens" target="_blank">huggingface.co/settings/tokens</a>
+        <span data-i18n="optHfHelp1">Model:</span> <strong style="color:#a0a0ff">MoritzLaurer/deberta-v3-large-zeroshot-v2</strong><br>
+        <span data-i18n="optHfHelp2">Obține token gratuit:</span> <a href="https://huggingface.co/settings/tokens" target="_blank">huggingface.co/settings/tokens</a>
       </div>
     </div>
   </div>
 
   <div class="card">
-    <div class="card-title">🔎 Google Fact Check <span class="badge badge-free">gratis</span></div>
+    <div class="card-title"><span data-i18n="optGcCard">🔎 Google Fact Check</span> <span class="badge badge-free" data-i18n="optFree">gratis</span></div>
     <div class="field">
-      <label>Google API Key (setat în .env pe backend)</label>
-      <input type="text" id="gcInfo" placeholder="Setat în truthscore-backend/.env" disabled style="opacity:.5"/>
+      <label data-i18n="optGcLabel">Google API Key (setat în .env pe backend)</label>
+      <input type="text" id="gcInfo" data-i18n-ph="optSetInEnv" placeholder="Setat în truthscore-backend/.env" disabled style="opacity:.5"/>
       <div class="help">
-        Activează <em>Fact Check Tools API</em> în:
+        <span data-i18n="optGcHelp">Activează Fact Check Tools API în:</span>
         <a href="https://console.cloud.google.com/apis/library/factchecktools.googleapis.com" target="_blank">Google Cloud Console</a>
       </div>
     </div>
   </div>
 
   <div class="btn-row">
-    <button class="btn-save" onclick="saveSettings()">💾 Salvează</button>
+    <button class="btn-save" onclick="saveSettings()" data-i18n="optSaveBtn">💾 Salvează</button>
   </div>
-  <div class="toast" id="toast">✅ Salvat cu succes!</div>
+  <div class="toast" id="toast" data-i18n="optSaved">✅ Salvat cu succes!</div>
 </div>
 
+<script src="i18n.js"></script>
 <script>
 document.addEventListener('DOMContentLoaded', () => {
   chrome.storage.sync.get(['backendUrl'], r => {
     if (r.backendUrl) document.getElementById('backendUrl').value = r.backendUrl;
   });
+  // Language selector reflects the current UI language and updates it live.
+  const sel = document.getElementById('langSelect');
+  if (sel) {
+    sel.value = TS_LANG;
+    sel.addEventListener('change', () => { tsSetLang(sel.value); document.title = 'TruthScore – ' + t('optTitle'); });
+  }
+  document.title = 'TruthScore – ' + t('optTitle');
 });
 
 function saveSettings() {
   chrome.storage.sync.set({
     backendUrl: document.getElementById('backendUrl').value.trim() || 'http://localhost:8000',
   }, () => {
-    const t = document.getElementById('toast');
-    t.classList.add('active');
-    setTimeout(() => t.classList.remove('active'), 3000);
+    const el = document.getElementById('toast');
+    el.classList.add('active');
+    setTimeout(() => el.classList.remove('active'), 3000);
   });
 }
 
@@ -110,15 +132,15 @@ async function testBackend() {
   const el = document.getElementById('testResult');
   el.style.display = 'block';
   el.className = 'test-result';
-  el.textContent = '⏳ Se testează conexiunea...';
+  el.textContent = t('optTesting');
   try {
     const r = await fetch(`${url}/health`);
     const d = await r.json();
     el.className = 'test-result ok';
-    el.textContent = `✅ Backend online! Model: ${d.model || 'N/A'}`;
+    el.textContent = t('optOnline', {model: d.model || 'N/A'});
   } catch {
     el.className = 'test-result err';
-    el.textContent = '❌ Nu s-a putut conecta. Verifică dacă backendrul rulează.';
+    el.textContent = t('optConnFail');
   }
 }
 </script>

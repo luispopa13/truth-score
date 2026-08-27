@@ -7,10 +7,11 @@ Run: uvicorn main:app --reload
 from config import *
 from models import *
 from utils.cache import cache, clear_all_caches
-from calibration.ece import compute_ece, get_weak_domains, record_feedback, _feedback_store
+from calibration.ece import compute_ece, get_weak_domains, record_feedback, record_feedback_durable, _feedback_store
 
 # Pipeline
 from pipeline.verify  import verify_claim
+from pipeline.aggregate import aggregate_score
 from pipeline.helpers import split_claims
 
 # User case study logging (MSc thesis evaluation data collection) -- new, self-contained
@@ -151,7 +152,10 @@ async def verify(req: VerifyRequest, response: Response,
         pass
 
     start = time.perf_counter()
-    result = await verify_claim(req)
+    # Heavy-day paid users past their eco threshold get cheap-model routing
+    # and skip the paid-search / deep-decomposition steps (margin protection).
+    eco = bool(rate_info.get("eco")) if rate_info else False
+    result = await verify_claim(req, eco=eco)
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
 
     try:
@@ -184,7 +188,8 @@ async def verify(req: VerifyRequest, response: Response,
     # Extension/dashboard reads this header and renders the sponsor slot.
     # Paid plans never see ads.
     try:
-        ads_on = os.getenv("ADS_ENABLED", "true").lower() in ("1", "true", "yes")
+        ads_on = (os.getenv("ADS_ENABLED", "true").lower() in ("1", "true", "yes")
+                  and bool(os.getenv("ADSENSE_CLIENT", "").strip()))
         is_free = (not user) or user.get("plan", "free") == "free"
         response.headers["X-TruthScore-Show-Ads"] = (
             "1" if (ads_on and is_free) else "0")
@@ -212,6 +217,9 @@ async def analyze_text(req: VerifyRequest, response: Response,
     quota = await check_rate_limit(user, text, client_ip=client_ip)
     if not quota.get("allowed"):
         raise HTTPException(status_code=429, detail="Daily verification limit reached.")
+    # Eco state is a per-user daily flag — capture it from the first check
+    # before the per-claim loop below reassigns `quota`.
+    eco = bool(quota.get("eco"))
 
     claims = await split_claims(text)
     if not claims:
@@ -241,7 +249,7 @@ async def analyze_text(req: VerifyRequest, response: Response,
 
     async def _verify_one(claim: str) -> VerifyResponse:
         async with semaphore:
-            result = await verify_claim(VerifyRequest(text=claim))
+            result = await verify_claim(VerifyRequest(text=claim), eco=eco)
             result.models_used = []
             return result
 
@@ -253,24 +261,42 @@ async def analyze_text(req: VerifyRequest, response: Response,
     if not results:
         raise HTTPException(status_code=503, detail="The claims could not be verified right now.")
 
+    # Stamp each source with the claim it belongs to (source -> claim mapping)
+    # and build sub-claim results so the paragraph score is the authority-
+    # weighted aggregate of its claims, not a plain mean. A false claim backed
+    # by a fact-checker should pull the paragraph down harder than a shaky
+    # "true" backed by a blog lifts it.
+    sub_results = []
+    for i, r in enumerate(results):
+        for s in (r.supporting + r.contradicting + r.neutral_sources):
+            s.claim_index = i
+        sub_results.append(SubClaimResult(
+            claim_index=i,
+            claim=r.claim,
+            score=r.score,
+            verdict=r.verdict,
+            confidence=r.confidence,
+            explanation=r.explanation or "No detailed explanation available.",
+            topic=r.topic,
+            supporting=r.supporting,
+            contradicting=r.contradicting,
+            neutral_sources=r.neutral_sources,
+            evidence_count=r.evidence_count,
+        ))
+
     verdicts = [r.verdict for r in results]
     true_count = verdicts.count("TRUE")
     false_count = verdicts.count("FALSE")
     uncertain_count = len(results) - true_count - false_count
     mixed = true_count > 0 and false_count > 0
-    if mixed:
-        verdict = "MIXED"
-    elif true_count == len(results):
-        verdict = "TRUE"
-    elif false_count == len(results):
-        verdict = "FALSE"
-    else:
-        verdict = "UNCERTAIN"
 
-    score = round(sum(r.score for r in results) / len(results))
-    confidence = ("LOW" if any(r.confidence == "LOW" for r in results)
-                  else "MEDIUM" if any(r.confidence == "MEDIUM" for r in results)
-                  else "HIGH")
+    agg_score, agg_verdict, agg_conf, aggregate_reason = aggregate_score(sub_results)
+    score = agg_score
+    confidence = agg_conf
+    # MIXED stays a distinct UI verdict when claims genuinely disagree; otherwise
+    # use the weighted aggregate verdict.
+    verdict = "MIXED" if mixed else agg_verdict
+
     explanation = (
         f"Analyzed {len(results)} factual claim(s): {true_count} supported, "
         f"{false_count} contradicted and {uncertain_count} uncertain."
@@ -283,6 +309,7 @@ async def analyze_text(req: VerifyRequest, response: Response,
     response.headers["X-TruthScore-Quota-Left"] = str(quota_left)
     response.headers["X-TruthScore-Show-Ads"] = (
         "1" if os.getenv("ADS_ENABLED", "true").lower() in ("1", "true", "yes")
+        and bool(os.getenv("ADSENSE_CLIENT", "").strip())
         and ((not user) or user.get("plan", "free") == "free") else "0")
 
     return TextAnalysisResponse(
@@ -291,6 +318,7 @@ async def analyze_text(req: VerifyRequest, response: Response,
         score=score,
         confidence=confidence,
         explanation=explanation,
+        aggregate_reason=aggregate_reason,
         results=results,
         claim_count=len(results),
         mixed=mixed,
@@ -326,6 +354,9 @@ async def feedback(req: FeedbackRequest, user: dict = Depends(get_current_user))
     score   = req.score if req.score else (req.predicted_score or 50)
     correct = req.user_says_correct if req.user_says_correct is not None else req.correct
 
+    # Update the in-memory calibration state (used by the ECE curve /
+    # weak-domain analysis) AND durably persist the feedback so it survives
+    # restarts / cloud redeploys.
     record_feedback(
         claim          = req.claim,
         verdict        = verdict,
@@ -334,6 +365,17 @@ async def feedback(req: FeedbackRequest, user: dict = Depends(get_current_user))
         correct        = correct,
         failure_reason = req.failure_reason or "",
     )
+    try:
+        await record_feedback_durable(
+            claim          = req.claim,
+            verdict        = verdict,
+            score          = score,
+            topic          = req.topic or "general",
+            correct        = correct,
+            failure_reason = req.failure_reason or "",
+        )
+    except Exception as e:
+        print(f"[FEEDBACK] Durable persistence skipped (non-fatal): {e}")
 
     # ── Gamified bonus: +1 check per unique feedback (free-tier hook).
     # Doubles as calibration-data collection for the ECE loop.
@@ -469,17 +511,32 @@ async def root():
     from fastapi.responses import HTMLResponse
     from pathlib import Path
     try:
-        return HTMLResponse(Path("dashboard.html").read_text(encoding="utf-8"))
+        return HTMLResponse(Path("Dashboard.html").read_text(encoding="utf-8"))
     except Exception:
         return HTMLResponse("<h1>TruthScore v12</h1><p>API running.</p>")
+
+
+@app.get("/tokens.css", include_in_schema=False)
+async def tokens_css():
+    """Canonical design tokens shared with the extension (kept in sync).
+    Referenced by Dashboard.html via <link rel="stylesheet" href="/tokens.css">."""
+    from pathlib import Path
+    path = Path("tokens.css")
+    if path.exists():
+        return FileResponse(path, media_type="text/css")
+    return PlainTextResponse("", media_type="text/css")
 
 
 @app.get("/site-config")
 async def site_config():
     """Public, non-sensitive frontend configuration."""
+    adsense_client = os.getenv("ADSENSE_CLIENT", "").strip()
+    ads_flag = os.getenv("ADS_ENABLED", "true").lower() in ("1", "true", "yes")
     return {
-        "adsense_client": os.getenv("ADSENSE_CLIENT", "").strip(),
-        "ads_enabled": os.getenv("ADS_ENABLED", "true").lower() in ("1", "true", "yes"),
+        "adsense_client": adsense_client,
+        # Ads are only truly enabled when a publisher id is configured;
+        # without one there is nothing to serve, so report False in dev.
+        "ads_enabled": bool(ads_flag and adsense_client),
     }
 
 

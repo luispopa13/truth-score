@@ -1,20 +1,12 @@
 <!DOCTYPE html>
-<html lang="ro">
+<html lang="en">
 <head>
 <meta charset="UTF-8"/>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
 <title>TruthScore</title>
+<link rel="stylesheet" href="tokens.css"/>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-:root{
-  --bg:#080810;--bg2:#0e0e1a;--bg3:#141424;--bg4:#1a1a2e;
-  --border:rgba(255,255,255,.05);--border2:rgba(255,255,255,.09);--border3:rgba(255,255,255,.14);
-  --text:#f0f0fa;--text2:#7878a0;--text3:#3a3a60;
-  --accent:#5b4eff;--accent-h:#7060ff;--accent2:#8b5cf6;
-  --green:#10b981;--yellow:#f59e0b;--red:#ef4444;
-  --green-bg:rgba(16,185,129,.08);--red-bg:rgba(239,68,68,.08);--yellow-bg:rgba(245,158,11,.08);
-  --green-border:rgba(16,185,129,.18);--red-border:rgba(239,68,68,.18);--yellow-border:rgba(245,158,11,.18);
-}
 body{width:420px;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;line-height:1.5;min-height:520px}
 
 /* Header */
@@ -161,7 +153,7 @@ textarea::placeholder{color:var(--text2)}
 <div class="header">
   <div class="logo">
     <div class="logo-icon">🔍</div>
-    <div><div class="logo-name">TruthScore</div><div class="logo-sub">AI Fact Checker</div></div>
+    <div><div class="logo-name">TruthScore</div><div class="logo-sub" data-i18n="tagline">AI Fact Checker</div></div>
   </div>
   <button class="icon-btn" id="openSettings">⚙️</button>
 </div>
@@ -170,35 +162,35 @@ textarea::placeholder{color:var(--text2)}
   <div id="userInfo" style="display:none;align-items:center;gap:6px"></div>
   <div id="usageInfo" style="display:none;font-family:monospace;color:var(--text2);font-size:10px"></div>
   <div style="display:flex;align-items:center;gap:4px">
-    <button id="upgradeBtn" style="display:none;background:var(--accent);color:#fff;border:none;border-radius:6px;padding:3px 8px;font-size:10px;font-weight:700;cursor:pointer">⭐ Upgrade</button>
-    <button id="dashboardBtn" style="background:none;border:1px solid var(--border);color:var(--text2);border-radius:6px;padding:3px 8px;font-size:10px;cursor:pointer" title="Deschide dashboard">🌐</button>
-    <button id="logoutBtn" style="display:none;background:none;border:none;color:var(--text2);cursor:pointer;font-size:11px;padding:2px 6px;border-radius:4px" title="Deconectare">↩</button>
+    <button id="upgradeBtn" style="display:none;background:var(--accent);color:#fff;border:none;border-radius:6px;padding:3px 8px;font-size:10px;font-weight:700;cursor:pointer" data-i18n="upgrade">⭐ Upgrade</button>
+    <button id="dashboardBtn" style="background:none;border:1px solid var(--border);color:var(--text2);border-radius:6px;padding:3px 8px;font-size:10px;cursor:pointer" data-i18n-title="openDashboard" title="Open dashboard">🌐</button>
+    <button id="logoutBtn" style="display:none;background:none;border:none;color:var(--text2);cursor:pointer;font-size:11px;padding:2px 6px;border-radius:4px" data-i18n-title="logoutTitle" title="Log out">↩</button>
   </div>
 </div>
 <div class="tabs">
-  <button class="tab active" data-tab="verify">🔍 Verifică</button>
+  <button class="tab active" data-tab="verify" data-i18n="tabVerify">🔍 Verifică</button>
   <button class="tab" data-tab="aidetect">🤖 AI Detect</button>
-  <button class="tab" data-tab="history">📋 Istoric <span class="tab-badge" id="histBadge" style="display:none">0</span></button>
+  <button class="tab" data-tab="history"><span data-i18n="tabHistory">📋 Istoric</span> <span class="tab-badge" id="histBadge" style="display:none">0</span></button>
   <button class="tab" data-tab="auth" id="loginBtn">👤</button>
 </div>
 
 <!-- ══ VERIFY TAB ══ -->
 <div class="tab-content active" id="tab-verify">
-  <textarea id="claimInput" placeholder="Introdu o afirmație sau un paragraf. Fiecare fapt va fi verificat separat..." maxlength="4000"></textarea>
+  <textarea id="claimInput" data-i18n-ph="claimPlaceholder" placeholder="Enter a claim or a paragraph. Each fact is verified separately…" maxlength="4000"></textarea>
   <div class="btn-row">
-    <button class="btn btn-secondary" id="pasteBtn">📋 Din pagină</button>
-    <button class="btn btn-scan" id="scanBtn">🔍 Scan pagină</button>
-    <button class="btn btn-primary" id="verifyBtn">Verifică</button>
+    <button class="btn btn-secondary" id="pasteBtn" data-i18n="fromPage">📋 Din pagină</button>
+    <button class="btn btn-scan" id="scanBtn" data-i18n="scanPage">🔍 Scan pagină</button>
+    <button class="btn btn-primary" id="verifyBtn" data-i18n="verify">Verifică</button>
   </div>
   <div class="err" id="errBox"></div>
   <div class="loading" id="vLoading">
     <div class="spinner"></div>
-    <div class="load-text" id="vLoadText">Se caută dovezi...</div>
+    <div class="load-text" id="vLoadText" data-i18n="verifying">Se caută dovezi...</div>
   </div>
   <div class="empty" id="vEmpty">
     <div class="empty-icon">🛡️</div>
-    <div class="empty-title">Nicio verificare activă</div>
-    <div class="empty-desc">Introdu o afirmație sau selectează text<br>pe orice pagină web.</div>
+    <div class="empty-title" data-i18n="emptyVerifyTitle">Nicio verificare activă</div>
+    <div class="empty-desc" data-i18n-html="emptyVerifyDesc">Introdu o afirmație sau selectează text<br>pe orice pagină web.</div>
   </div>
   <div class="result" id="vResult">
     <div class="score-row">
@@ -219,29 +211,29 @@ textarea::placeholder{color:var(--text2)}
     <div class="ev-label" id="evLabel"></div>
     <div id="sourcesWrap"></div>
     <div class="fb-row" id="fbRow">
-      <span class="fb-lbl">Verdictul e corect?</span>
-      <button class="fb-btn" id="fbYes">👍 Da</button>
-      <button class="fb-btn" id="fbNo">👎 Nu</button>
+      <span class="fb-lbl" data-i18n="verdictCorrect">Verdictul e corect?</span>
+      <button class="fb-btn" id="fbYes" data-i18n="yes">👍 Da</button>
+      <button class="fb-btn" id="fbNo" data-i18n="no">👎 Nu</button>
     </div>
   </div>
 </div>
 
 <!-- ══ AI DETECT TAB ══ -->
 <div class="tab-content" id="tab-aidetect">
-  <textarea id="aiInput" placeholder="Lipește textul pe care vrei să îl analizezi...&#10;&#10;Funcționează pentru texte în română și engleză.&#10;Minim 50 de caractere."></textarea>
+  <textarea id="aiInput" data-i18n-ph="aiPlaceholder" placeholder="Paste the text you want to analyze…"></textarea>
   <div class="btn-row">
-    <button class="btn btn-secondary" id="aiPasteBtn">📋 Din pagină</button>
-    <button class="btn btn-primary" id="aiDetectBtn">🤖 Detectează AI</button>
+    <button class="btn btn-secondary" id="aiPasteBtn" data-i18n="fromPage">📋 Din pagină</button>
+    <button class="btn btn-primary" id="aiDetectBtn" data-i18n="detectAI">🤖 Detectează AI</button>
   </div>
   <div class="err" id="aiErrBox"></div>
   <div class="loading" id="aiLoading">
     <div class="spinner"></div>
-    <div class="load-text">Se analizează textul...</div>
+    <div class="load-text" data-i18n="analyzing">Se analizează textul...</div>
   </div>
   <div class="empty" id="aiEmpty">
     <div class="empty-icon">🤖</div>
-    <div class="empty-title">AI Content Detector</div>
-    <div class="empty-desc">Detectează dacă un text a fost<br>generat de ChatGPT / GPT-4 / Claude.</div>
+    <div class="empty-title" data-i18n="emptyAITitle">AI Content Detector</div>
+    <div class="empty-desc" data-i18n-html="emptyAIDesc">Detectează dacă un text a fost<br>generat de ChatGPT / GPT-4 / Claude.</div>
   </div>
   <div class="ai-result" id="aiResult">
     <div class="ai-hero">
@@ -276,12 +268,12 @@ textarea::placeholder{color:var(--text2)}
 <!-- ══ HISTORY TAB ══ -->
 <div class="tab-content" id="tab-history">
   <div class="hist-header">
-    <span class="hist-title" id="histTitle">Ultimele verificări</span>
-    <button class="btn-clear" id="clearHistBtn">🗑 Șterge</button>
+    <span class="hist-title" id="histTitle" data-i18n="histLatest">Ultimele verificări</span>
+    <button class="btn-clear" id="clearHistBtn" data-i18n="clearHist">🗑 Șterge</button>
   </div>
   <div class="hist-empty" id="histEmpty">
     <div style="font-size:24px;margin-bottom:6px">📋</div>
-    <div>Nicio verificare în istoric</div>
+    <div data-i18n="histEmpty">Nicio verificare în istoric</div>
   </div>
   <div class="hist-list" id="histList"></div>
 </div>
@@ -293,66 +285,66 @@ textarea::placeholder{color:var(--text2)}
 
     <!-- Login form -->
     <div id="loginForm">
-      <div style="font-size:13px;font-weight:700;margin-bottom:12px;color:var(--text)">Autentificare</div>
+      <div style="font-size:13px;font-weight:700;margin-bottom:12px;color:var(--text)" data-i18n="authTitle">Autentificare</div>
       <div style="margin-bottom:10px">
-        <div style="font-size:11px;color:var(--text2);margin-bottom:4px">Email</div>
-        <input type="email" id="loginEmail" placeholder="email@exemplu.com"
+        <div style="font-size:11px;color:var(--text2);margin-bottom:4px" data-i18n="email">Email</div>
+        <input type="email" id="loginEmail" placeholder="email@example.com"
           style="width:100%;padding:8px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;outline:none"/>
       </div>
       <div style="margin-bottom:12px">
-        <div style="font-size:11px;color:var(--text2);margin-bottom:4px">Parolă</div>
-        <input type="password" id="loginPass" placeholder="Parola ta"
+        <div style="font-size:11px;color:var(--text2);margin-bottom:4px" data-i18n="password">Parolă</div>
+        <input type="password" id="loginPass" data-i18n-ph="yourPassword" placeholder="Your password"
           style="width:100%;padding:8px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;outline:none"/>
       </div>
-      <button id="doLoginBtn" class="btn btn-primary" style="width:100%;justify-content:center">Autentifică-te →</button>
+      <button id="doLoginBtn" class="btn btn-primary" style="width:100%;justify-content:center" data-i18n="loginBtn">Autentifică-te →</button>
       <div style="display:flex;align-items:center;gap:8px;margin:12px 0">
         <div style="flex:1;height:1px;background:var(--border)"></div>
-        <span style="font-size:11px;color:var(--text2)">sau</span>
+        <span style="font-size:11px;color:var(--text2)" data-i18n="orSep">sau</span>
         <div style="flex:1;height:1px;background:var(--border)"></div>
       </div>
       <button id="googleLoginBtn" style="width:100%;padding:9px;border:1px solid var(--border2);border-radius:9px;background:var(--bg3);color:var(--text);cursor:pointer;font-size:13px;font-weight:600;display:flex;align-items:center;justify-content:center;gap:8px;font-family:inherit;transition:all .18s">
         <svg width="16" height="16" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
-        Continuă cu Google
+        <span data-i18n="continueGoogle">Continuă cu Google</span>
       </button>
       <div style="text-align:center;font-size:11px;color:var(--text2);margin-top:10px">
-        Nu ai cont? <a id="switchToRegister" style="color:var(--accent);cursor:pointer">Înregistrează-te</a>
+        <span data-i18n="noAccount">Nu ai cont?</span> <a id="switchToRegister" style="color:var(--accent);cursor:pointer" data-i18n="signUp">Înregistrează-te</a>
       </div>
     </div>
 
     <!-- Register form -->
     <div id="registerForm" style="display:none">
-      <div style="font-size:13px;font-weight:700;margin-bottom:12px;color:var(--text)">Cont nou gratuit</div>
+      <div style="font-size:13px;font-weight:700;margin-bottom:12px;color:var(--text)" data-i18n="regTitle">Cont nou gratuit</div>
       <div style="margin-bottom:10px">
-        <div style="font-size:11px;color:var(--text2);margin-bottom:4px">Nume</div>
-        <input type="text" id="regName" placeholder="Numele tău"
+        <div style="font-size:11px;color:var(--text2);margin-bottom:4px" data-i18n="name">Nume</div>
+        <input type="text" id="regName" data-i18n-ph="yourName" placeholder="Numele tău"
           style="width:100%;padding:8px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;outline:none"/>
       </div>
       <div style="margin-bottom:10px">
-        <div style="font-size:11px;color:var(--text2);margin-bottom:4px">Email</div>
-        <input type="email" id="regEmail" placeholder="email@exemplu.com"
+        <div style="font-size:11px;color:var(--text2);margin-bottom:4px" data-i18n="email">Email</div>
+        <input type="email" id="regEmail" placeholder="email@example.com"
           style="width:100%;padding:8px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;outline:none"/>
       </div>
       <div style="margin-bottom:12px">
-        <div style="font-size:11px;color:var(--text2);margin-bottom:4px">Parolă</div>
-        <input type="password" id="regPass" placeholder="Minim 6 caractere"
+        <div style="font-size:11px;color:var(--text2);margin-bottom:4px" data-i18n="password">Parolă</div>
+        <input type="password" id="regPass" data-i18n-ph="passMin" placeholder="Minim 6 caractere"
           style="width:100%;padding:8px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;outline:none"/>
       </div>
-      <button id="doRegisterBtn" class="btn btn-primary" style="width:100%;justify-content:center">Creează cont gratuit →</button>
+      <button id="doRegisterBtn" class="btn btn-primary" style="width:100%;justify-content:center" data-i18n="registerBtn">Creează cont gratuit →</button>
       <!-- Cloudflare Turnstile (rendered only when sitekey is configured) -->
       <div id="tsTurnstileWrap" style="display:none;margin-top:10px">
         <div id="tsTurnstileBox"></div>
       </div>
       <div style="display:flex;align-items:center;gap:8px;margin:12px 0">
         <div style="flex:1;height:1px;background:var(--border)"></div>
-        <span style="font-size:11px;color:var(--text2)">sau</span>
+        <span style="font-size:11px;color:var(--text2)" data-i18n="orSep">sau</span>
         <div style="flex:1;height:1px;background:var(--border)"></div>
       </div>
       <button id="googleRegisterBtn" style="width:100%;padding:9px;border:1px solid var(--border2);border-radius:9px;background:var(--bg3);color:var(--text);cursor:pointer;font-size:13px;font-weight:600;display:flex;align-items:center;justify-content:center;gap:8px;font-family:inherit;transition:all .18s">
         <svg width="16" height="16" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
-        Continuă cu Google
+        <span data-i18n="continueGoogle">Continuă cu Google</span>
       </button>
       <div style="text-align:center;font-size:11px;color:var(--text2);margin-top:10px">
-        Ai deja cont? <a id="switchToLogin" style="color:var(--accent);cursor:pointer">Autentifică-te</a>
+        <span data-i18n="haveAccount">Ai deja cont?</span> <a id="switchToLogin" style="color:var(--accent);cursor:pointer" data-i18n="signIn">Autentifică-te</a>
       </div>
     </div>
   </div>
@@ -363,10 +355,11 @@ textarea::placeholder{color:var(--text2)}
 </div>
 
 <div class="footer">
-  <span class="footer-info" id="footerInfo">🔬 40+ surse · 26 domenii</span>
-  <a class="footer-link" id="openOptions">Configurare →</a>
+  <span class="footer-info" id="footerInfo" data-i18n="footerInfo">🔬 40+ surse · 26 domenii</span>
+  <a class="footer-link" id="openOptions" data-i18n="settings">Configurare →</a>
 </div>
 
+<script src="i18n.js"></script>
 <script src="popup.js"></script>
 </body>
 </html>

@@ -1,22 +1,13 @@
 <!DOCTYPE html>
-<html lang="ro">
+<html lang="en">
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>TruthScore — AI Fact Checker</title>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="/tokens.css"/>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-:root{
-  --bg:#080810;--bg2:#0e0e1a;--bg3:#141424;--bg4:#1a1a2e;
-  --border:rgba(255,255,255,.05);--border2:rgba(255,255,255,.09);--border3:rgba(255,255,255,.14);
-  --text:#f0f0fa;--text2:#7878a0;--text3:#3a3a60;
-  --accent:#5b4eff;--accent-h:#7060ff;--accent2:#8b5cf6;
-  --green:#10b981;--yellow:#f59e0b;--red:#ef4444;
-  --green-bg:rgba(16,185,129,.08);--red-bg:rgba(239,68,68,.08);--yellow-bg:rgba(245,158,11,.08);
-  --green-border:rgba(16,185,129,.18);--red-border:rgba(239,68,68,.18);--yellow-border:rgba(245,158,11,.18);
-  --radius:16px;--shadow:0 32px 80px rgba(0,0,0,.6);
-}
 html{scroll-behavior:smooth}
 body{
   background:var(--bg);color:var(--text);
@@ -330,8 +321,8 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
       <span id="usageText">— / —</span>
     </div>
     <div id="guestBtns" style="display:flex;gap:8px">
-      <button class="hbtn hbtn-ghost" onclick="showAuth('login')">Autentificare</button>
-      <button class="hbtn hbtn-solid" onclick="showAuth('register')">Cont gratuit →</button>
+      <button class="hbtn hbtn-ghost" onclick="showAuth('login')" data-i18n="login">Log in</button>
+      <button class="hbtn hbtn-solid" onclick="showAuth('register')" data-i18n="signupFree">Free account →</button>
     </div>
     <div class="user-chip" id="userChip" onclick="toggleUserMenu(event)">
       <div class="avatar" id="userAvatar">A</div>
@@ -340,10 +331,10 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
     </div>
     <div class="udrop" id="userDropdown">
       <div class="udrop-menu" onclick="event.stopPropagation()">
-        <div class="umitem" onclick="document.getElementById('userDropdown').classList.remove('open');showPricing()">⭐ Upgrade plan</div>
-        <div class="umitem" onclick="document.getElementById('userDropdown').classList.remove('open');openBillingPortal()">💳 Billing</div>
+        <div class="umitem" onclick="document.getElementById('userDropdown').classList.remove('open');showPricing()" data-i18n="upgrade">⭐ Upgrade plan</div>
+        <div class="umitem" onclick="document.getElementById('userDropdown').classList.remove('open');openBillingPortal()" data-i18n="billing">💳 Billing</div>
         <div class="umdiv"></div>
-        <div class="umitem" onclick="document.getElementById('userDropdown').classList.remove('open');doLogout()" style="color:var(--red)">↩ Deconectare</div>
+        <div class="umitem" onclick="document.getElementById('userDropdown').classList.remove('open');doLogout()" style="color:var(--red)" data-i18n="logout">↩ Log out</div>
       </div>
     </div>
   </div>
@@ -351,35 +342,36 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
 
 <main>
   <div class="hero">
-    <div class="hero-eyebrow">🔬 40+ surse · 26 domenii</div>
-    <h1 class="hero-title">Verifică orice<br/><em>afirmație</em> cu AI</h1>
-    <p class="hero-sub">Introdu orice afirmație și primești un verdict bazat pe dovezi din surse autorizate.</p>
+    <div class="hero-eyebrow" data-i18n="eyebrow">🔬 40+ sources · 26 domains</div>
+    <h1 class="hero-title" data-i18n-html="heroTitle">Verify any<br/><em>claim</em> with AI</h1>
+    <p class="hero-sub" data-i18n="heroSub">Enter any claim and get an evidence-based verdict from authoritative sources.</p>
   </div>
 
   <div class="limit-banner" id="limitBanner">
-    <div class="limit-text"><strong>Ai atins limita.</strong> Creează un cont pentru 10 verificări/zi gratuit.</div>
-    <button class="limit-cta" onclick="showPricing()">Vezi planuri →</button>
+    <div class="limit-text"><strong data-i18n="limitReached">You've hit the limit.</strong> <span data-i18n="limitCreate">Create an account for 10 free checks/day.</span></div>
+    <button class="limit-cta" onclick="showPricing()" data-i18n="seePlans">See plans →</button>
   </div>
 
   <div class="verify-card">
     <div class="err-box" id="errBox"></div>
     <textarea id="claimInput" maxlength="4000" rows="5"
-      placeholder="Introdu o afirmație sau un paragraf. Fiecare fapt va fi verificat separat...&#10;&#10;Ex: România a aderat la UE în 2007. București este capitala României, iar Timișoara este capitala țării."
+      data-i18n-ph="inputPlaceholder"
+      placeholder="Enter a claim or a paragraph. Each fact is verified separately…"
       oninput="onInput()"></textarea>
     <div class="input-meta">
-      <span class="hint">💡 Ctrl+Enter pentru verificare</span>
+      <span class="hint" data-i18n="ctrlEnter">💡 Ctrl+Enter to verify</span>
       <span class="char-count" id="charCount">0/500</span>
     </div>
     <div class="btn-row">
-      <button class="btn btn-secondary" onclick="nextExample()">💡 Exemplu</button>
-      <button class="btn btn-secondary" onclick="clearCache()" title="Șterge cache">🗑</button>
-      <button class="btn btn-primary" id="verifyBtn" onclick="runVerify()">🔍 Verifică acum</button>
+      <button class="btn btn-secondary" onclick="nextExample()" data-i18n="example">💡 Example</button>
+      <button class="btn btn-secondary" onclick="clearCache()" data-i18n-title="clearCache" title="Clear cache">🗑</button>
+      <button class="btn btn-primary" id="verifyBtn" onclick="runVerify()" data-i18n="verifyNow">🔍 Verify now</button>
     </div>
     <div class="loading" id="vLoad">
-      <div class="lrow"><div class="lico"><div class="spinner"></div></div><span class="ltxt active" id="ls1">Clasificare domeniu...</span></div>
-      <div class="lrow"><div class="lico">🔎</div><span class="ltxt" id="ls2">Căutare dovezi în 40+ surse...</span></div>
-      <div class="lrow"><div class="lico">⚖️</div><span class="ltxt" id="ls3">Filtrare și comparare surse...</span></div>
-      <div class="lrow"><div class="lico">✅</div><span class="ltxt" id="ls4">Calcul TruthScore final...</span></div>
+      <div class="lrow"><div class="lico"><div class="spinner"></div></div><span class="ltxt active" id="ls1" data-i18n="ls1">Analyzing claim…</span></div>
+      <div class="lrow"><div class="lico">🔎</div><span class="ltxt" id="ls2" data-i18n="ls2">Searching evidence across 40+ sources…</span></div>
+      <div class="lrow"><div class="lico">⚖️</div><span class="ltxt" id="ls3" data-i18n="ls3">Filtering and comparing sources…</span></div>
+      <div class="lrow"><div class="lico">✅</div><span class="ltxt" id="ls4" data-i18n="ls4">Computing final TruthScore…</span></div>
     </div>
   </div>
 
@@ -387,9 +379,9 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
     <div class="score-card" id="scoreCard"></div>
     <div class="right-panel">
       <div class="tabs">
-        <button class="tab active" onclick="switchTab('sources',this)">📚 Surse</button>
-        <button class="tab" onclick="switchTab('explain',this)">🔍 Analiză</button>
-        <button class="tab" onclick="switchTab('sub',this)">🔀 Sub-claims</button>
+        <button class="tab active" onclick="switchTab('sources',this)" data-i18n="tabSources">📚 Sources</button>
+        <button class="tab" onclick="switchTab('explain',this)" data-i18n="tabAnalysis">🔍 Analysis</button>
+        <button class="tab" onclick="switchTab('sub',this)" data-i18n="tabSub">🔀 Sub-claims</button>
       </div>
       <div class="tab-panel active" id="tp-sources"></div>
       <div class="tab-panel" id="tp-explain"></div>
@@ -417,8 +409,12 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
 
 <footer>
   <div class="footer-links">
-    <a href="#" onclick="showPricing();return false">Prețuri</a>
-    <a href="/privacy">Confidențialitate</a>
+    <a href="#" onclick="showPricing();return false" data-i18n="pricing">Pricing</a>
+    <a href="/privacy" data-i18n="privacy">Privacy</a>
+    <select id="langSwitch" onchange="setLang(this.value)" style="background:transparent;border:1px solid var(--border2);color:var(--text2);border-radius:8px;padding:3px 8px;font-size:12px;cursor:pointer">
+      <option value="en">English</option>
+      <option value="ro">Română</option>
+    </select>
   </div>
 </footer>
 </div>
@@ -433,43 +429,43 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
 <div class="overlay" id="pricingOverlay" onmousedown="if(event.target===this)closePricing()">
   <div class="modal pricing-modal">
     <button class="modal-x" onclick="closePricing()">✕</button>
-    <div class="modal-title">Planuri & Prețuri</div>
-    <div class="modal-sub" style="margin-bottom:22px">Simplu și transparent. Cancel oricând.</div>
+    <div class="modal-title" data-i18n="pricingTitle2">Planuri & Prețuri</div>
+    <div class="modal-sub" style="margin-bottom:22px" data-i18n="pricingSub2">Simplu și transparent. Cancel oricând.</div>
     <div class="plans-grid">
       <div class="plan">
         <div class="plan-name">Free</div>
         <div class="plan-price"><sup>€</sup>0</div>
-        <div class="plan-period">pentru totdeauna</div>
-        <button class="plan-btn pbtn-b" onclick="showAuth('register')">Înregistrează-te</button>
+        <div class="plan-period" data-i18n="priceForever">pentru totdeauna</div>
+        <button class="plan-btn pbtn-b" onclick="showAuth('register')" data-i18n="registerBtn">Înregistrează-te</button>
         <ul class="plan-feats">
-          <li>✅ 10 verificări / zi</li><li>✅ 26 domenii</li>
-          <li>✅ Extensie browser</li><li>✅ AI Detect</li>
-          <li class="off">❌ Rapoarte PDF</li><li class="off">❌ Batch verify</li><li class="off">❌ Widget embed</li>
+          <li data-i18n-html="fChecks10">✅ 10 verificări / zi</li><li data-i18n-html="fDomains">✅ 26 domenii</li>
+          <li data-i18n-html="fExtension">✅ Extensie browser</li><li data-i18n-html="fAiDetect">✅ AI Detect</li>
+          <li class="off" data-i18n-html="fPdfOff">❌ Rapoarte PDF</li><li class="off" data-i18n-html="fBatchOff">❌ Batch verify</li><li class="off" data-i18n-html="fWidgetOff">❌ Widget embed</li>
         </ul>
       </div>
       <div class="plan featured">
-        <div class="plan-badge">⭐ POPULAR</div>
+        <div class="plan-badge" data-i18n="mostPopular">⭐ POPULAR</div>
         <div class="plan-name">Pro</div>
         <div class="plan-price"><sup>€</sup>9</div>
-        <div class="plan-period">/ lună</div>
-        <button class="plan-btn pbtn-a" onclick="checkout('pro')">Alege Pro →</button>
+        <div class="plan-period" data-i18n="priceMonth">/ lună</div>
+        <button class="plan-btn pbtn-a" onclick="checkout('pro')" data-i18n="choosePro">Alege Pro →</button>
         <ul class="plan-feats">
-          <li>✅ <strong>500 verificări / zi</strong></li><li>✅ 26 domenii</li>
-          <li>✅ Extensie browser</li><li>✅ AI Detect</li>
-          <li>✅ <strong>Rapoarte PDF</strong></li><li>✅ <strong>Batch (50)</strong></li>
-          <li>✅ <strong>Widget embed</strong></li>
+          <li data-i18n-html="fChecks500">✅ <strong>500 verificări / zi</strong></li><li data-i18n-html="fDomains">✅ 26 domenii</li>
+          <li data-i18n-html="fExtension">✅ Extensie browser</li><li data-i18n-html="fAiDetect">✅ AI Detect</li>
+          <li data-i18n-html="fPdfOn">✅ <strong>Rapoarte PDF</strong></li><li data-i18n-html="fBatch50">✅ <strong>Batch (50)</strong></li>
+          <li data-i18n-html="fWidgetOn">✅ <strong>Widget embed</strong></li>
         </ul>
       </div>
       <div class="plan">
         <div class="plan-name">Enterprise</div>
         <div class="plan-price"><sup>€</sup>49</div>
-        <div class="plan-period">/ lună</div>
-        <button class="plan-btn pbtn-b" onclick="checkout('enterprise')">Alege Enterprise →</button>
+        <div class="plan-period" data-i18n="priceMonth">/ lună</div>
+        <button class="plan-btn pbtn-b" onclick="checkout('enterprise')" data-i18n="chooseEnterprise">Alege Enterprise →</button>
         <ul class="plan-feats">
-          <li>✅ <strong>Nelimitat / zi</strong></li><li>✅ 26 domenii</li>
-          <li>✅ Extensie browser</li><li>✅ AI Detect</li>
-          <li>✅ Rapoarte PDF</li><li>✅ <strong>Batch (500)</strong></li>
-          <li>✅ <strong>API + SLA</strong></li>
+          <li data-i18n-html="fChecksUnl">✅ <strong>Nelimitat / zi</strong></li><li data-i18n-html="fDomains">✅ 26 domenii</li>
+          <li data-i18n-html="fExtension">✅ Extensie browser</li><li data-i18n-html="fAiDetect">✅ AI Detect</li>
+          <li data-i18n-html="fPdfOnPlain">✅ Rapoarte PDF</li><li data-i18n-html="fBatch500">✅ <strong>Batch (500)</strong></li>
+          <li data-i18n-html="fApiSla">✅ <strong>API + SLA</strong></li>
         </ul>
       </div>
     </div>
@@ -482,10 +478,143 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
 // whatever origin this page was loaded from (localhost while developing,
 // the Render URL once deployed). No hardcoded host needed.
 const API='';
+
+// ── Internationalization (English default, any language via switcher) ──────
+// Single source of UI copy. t('key') returns the string for the active LANG,
+// falling back to English. LANG is detected from the browser, overridable via
+// the switcher and persisted in localStorage.
+const I18N={
+  en:{
+    tagline:'AI fact-checking with real sources',
+    placeholder:'Enter a claim to verify — or a whole paragraph…',
+    verify:'Verify', verifying:'Verifying…',
+    tabSources:'📚 Sources', tabAnalysis:'🔍 Analysis', tabSub:'🔀 Sub-claims',
+    ls1:'Analyzing claim…', ls2:'Searching evidence across 40+ sources…',
+    ls3:'Filtering and comparing sources…', ls4:'Computing final TruthScore…',
+    pricing:'Pricing', privacy:'Privacy',
+    TRUE:'TRUE', FALSE:'FALSE', UNCERTAIN:'UNCERTAIN', MIXED:'MIXED',
+    confHigh:'🟢 High confidence', confMed:'🟡 Medium', confLow:'🔴 Low',
+    verdictCorrect:'Is this verdict correct?',
+    evidence:'evidence', supportN:'support', contradictN:'contradict',
+    sourcesTitle:'Sources & Evidence', grpSupport:'✅ Supports', grpContradict:'❌ Contradicts', grpRelevant:'⚪ Relevant',
+    subTitle:'Sub-claims', subIntro:'Each part scored on its own evidence; the overall verdict is their weighted aggregate.',
+    subSources:'📎 SOURCES FOR THIS SUB-CLAIM', noDirect:'no direct sources',
+    simpleClaim:'This claim is simple — it was not split into sub-claims.',
+    verifyIndividually:'Click to verify individually:', verifyArrow:'verify →',
+    overallVerdict:'Overall verdict', eachClaim:'Each claim',
+    login:'Log in', signupFree:'Free account →',
+    upgrade:'⭐ Upgrade plan', billing:'💳 Billing', logout:'↩ Log out',
+    eyebrow:'🔬 40+ sources · 26 domains',
+    heroTitle:'Verify any<br/><em>claim</em> with AI',
+    heroSub:'Enter any claim and get an evidence-based verdict from authoritative sources.',
+    limitReached:'You\'ve hit the limit.', limitCreate:'Create an account for 10 free checks/day.',
+    seePlans:'See plans →',
+    inputPlaceholder:'Enter a claim or a paragraph. Each fact is verified separately…\n\nE.g.: Romania joined the EU in 2007. Bucharest is the capital of Romania.',
+    ctrlEnter:'💡 Ctrl+Enter to verify', example:'💡 Example', clearCache:'Clear cache',
+    verifyNow:'🔍 Verify now',
+    langName:'English',
+    verifySteps:'How we got here', stepSplit:'Split the text', stepSplitD:'We extracted each verifiable fact on its own.',
+    stepSearch:'Search evidence', stepSearchD:'For each fact we pulled sources from trusted domains (academic, encyclopedic, news).',
+    stepWeigh:'Compare evidence', stepWeighD:'Where sources agree they support; where they contradict we mark false; where split we say “mixed”.',
+    stepVerdict:'Form the verdict', stepVerdictD:'Each fact has its own verdict, and the final one reflects the level of agreement.',
+    claimN:'CLAIM', enterClaim:'Enter a claim.', backendOffline:'Backend offline. Start: uvicorn main:app --reload',
+    pdfError:'PDF generation error', stripeError:'Stripe error', connError:'Connection error', noSub:'You have no active subscription.',
+    createAccount:'Create account', createSub:'Free · 10 checks/day · No card',
+    fieldName:'Name', fieldNamePh:'Your name', fieldEmail:'Email', fieldPass:'Password', passPh:'At least 6 characters',
+    createBtn:'Create free account →', orSep:'or', continueGoogle:'Continue with Google',
+    haveAccount:'Already have an account?', signInLink:'Sign in',
+    welcome:'Welcome back!', loginSub:'Sign in to continue', passPh2:'Your password', loginBtn:'Sign in →',
+    noAccount:'No account yet?', registerLink:'Register free',
+    fillAll:'Fill in all fields', passMin:'Password min 6 characters', creating:'Creating account…', signingIn:'Signing in…',
+    genericError:'Error', wrongCreds:'Wrong email or password',
+    pricingTitle:'Choose your plan', pricingSub:'Cancel anytime · Secure payment via Stripe',
+    planFree:'Free', planPro:'Pro', planEnterprise:'Enterprise', perMonth:'/mo',
+    freeChecks:'10 checks/day', proChecks:'500 checks/day', entChecks:'Unlimited checks',
+    featSources:'All sources & domains', featNoAds:'No ads', featPdf:'PDF reports', featApi:'API access', featPriority:'Priority speed',
+    currentPlan:'Current plan', choosePro:'Choose Pro', chooseEnterprise:'Choose Enterprise', mostPopular:'MOST POPULAR',
+    priceForever:'forever', priceMonth:'/ month', registerBtn:'Register',
+    fChecks10:'✅ 10 checks / day', fChecks500:'✅ <strong>500 checks / day</strong>', fChecksUnl:'✅ <strong>Unlimited / day</strong>',
+    fDomains:'✅ 26 domains', fExtension:'✅ Browser extension', fAiDetect:'✅ AI Detect',
+    fPdfOff:'❌ PDF reports', fBatchOff:'❌ Batch verify', fWidgetOff:'❌ Widget embed',
+    fPdfOn:'✅ <strong>PDF reports</strong>', fBatch50:'✅ <strong>Batch (50)</strong>', fWidgetOn:'✅ <strong>Widget embed</strong>',
+    fPdfOnPlain:'✅ PDF reports', fBatch500:'✅ <strong>Batch (500)</strong>', fApiSla:'✅ <strong>API + SLA</strong>',
+    pricingTitle2:'Plans & Pricing', pricingSub2:'Simple and transparent. Cancel anytime.',
+  },
+  ro:{
+    tagline:'Fact-checking cu AI și surse reale',
+    placeholder:'Introdu o afirmație de verificat — sau un paragraf întreg…',
+    verify:'Verifică', verifying:'Se verifică…',
+    tabSources:'📚 Surse', tabAnalysis:'🔍 Analiză', tabSub:'🔀 Sub-claims',
+    ls1:'Analiză afirmație…', ls2:'Căutare dovezi în 40+ surse…',
+    ls3:'Filtrare și comparare surse…', ls4:'Calcul TruthScore final…',
+    pricing:'Prețuri', privacy:'Confidențialitate',
+    TRUE:'ADEVĂRAT', FALSE:'FALS', UNCERTAIN:'INCERT', MIXED:'MIXT',
+    confHigh:'🟢 Confidență ridicată', confMed:'🟡 Medie', confLow:'🔴 Scăzută',
+    verdictCorrect:'Verdictul e corect?',
+    evidence:'dovezi', supportN:'susțin', contradictN:'contrazic',
+    sourcesTitle:'Surse & Evidențe', grpSupport:'✅ Susțin', grpContradict:'❌ Contrazic', grpRelevant:'⚪ Relevante',
+    subTitle:'Sub-afirmații', subIntro:'Fiecare parte e punctată pe dovezile ei; verdictul general e agregatul lor ponderat.',
+    subSources:'📎 SURSELE ACESTEI SUB-AFIRMAȚII', noDirect:'fără surse directe',
+    simpleClaim:'Afirmația este simplă — nu s-a împărțit în sub-afirmații.',
+    verifyIndividually:'Click pentru verificare individuală:', verifyArrow:'verifică →',
+    overallVerdict:'Verdict general', eachClaim:'Fiecare afirmație',
+    login:'Autentificare', signupFree:'Cont gratuit →',
+    upgrade:'⭐ Upgrade plan', billing:'💳 Facturare', logout:'↩ Deconectare',
+    eyebrow:'🔬 40+ surse · 26 domenii',
+    heroTitle:'Verifică orice<br/><em>afirmație</em> cu AI',
+    heroSub:'Introdu orice afirmație și primești un verdict bazat pe dovezi din surse autorizate.',
+    limitReached:'Ai atins limita.', limitCreate:'Creează un cont pentru 10 verificări/zi gratuit.',
+    seePlans:'Vezi planuri →',
+    inputPlaceholder:'Introdu o afirmație sau un paragraf. Fiecare fapt va fi verificat separat…\n\nEx: România a aderat la UE în 2007. București este capitala României.',
+    ctrlEnter:'💡 Ctrl+Enter pentru verificare', example:'💡 Exemplu', clearCache:'Șterge cache',
+    verifyNow:'🔍 Verifică acum',
+    langName:'Română',
+    verifySteps:'De ce am ajuns aici', stepSplit:'Desfacem textul', stepSplitD:'Am extras fiecare fapt verificabil ca fiind distinct.',
+    stepSearch:'Căutăm dovezi', stepSearchD:'Pentru fiecare fapt am adus surse din domenii de încredere (academice, enciclopedice, știri).',
+    stepWeigh:'Comparăm dovezile', stepWeighD:'Unde sursele sunt de acord susțin; unde contrazic marcăm fals; unde sunt divizate spunem „mixt”.',
+    stepVerdict:'Formulăm verdictul', stepVerdictD:'Fiecare fapt are propriul verdict, iar cel final reflectă nivelul de acord.',
+    claimN:'AFIRMAȚIA', enterClaim:'Introdu o afirmație.', backendOffline:'Backend offline. Pornește: uvicorn main:app --reload',
+    pdfError:'Eroare generare PDF', stripeError:'Eroare Stripe', connError:'Eroare conexiune', noSub:'Nu ai o subscripție activă.',
+    createAccount:'Creează cont', createSub:'Gratuit · 10 verificări/zi · Fără card',
+    fieldName:'Nume', fieldNamePh:'Numele tău', fieldEmail:'Email', fieldPass:'Parolă', passPh:'Minim 6 caractere',
+    createBtn:'Creează cont gratuit →', orSep:'sau', continueGoogle:'Continuă cu Google',
+    haveAccount:'Ai deja cont?', signInLink:'Autentifică-te',
+    welcome:'Bun venit!', loginSub:'Autentifică-te pentru a continua', passPh2:'Parola ta', loginBtn:'Autentifică-te →',
+    noAccount:'Nu ai cont?', registerLink:'Înregistrează-te gratuit',
+    fillAll:'Completează toate câmpurile', passMin:'Parola minim 6 caractere', creating:'Se creează contul…', signingIn:'Se autentifică…',
+    genericError:'Eroare', wrongCreds:'Email sau parolă incorectă',
+    pricingTitle:'Alege planul', pricingSub:'Anulezi oricând · Plată securizată prin Stripe',
+    planFree:'Gratuit', planPro:'Pro', planEnterprise:'Enterprise', perMonth:'/lună',
+    freeChecks:'10 verificări/zi', proChecks:'500 verificări/zi', entChecks:'Verificări nelimitate',
+    featSources:'Toate sursele și domeniile', featNoAds:'Fără reclame', featPdf:'Rapoarte PDF', featApi:'Acces API', featPriority:'Viteză prioritară',
+    currentPlan:'Planul curent', choosePro:'Alege Pro', chooseEnterprise:'Alege Enterprise', mostPopular:'CEL MAI POPULAR',
+    priceForever:'pentru totdeauna', priceMonth:'/ lună', registerBtn:'Înregistrează-te',
+    fChecks10:'✅ 10 verificări / zi', fChecks500:'✅ <strong>500 verificări / zi</strong>', fChecksUnl:'✅ <strong>Nelimitat / zi</strong>',
+    fDomains:'✅ 26 domenii', fExtension:'✅ Extensie browser', fAiDetect:'✅ AI Detect',
+    fPdfOff:'❌ Rapoarte PDF', fBatchOff:'❌ Batch verify', fWidgetOff:'❌ Widget embed',
+    fPdfOn:'✅ <strong>Rapoarte PDF</strong>', fBatch50:'✅ <strong>Batch (50)</strong>', fWidgetOn:'✅ <strong>Widget embed</strong>',
+    fPdfOnPlain:'✅ Rapoarte PDF', fBatch500:'✅ <strong>Batch (500)</strong>', fApiSla:'✅ <strong>API + SLA</strong>',
+    pricingTitle2:'Planuri & Prețuri', pricingSub2:'Simplu și transparent. Cancel oricând.',
+  },
+};
+let LANG=(localStorage.getItem('ts_lang')||(navigator.language||'en').slice(0,2).toLowerCase());
+if(!I18N[LANG])LANG='en';
+function t(k){return (I18N[LANG]&&I18N[LANG][k])||I18N.en[k]||k;}
+function setLang(l){if(!I18N[l])l='en';LANG=l;localStorage.setItem('ts_lang',l);applyI18n();if(lastResult)renderAll(lastResult);}
+function applyI18n(){
+  document.documentElement.lang=LANG;
+  document.querySelectorAll('[data-i18n]').forEach(el=>{el.textContent=t(el.getAttribute('data-i18n'));});
+  document.querySelectorAll('[data-i18n-html]').forEach(el=>{el.innerHTML=t(el.getAttribute('data-i18n-html'));});
+  document.querySelectorAll('[data-i18n-ph]').forEach(el=>{el.setAttribute('placeholder',t(el.getAttribute('data-i18n-ph')));});
+  document.querySelectorAll('[data-i18n-title]').forEach(el=>{el.setAttribute('title',t(el.getAttribute('data-i18n-title')));});
+  const sw=document.getElementById('langSwitch');
+  if(sw)sw.value=LANG;
+}
+document.addEventListener('DOMContentLoaded',applyI18n);
 const SRC_ICONS={web:'🌐',wikipedia:'📖',wikidata:'🗄️',academic:'🎓',news:'📰',factcheck:'🔎'};
 const TOPIC_ICONS={medical:'🏥',biology:'🧬',chemistry:'⚗️',physics:'⚛️',astronomy:'🌌',mathematics:'📐',logic:'🔣',cs_tech:'💻',engineering:'⚙️',geography:'🌍',history:'📜',literature:'📚',art:'🎨',sports:'⚽',economics:'💰',business:'💼',climate:'🌡️',politics:'🏛️',sociology:'👥',psychology:'🧠',philosophy:'💭',ethics:'⚖️',religion:'✝️',nutrition:'🥗',news:'📰',general:'🔍'};
-const TOPIC_LABELS={medical:'Medicină',biology:'Biologie',chemistry:'Chimie',physics:'Fizică',astronomy:'Astronomie',mathematics:'Matematică',logic:'Logică',cs_tech:'Informatică',engineering:'Inginerie',geography:'Geografie',history:'Istorie',literature:'Literatură',art:'Artă',sports:'Sport',economics:'Economie',business:'Business',climate:'Climă',politics:'Politică',sociology:'Sociologie',psychology:'Psihologie',philosophy:'Filosofie',ethics:'Etică',religion:'Religie',nutrition:'Nutriție',news:'Știri',general:'General'};
-const EXAMPLES=['Vaccinurile cauzează autism.','România a aderat la UE în 2007.','Marele Zid Chinezesc este vizibil din spațiu.','Suma unghiurilor unui triunghi este 180°.','Numărul π este irațional.','Apa pură are pH 7 la 25°C.','Shakespeare a scris Hamlet.','CO2 contribuie la încălzirea globală.'];
+const TOPIC_LABELS={medical:'Medicine',biology:'Biology',chemistry:'Chemistry',physics:'Physics',astronomy:'Astronomy',mathematics:'Mathematics',logic:'Logic',cs_tech:'Computer Science',engineering:'Engineering',geography:'Geography',history:'History',literature:'Literature',art:'Art',sports:'Sports',economics:'Economics',business:'Business',climate:'Climate',politics:'Politics',sociology:'Sociology',psychology:'Psychology',philosophy:'Philosophy',ethics:'Ethics',religion:'Religion',nutrition:'Nutrition',news:'News',general:'General'};
+const EXAMPLES=['Vaccines cause autism.','Romania joined the EU in 2007.','The Great Wall of China is visible from space.','The angles of a triangle sum to 180°.','The number π is irrational.','Pure water has a pH of 7 at 25°C.','Shakespeare wrote Hamlet.','CO2 contributes to global warming.'];
 let exIdx=0,lastResult=null,stepTimer=null,currentUser=null;
 const token=()=>localStorage.getItem('ts_token');
 function anonUsed(){return parseInt(localStorage.getItem('ts_anon_used')||'0')}
@@ -601,7 +730,7 @@ async function clearCache(){
 }
 async function runVerify(){
   const text=document.getElementById('claimInput').value.trim();
-  if(!text){showErr('Introdu o afirmație.');return;}
+  if(!text){showErr(t('enterClaim'));return;}
   if(!currentUser&&anonUsed()>=ANON_LIMIT){document.getElementById('limitBanner').className='limit-banner show';showAuth('register');return;}
   if(currentUser&&currentUser.used_today>=currentUser.daily_limit){document.getElementById('limitBanner').className='limit-banner show';showPricing();return;}
   hideErr();
@@ -634,7 +763,7 @@ async function runVerify(){
   }catch(e){
     clearInterval(stepTimer);
     document.getElementById('vLoad').className='loading';
-    showErr(e.message.includes('fetch')?'Backend offline. Pornește: uvicorn main:app --reload':e.message);
+    showErr(e.message.includes('fetch')?t('backendOffline'):e.message);
   }
   document.getElementById('verifyBtn').disabled=false;
 
@@ -650,24 +779,24 @@ function renderTextAnalysis(d){
   window.jumpSrc=n=>{const b=window._tabBtn('sources');if(b)b.click();setTimeout(()=>{const el=document.getElementById('src-'+n);if(el){el.classList.remove('hl');void el.offsetWidth;el.classList.add('hl');el.scrollIntoView({behavior:'smooth',block:'center'});}},70);};
   window.jumpClaim=i=>{const b=window._tabBtn('explain');if(b)b.click();setTimeout(()=>{const el=document.getElementById('exp-'+i);if(el){el.classList.remove('hl');void el.offsetWidth;el.classList.add('hl');el.scrollIntoView({behavior:'smooth',block:'start'});}},70);};
   const DIC={web:'🌐',wikipedia:'📖',wikidata:'🗄️',academic:'🎓',news:'📰',factcheck:'🔎'};
-  document.getElementById('tp-sources').innerHTML=`<div class="sec-lbl">Surse colectate (${reg.length})</div><div style="font-size:11px;color:var(--text2);margin:-2px 0 10px">Numerotate global pentru tot paragraful · verde = susține o afirmație, roșu = contrazice (pentru atribuire vezi fila Sub-claims)</div>`+
+  document.getElementById('tp-sources').innerHTML=`<div class="sec-lbl">${t('sourcesTitle')} (${reg.length})</div><div style="font-size:11px;color:var(--text2);margin:-2px 0 10px">${LANG==='ro'?'Numerotate global pentru tot paragraful · verde = susține, roșu = contrazice (atribuirea în fila Sub-claims)':'Numbered globally for the whole paragraph · green = supports, red = contradicts (attribution in the Sub-claims tab)'}</div>`+
     reg.map((s,n)=>`<a id="src-${n}" class="src-line" href="${esc(s.url||'#')}" target="_blank" rel="noopener"><span class="src-num">${n}</span><span style="color:${s._stance==='ts'?'var(--green)':s._stance==='tc'?'var(--red)':'var(--text2)'};flex-shrink:0">${s._stance==='ts'?'✓':s._stance==='tc'?'✗':'•'}</span><span class="src-pub">${DIC[s.type]||'📄'} ${esc((s.publisher||'sursă').slice(0,42))}</span><span class="src-title" title="${esc(s.title||'')}">${esc(s.title||'')}</span></a>`).join('');
-      const PROC=[['🔍','Despărțire','Paragraful a fost spart în afirmații atomice, independente și verificabile.'],['🔎','Căutare țintită','Pentru fiecare afirmație s-au adus surse din domenii de încredere, adaptate topicului ei.'],['⚖️','Cântărire dovezilor','Cross-encoder + NLI au evaluat fiecare sursă ca susținere sau contrazicere.'],['🧠','Verdict','Modelul de limbaj a sintetizat scorul final doar din dovezile cântărite, cu citări obligatorii.']];
-  document.getElementById('tp-explain').innerHTML=`<div class="sec-lbl">Procesul de verificare</div>${PROC.map(p=>`<div class="proc-step"><span style="font-size:16px;flex-shrink:0">${p[0]}</span><span><b>${p[1]}</b> — ${p[2]}</span></div>`).join('')}`+
+      const PROC=LANG==='ro'?[['🔍','Despărțire','Paragraful a fost spart în afirmații atomice, independente și verificabile.'],['🔎','Căutare țintită','Pentru fiecare afirmație s-au adus surse din domenii de încredere, adaptate topicului ei.'],['⚖️','Cântărire dovezilor','Cross-encoder + NLI au evaluat fiecare sursă ca susținere sau contrazicere.'],['🧠','Verdict','Modelul de limbaj a sintetizat scorul final doar din dovezile cântărite, cu citări obligatorii.']]:[['🔍','Splitting','The paragraph was broken into atomic, independent, verifiable claims.'],['🔎','Targeted search','For each claim, sources were pulled from trusted domains matched to its topic.'],['⚖️','Weighing evidence','A cross-encoder + NLI scored every source as supporting or contradicting.'],['🧠','Verdict','The language model synthesized the final score only from the weighted evidence, with mandatory citations.']];
+  document.getElementById('tp-explain').innerHTML=`<div class="sec-lbl">${t('verifySteps')}</div>${PROC.map(p=>`<div class="proc-step"><span style="font-size:16px;flex-shrink:0">${p[0]}</span><span><b>${p[1]}</b> — ${p[2]}</span></div>`).join('')}`+
     d.results.map((r,i)=>{const color=r.verdict==='TRUE'?'var(--green)':r.verdict==='FALSE'?'var(--red)':'var(--yellow)';
-      return `<div id="exp-${i}" class="sub-item" style="border-left:3px solid ${color};margin-top:10px"><div style="display:flex;justify-content:space-between;gap:10px;font-size:11px;font-weight:800;color:${color}"><span>AFIRMAȚIA #${i+1}</span><span>${TOPIC_ICONS[r.topic]||'🔍'} ${esc(TOPIC_LABELS[r.topic]||r.topic)}${r.confidence?' · '+esc(r.confidence):''}</span></div><div style="font-size:13px;font-weight:650;margin-top:6px">${esc(r.claim||'')}</div><div style="font-size:12px;color:#b8b8d4;margin-top:6px;line-height:1.65">${esc(r.explanation||'—')}</div><div style="display:flex;gap:14px;margin-top:8px;font-size:10px;color:var(--text2)"><span style="color:var(--green)">✓ ${(r.supporting||[]).length} susțin</span><span style="color:var(--red)">✗ ${(r.contradicting||[]).length} contrazic</span><span>• ${(r.neutral_sources||[]).length} neutre</span></div></div>`;}).join('');
-  document.getElementById('tp-sub').innerHTML=`<div class="sec-lbl">Afirmații separate (${d.results.length})</div><div style="font-size:11px;color:var(--text2);margin:-2px 0 10px">Fiecare bucată cu scorul propriu și sursele ei complete · numerotarea corespunde filrei Surse</div>`+
+      return `<div id="exp-${i}" class="sub-item" style="border-left:3px solid ${color};margin-top:10px"><div style="display:flex;justify-content:space-between;gap:10px;font-size:11px;font-weight:800;color:${color}"><span>${t('claimN')} #${i+1}</span><span>${TOPIC_ICONS[r.topic]||'🔍'} ${esc(TOPIC_LABELS[r.topic]||r.topic)}${r.confidence?' · '+esc(r.confidence):''}</span></div><div style="font-size:13px;font-weight:650;margin-top:6px">${esc(r.claim||'')}</div><div style="font-size:12px;color:#b8b8d4;margin-top:6px;line-height:1.65">${esc(r.explanation||'—')}</div><div style="display:flex;gap:14px;margin-top:8px;font-size:10px;color:var(--text2)"><span style="color:var(--green)">✓ ${(r.supporting||[]).length} ${t('supportN')}</span><span style="color:var(--red)">✗ ${(r.contradicting||[]).length} ${t('contradictN')}</span><span>• ${(r.neutral_sources||[]).length} ${LANG==='ro'?'neutre':'neutral'}</span></div></div>`;}).join('');
+  document.getElementById('tp-sub').innerHTML=`<div class="sec-lbl">${t('subTitle')} (${d.results.length})</div><div style="font-size:11px;color:var(--text2);margin:-2px 0 10px">${t('subIntro')}</div>`+
     d.results.map((r,i)=>{const color=r.verdict==='TRUE'?'var(--green)':r.verdict==='FALSE'?'var(--red)':'var(--yellow)';
-      const label=r.verdict==='TRUE'?'ADEVĂRAT':r.verdict==='FALSE'?'FALS':'INCERT';
+      const label=r.verdict==='TRUE'?t('TRUE'):r.verdict==='FALSE'?t('FALSE'):t('UNCERTAIN');
       const lrow=(g,c,ic)=>{let seen=new Set(),out='';(g||[]).forEach(s=>{if(!s||!s._ref||seen.has(s._ref))return;seen.add(s._ref);
-        out+=`<a class="src-line" href="${esc(s.url||'#')}" target="_blank" rel="noopener" style="padding:5px 9px"><span class="src-num">${s._ref}</span><span style="color:${c};flex-shrink:0;font-size:11px">${ic}</span><span class="src-pub">${DIC[s.type]||'📄'} ${esc((s.publisher||'sursă').slice(0,38))}</span><span class="src-title">${esc((s.title||'').slice(0,64))}</span></a>`;});return out;};
-      const refBlock=lrow(r.supporting,'var(--green)','✓')+lrow(r.contradicting,'var(--red)','✗')+lrow(r.neutral_sources,'var(--text2)','•')||'<div style="font-size:10px;color:var(--text2);opacity:.7">fără referințe directe</div>';
+        out+=`<a class="src-line" href="${esc(s.url||'#')}" target="_blank" rel="noopener" style="padding:5px 9px"><span class="src-num">${s._ref}</span><span style="color:${c};flex-shrink:0;font-size:11px">${ic}</span><span class="src-pub">${DIC[s.type]||'📄'} ${esc((s.publisher||'source').slice(0,38))}</span><span class="src-title">${esc((s.title||'').slice(0,64))}</span></a>`;});return out;};
+      const refBlock=lrow(r.supporting,'var(--green)','✓')+lrow(r.contradicting,'var(--red)','✗')+lrow(r.neutral_sources,'var(--text2)','•')||`<div style="font-size:10px;color:var(--text2);opacity:.7">${t('noDirect')}</div>`;
       return `<div class="sub-item" onclick="jumpClaim(${i})" style="display:block;border-left:3px solid ${color};margin-bottom:8px;cursor:pointer">
-        <div style="display:flex;justify-content:space-between;gap:12px;color:${color};font-size:11px;font-weight:800"><span>BUCATA #${i+1}</span><span>${label} · ${TOPIC_ICONS[r.topic]||'🔍'} ${esc(TOPIC_LABELS[r.topic]||r.topic)}</span></div>
+        <div style="display:flex;justify-content:space-between;gap:12px;color:${color};font-size:11px;font-weight:800"><span>${t('claimN')} #${i+1}</span><span>${label} · ${TOPIC_ICONS[r.topic]||'🔍'} ${esc(TOPIC_LABELS[r.topic]||r.topic)}</span></div>
         <div style="font-size:13px;font-weight:650;margin-top:7px">${esc(r.claim||'')}</div>
         <div style="font-size:11px;color:var(--text2);margin-top:5px">${esc((r.explanation||'').slice(0,140))}${(r.explanation||'').length>140?'…':''}</div>
         <div style="display:flex;align-items:center;gap:8px;margin-top:8px"><div style="flex:1;height:5px;border-radius:99px;background:rgba(128,128,160,.22);overflow:hidden"><div style="height:100%;width:${Math.max(3,r.score)}%;background:${color};border-radius:99px"></div></div><span style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:${color};min-width:38px;text-align:right">${r.score}%</span></div>
-        <div style="margin-top:8px;font-size:9px;font-weight:800;color:var(--text2);opacity:.85;letter-spacing:.4px">📎 SURSELE ACESTEI BUCĂȚI · click pentru citit</div>
+        <div style="margin-top:8px;font-size:9px;font-weight:800;color:var(--text2);opacity:.85;letter-spacing:.4px">${t('subSources')}</div>
         <div style="margin-top:4px">${refBlock}</div></div>`;
     }).join('');
   document.getElementById('resultWrap').className='result-wrap active';
@@ -692,7 +821,7 @@ function renderScore(d){
   const score=d.score??50,verdict=d.verdict||'UNCERTAIN';
   const color=verdict==='TRUE'?'#10b981':verdict==='FALSE'?'#ef4444':verdict==='MIXED'?'#8b5cf6':'#f59e0b';
   const icon=verdict==='TRUE'?'✅':verdict==='FALSE'?'❌':verdict==='MIXED'?'🔀':'⚠️';
-  const lbl=verdict==='TRUE'?'ADEVĂRAT':verdict==='FALSE'?'FALS':verdict==='MIXED'?'MIXT':'INCERT';
+  const lbl=verdict==='TRUE'?t('TRUE'):verdict==='FALSE'?t('FALSE'):verdict==='MIXED'?t('MIXED'):t('UNCERTAIN');
   const topic=d.topic||'general';
   const circ=2*Math.PI*38,offset=circ-(score/100)*circ;
   const sup=(d.supporting||[]).length,con=(d.contradicting||[]).length,neu=(d.neutral_sources||[]).length;
@@ -711,20 +840,21 @@ function renderScore(d){
       <div>
         <div><span class="verdict-chip vc-${verdict}">${icon} ${lbl}</span></div>
         <div><span class="topic-pill">${TOPIC_ICONS[topic]||'🔍'} ${TOPIC_LABELS[topic]||topic}</span></div>
-        <div class="conf-line">${d.confidence==='HIGH'?'🟢 Confidență ridicată':d.confidence==='MEDIUM'?'🟡 Medie':'🔴 Scăzută'}${d.calibrated_confidence?' · '+d.calibrated_confidence:''}</div>
+        <div class="conf-line">${d.confidence==='HIGH'?t('confHigh'):d.confidence==='MEDIUM'?t('confMed'):t('confLow')}${d.calibrated_confidence?' · '+d.calibrated_confidence:''}</div>
       </div>
     </div>
        <div class="expl-text">${explRomanian(d)}</div>
+    ${d.aggregate_reason?`<div class="expl-text" style="font-size:11.5px;color:#b8b8d4;margin-top:8px;padding:8px 10px;border-radius:10px;background:rgba(91,78,255,.08);border:1px solid rgba(91,78,255,.18)">⚖️ ${esc(d.aggregate_reason)}</div>`:''}
     <div>
       <div class="ev-bar">
         <div style="flex:${sup+.1};background:rgba(16,185,129,.35)"></div>
         <div style="flex:${con+.1};background:rgba(239,68,68,.35)"></div>
         <div style="flex:${Math.max(1,neu)};background:rgba(120,120,160,.12)"></div>
       </div>
-      <div class="ev-label">${d.evidence_count||0} dovezi · ${sup} susțin · ${con} contrazic</div>
+      <div class="ev-label">${d.evidence_count||0} ${t('evidence')} · ${sup} ${t('supportN')} · ${con} ${t('contradictN')}</div>
     </div>
     <div class="fb-row">
-      <span class="fb-lbl">Verdictul e corect?</span>
+      <span class="fb-lbl">${t('verdictCorrect')}</span>
       <button class="fbbtn" id="fbY">👍</button>
       <button class="fbbtn" id="fbN">👎</button>
       ${pdfBtn}
@@ -748,20 +878,21 @@ function renderSources(d){
         <span class="src-tag ${cls}">${cls==='ts'?'✓':cls==='tc'?'✗':'—'}</span>
       </a>`).join('')}`:'';
   document.getElementById('tp-sources').innerHTML=`
-    <div class="sec-lbl">Surse & Evidențe</div>
+    <div class="sec-lbl">${t('sourcesTitle')}</div>
     <div class="src-list">
-      ${grp(sup,'ts','✅ Susțin')}
-      ${grp(con,'tc','❌ Contrazic')}
-      ${grp(neu.slice(0,8),'tn','⚪ Relevante')}
+      ${grp(sup,'ts',t('grpSupport'))}
+      ${grp(con,'tc',t('grpContradict'))}
+      ${grp(neu.slice(0,8),'tn',t('grpRelevant'))}
     </div>`;
 }
-// ── UI-facing, human-readable explanations in Romanian ─────────
-// Pure view-layer helper: NO technical terms (NLI/embedding/etc.).
+// ── UI-facing, human-readable explanation in the active UI language ─────────
+// Pure view-layer helper: NO technical terms (NLI/embedding/etc.). Wording
+// follows the interface language (LANG), not the claim's own language.
 function explRomanian(d){
   var v=(d.verdict||'').toUpperCase();
   var claims=d.results||[];
   var srcTxt=function(c,k){var g=(c.supporting||[]).concat(c.contradicting||[]).concat(c.neutral_sources||[]);var out=[];for(var z=0;z<g.length&&out.length<3;z++){var p=(g[z].publisher||g[z].title||'').replace(/…+/g,'').slice(0,30);if(p)out.push(p);}return out.join(' | ');};
-  var isRo=function(t){return /[\u0103\u00E2\u00EE\u0219\u021B]/i.test(t||'');};
+  var isRo=function(t){return LANG==='ro';};
   if(claims.length>0){
     var roam=isRo((d.claim||'')+claims.map(function(c){return c.claim||''}).join(' '));
     var t=0,f=0;claims.forEach(function(c){var q=(c.verdict||'').toUpperCase();if(q==='TRUE')t++;else if(q==='FALSE')f++;});
@@ -775,7 +906,7 @@ function explRomanian(d){
       var head=(c.claim||'').slice(0,90);
       var src=srcTxt(c);
       var tail;
-      if(roam){tail=(q==='TRUE')?'este <b>adev\u0103rat\u0103</b> \u2014 conform surselor':(q==='FALSE')?'este <b>fals\u0103</b> \u2014 sursele contrazic afirma\u0103\u0163ia':'nu se poate stabili cu siguran\u021b\u0103';}
+      if(roam){tail=(q==='TRUE')?'este <b>adev\u0103rat\u0103</b> \u2014 conform surselor':(q==='FALSE')?'este <b>fals\u0103</b> \u2014 sursele contrazic afirma\u0163ia':'nu se poate stabili cu siguran\u021b\u0103';}
       else {tail=(q==='TRUE')?'is <b>true</b> \u2014 according to sources':(q==='FALSE')?'is <b>false</b> \u2014 the sources contradict it':'cannot be determined with confidence';}
       var srcPart=src?' <span style=\"color:var(--text2)\">(\u201e'+esc(src)+'\u201d)</span>':'';
       return '<li>'+icon+' \u201c'+esc(head)+'\u201d '+tail+srcPart+'.</li>';
@@ -786,7 +917,7 @@ function explRomanian(d){
   var head=(d.claim||(roam2?'aceast\u0103 afirma\u0163ie':'this statement')).slice(0,90);
   var src=srcTxt(d);
   var tail;
-  if(roam2){tail=(v==='TRUE')?'este <b>adev\u0103rat\u0103</b> \u2014 conform sursei':(v==='FALSE')?'este <b>fals\u0103</b> \u2014 sursele contrazic afirma\u021b\u0103':'este <b>incert\u0103</b>';}
+  if(roam2){tail=(v==='TRUE')?'este <b>adev\u0103rat\u0103</b> \u2014 conform sursei':(v==='FALSE')?'este <b>fals\u0103</b> \u2014 sursele contrazic afirma\u021bia':'este <b>incert\u0103</b>';}
   else {tail=(v==='TRUE')?'is <b>true</b> \u2014 according to sources':(v==='FALSE')?'is <b>false</b> \u2014 the sources contradict it':'is <b>uncertain</b>';}
   var vPart=src?' <span style=\"color:var(--text2)\">(\u201e'+esc(src)+'\u201d)</span>':'';
   return '\u201c'+esc(head)+'\u201d '+tail+vPart+'.';
@@ -796,26 +927,27 @@ function explRomanian(d){
 function perClaimExplanation(r){
   const v=(r.verdict||'').toUpperCase();
   const sup=(r.supporting||[]).length, con=(r.contradicting||[]).length, tot=sup+con;
-  if(v==='TRUE')  return `✅ Adevărat — ${tot ? tot+' surse independente confirmă acest fapt ('+Math.round(sup/tot*100)+'%)' : 'surse independente confirmă acest fapt'}.`;
-  if(v==='FALSE') return `❌ Fals — datele verificate contrazic această afirmație (${tot ? '0 din '+tot+' susțin' : 'nici o sursă nu o susține'}). Faptul nu corespunde realității.`;
-  if(v==='MIXED') return `🔀 Mixt — sursele sunt divizate (${sup} susțin, ${con} contrazic).`;
-  return '⚠️ Incerț – nu există suficiente dovezi pentru un verdict sigur.';
+  const ro=LANG==='ro';
+  if(v==='TRUE')  return ro?`✅ Adevărat — ${tot ? tot+' surse independente confirmă acest fapt ('+Math.round(sup/tot*100)+'%)' : 'surse independente confirmă acest fapt'}.`:`✅ True — ${tot ? tot+' independent sources confirm this fact ('+Math.round(sup/tot*100)+'%)' : 'independent sources confirm this fact'}.`;
+  if(v==='FALSE') return ro?`❌ Fals — datele verificate contrazic această afirmație (${tot ? '0 din '+tot+' susțin' : 'nici o sursă nu o susține'}).`:`❌ False — the verified data contradicts this claim (${tot ? '0 of '+tot+' support it' : 'no source supports it'}).`;
+  if(v==='MIXED') return ro?`🔀 Mixt — sursele sunt divizate (${sup} susțin, ${con} contrazic).`:`🔀 Mixed — the sources are split (${sup} support, ${con} contradict).`;
+  return ro?'⚠️ Incert — nu există suficiente dovezi pentru un verdict sigur.':'⚠️ Uncertain — there is not enough evidence for a confident verdict.';
 }
 
 function renderExplain(d){
   let body='';
-  body += '<h3 style="margin:20px 0 14px">Verdict general</h3>';
+  body += `<h3 style="margin:20px 0 14px">${t('overallVerdict')}</h3>`;
   body += `<div class="expl-text">${explRomanian(d)}</div>`;
   if(d.results && d.results.length>0){
-    body += '<h3 style="margin:22px 0 12px">De ce am ajuns aici (pași)</h3>';
+    body += `<h3 style="margin:22px 0 12px">${t('verifySteps')}</h3>`;
     const PROC=[
-      ['🔍','Desfacem textul','Am extras fiecare fapt verificabil ca fiind distinct.'],
-      ['🔎','Căutăm dovezi','Pentru fiecare fapt am adus surse din domenii de încredere (academice, enciclopedice, știri).'],
-      ['⚖️','Comparăm dovezele','Unde sursele sunt de acord susțin; unde contrazic marcăm ca fals; unde sunt divizate spunem «mixt».'],
-                  ['📊','Formulăm verdictul','Fiecare fapt are propriul verdict, iar cel final reflectă procentul de acord.'],
+      ['🔍',t('stepSplit'),t('stepSplitD')],
+      ['🔎',t('stepSearch'),t('stepSearchD')],
+      ['⚖️',t('stepWeigh'),t('stepWeighD')],
+      ['📊',t('stepVerdict'),t('stepVerdictD')],
     ];
     body += PROC.map(p=>`<div class="proc-step"><b>${p[0]} ${p[1]}</b><div>${p[2]}</div></div>`).join('');
-    body += '<h3 style="margin:22px 0 12px">Fiecare afirmație</h3>';
+    body += `<h3 style="margin:22px 0 12px">${t('eachClaim')}</h3>`;
     body += (d.results||[]).map((r,i)=>`
       <div id="exp-${i}" class="claim-mini ${i===0?'hl':''}">
         <div style="font-weight:650;margin-bottom:6px;cursor:pointer" onclick="jumpClaim(${i})">→ ${esc(r.claim||'')}</div>
@@ -825,16 +957,37 @@ function renderExplain(d){
   document.getElementById('tp-explain').innerHTML = body;
 }
 function renderSub(d){
+  const subs=d.sub_claim_results||[];
+  const DIC={web:'🌐',wikipedia:'📖',wikidata:'🗄️',academic:'🎓',news:'📰',factcheck:'🔎'};
+  if(subs.length){
+    const lrow=(g,c,ic)=>{let out='';(g||[]).forEach(s=>{if(!s)return;
+      out+=`<a class="src-line" href="${esc(s.url||'#')}" target="_blank" rel="noopener" style="padding:5px 9px"><span style="color:${c};flex-shrink:0;font-size:11px">${ic}</span><span class="src-pub">${DIC[s.type]||'📄'} ${esc((s.publisher||'source').slice(0,38))}</span><span class="src-title">${esc((s.title||'').slice(0,64))}</span></a>`;});return out;};
+    const cards=subs.map((r,i)=>{
+      const color=r.verdict==='TRUE'?'var(--green)':r.verdict==='FALSE'?'var(--red)':'var(--yellow)';
+      const label=r.verdict==='TRUE'?t('TRUE'):r.verdict==='FALSE'?t('FALSE'):t('UNCERTAIN');
+      const refBlock=(lrow(r.supporting,'var(--green)','✓')+lrow(r.contradicting,'var(--red)','✗')+lrow(r.neutral_sources,'var(--text2)','•'))||`<div style="font-size:10px;color:var(--text2);opacity:.7">${t('noDirect')}</div>`;
+      return `<div class="sub-item" style="display:block;border-left:3px solid ${color};margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;gap:12px;color:${color};font-size:11px;font-weight:800"><span>SUB-CLAIM #${i+1}</span><span>${label} · ${TOPIC_ICONS[r.topic]||'🔍'} ${esc(TOPIC_LABELS[r.topic]||r.topic||'')}${r.confidence?' · '+esc(r.confidence):''}</span></div>
+        <div style="font-size:13px;font-weight:650;margin-top:7px">${esc(r.claim||'')}</div>
+        <div style="font-size:12px;color:#b8b8d4;margin-top:6px;line-height:1.6">${esc(r.explanation||'—')}</div>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:8px"><div style="flex:1;height:5px;border-radius:99px;background:rgba(128,128,160,.22);overflow:hidden"><div style="height:100%;width:${Math.max(3,r.score)}%;background:${color};border-radius:99px"></div></div><span style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:${color};min-width:38px;text-align:right">${r.score}%</span></div>
+        <div style="margin-top:8px;font-size:9px;font-weight:800;color:var(--text2);opacity:.85;letter-spacing:.4px">${t('subSources')}</div>
+        <div style="margin-top:4px">${refBlock}</div></div>`;
+    }).join('');
+    const aggReason=d.aggregate_reason?`<div style="font-size:11.5px;color:#b8b8d4;line-height:1.6;margin:-2px 0 12px;padding:9px 11px;border-radius:10px;background:rgba(91,78,255,.08);border:1px solid rgba(91,78,255,.18)">⚖️ ${esc(d.aggregate_reason)}</div>`:'';
+    document.getElementById('tp-sub').innerHTML=`<div class="sec-lbl">${t('subTitle')} (${subs.length})</div><div style="font-size:11px;color:var(--text2);margin:-2px 0 10px">${t('subIntro')}</div>${aggReason}${cards}`;
+    return;
+  }
   const sc=d.sub_claims||[];
   document.getElementById('tp-sub').innerHTML=sc.length>1?`
-    <div class="sec-lbl">Sub-afirmații (${sc.length})</div>
-    <div style="font-size:12px;color:var(--text2);margin-bottom:10px">Click pentru verificare individuală:</div>
+    <div class="sec-lbl">${t('subTitle')} (${sc.length})</div>
+    <div style="font-size:12px;color:var(--text2);margin-bottom:10px">${t('verifyIndividually')}</div>
     ${sc.map(c=>`<div class="sub-item" onclick="verifySub('${esc(c)}')">
       <span style="color:var(--accent);font-size:11px">▸</span>
       <span style="font-size:13px">${esc(c)}</span>
-      <span class="sub-arr">verifică →</span>
+      <span class="sub-arr">${t('verifyArrow')}</span>
     </div>`).join('')}`:
-    '<div style="color:var(--text2);font-size:13px;padding:8px 0">Afirmația este simplă — nu s-a împărțit în sub-afirmații.</div>';
+    `<div style="color:var(--text2);font-size:13px;padding:8px 0">${t('simpleClaim')}</div>`;
 }
 function switchTab(name,btn){
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
@@ -859,7 +1012,7 @@ async function downloadPDF(){
   const t=token();if(!t){showPricing();return;}
   const text=lastResult.claim||document.getElementById('claimInput').value.trim();
   const r=await fetch(`${API}/verify/pdf`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+t},body:JSON.stringify({text})});
-  if(!r.ok){alert('Eroare generare PDF');return;}
+  if(!r.ok){alert(t('pdfError'));return;}
   const blob=await r.blob();
   const url=URL.createObjectURL(blob);
   const a=document.createElement('a');a.href=url;a.download=`truthscore_${lastResult.verdict||'report'}_${lastResult.score||0}.pdf`;
@@ -869,34 +1022,34 @@ function showAuth(type){document.getElementById('authOverlay').className='overla
 function closeAuth(){document.getElementById('authOverlay').className='overlay';}
 function renderRegister(){
   document.getElementById('authContent').innerHTML=`
-    <div class="modal-title">Creează cont</div>
-    <div class="modal-sub">Gratuit · 10 verificări/zi · Fără card</div>
+    <div class="modal-title">${t('createAccount')}</div>
+    <div class="modal-sub">${t('createSub')}</div>
     <div class="form-err" id="authErr"></div>
-    <div class="field"><label>Nume</label><input class="finput" id="rName" type="text" placeholder="Numele tău"/></div>
-    <div class="field"><label>Email</label><input class="finput" id="rEmail" type="email" placeholder="email@exemplu.com"/></div>
-    <div class="field"><label>Parolă</label><input class="finput" id="rPass" type="password" placeholder="Minim 6 caractere"/></div>
-    <button class="form-btn" onclick="doRegister()">Creează cont gratuit →</button>
-    <div class="form-divider"><span>sau</span></div>
+    <div class="field"><label>${t('fieldName')}</label><input class="finput" id="rName" type="text" placeholder="${t('fieldNamePh')}"/></div>
+    <div class="field"><label>${t('fieldEmail')}</label><input class="finput" id="rEmail" type="email" placeholder="email@example.com"/></div>
+    <div class="field"><label>${t('fieldPass')}</label><input class="finput" id="rPass" type="password" placeholder="${t('passPh')}"/></div>
+    <button class="form-btn" onclick="doRegister()">${t('createBtn')}</button>
+    <div class="form-divider"><span>${t('orSep')}</span></div>
     <button class="google-btn" onclick="doGoogleAuth()">
       <svg width="18" height="18" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
-      Continuă cu Google
+      ${t('continueGoogle')}
     </button>
-    <div class="form-switch">Ai deja cont? <a onclick="renderLogin()">Autentifică-te</a></div>`;
+    <div class="form-switch">${t('haveAccount')} <a onclick="renderLogin()">${t('signInLink')}</a></div>`;
 }
 function renderLogin(){
   document.getElementById('authContent').innerHTML=`
-    <div class="modal-title">Bun venit!</div>
-    <div class="modal-sub">Autentifică-te pentru a continua</div>
+    <div class="modal-title">${t('welcome')}</div>
+    <div class="modal-sub">${t('loginSub')}</div>
     <div class="form-err" id="authErr"></div>
-    <div class="field"><label>Email</label><input class="finput" id="lEmail" type="email" placeholder="email@exemplu.com"/></div>
-    <div class="field"><label>Parolă</label><input class="finput" id="lPass" type="password" placeholder="Parola ta"/></div>
-    <button class="form-btn" onclick="doLogin()">Autentifică-te →</button>
-    <div class="form-divider"><span>sau</span></div>
+    <div class="field"><label>${t('fieldEmail')}</label><input class="finput" id="lEmail" type="email" placeholder="email@example.com"/></div>
+    <div class="field"><label>${t('fieldPass')}</label><input class="finput" id="lPass" type="password" placeholder="${t('passPh2')}"/></div>
+    <button class="form-btn" onclick="doLogin()">${t('loginBtn')}</button>
+    <div class="form-divider"><span>${t('orSep')}</span></div>
     <button class="google-btn" onclick="doGoogleAuth()">
       <svg width="18" height="18" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
-      Continuă cu Google
+      ${t('continueGoogle')}
     </button>
-    <div class="form-switch">Nu ai cont? <a onclick="renderRegister()">Înregistrează-te gratuit</a></div>`;
+    <div class="form-switch">${t('noAccount')} <a onclick="renderRegister()">${t('registerLink')}</a></div>`;
 }
 async function doGoogleAuth(){
   const clientId='809996736507-hatvv1gfev0b2sgnaqjq2vlqvfqateav.apps.googleusercontent.com';
@@ -913,31 +1066,31 @@ async function doRegister(){
   const name=document.getElementById('rName').value.trim();
   const email=document.getElementById('rEmail').value.trim();
   const pass=document.getElementById('rPass').value;
-  if(!email||!pass){authErr('Completează toate câmpurile');return;}
-  if(pass.length<6){authErr('Parola minim 6 caractere');return;}
+  if(!email||!pass){authErr(t('fillAll'));return;}
+  if(pass.length<6){authErr(t('passMin'));return;}
   const btn=document.querySelector('#authContent .form-btn');
-  btn.disabled=true;btn.textContent='Se creează contul...';
+  btn.disabled=true;btn.textContent=t('creating');
   try{
     const r=await fetch(`${API}/auth/register`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password:pass,name})});
     const d=await r.json();
-    if(!r.ok){authErr(d.detail||'Eroare');btn.disabled=false;btn.textContent='Creează cont gratuit →';return;}
+    if(!r.ok){authErr(d.detail||t('genericError'));btn.disabled=false;btn.textContent=t('createBtn');return;}
     localStorage.setItem('ts_token',d.token);
     closeAuth();await initAuth();
-  }catch(e){authErr('Backend offline');btn.disabled=false;btn.textContent='Creează cont gratuit →';}
+  }catch(e){authErr(t('backendOffline'));btn.disabled=false;btn.textContent=t('createBtn');}
 }
 async function doLogin(){
   const email=document.getElementById('lEmail').value.trim();
   const pass=document.getElementById('lPass').value;
-  if(!email||!pass){authErr('Completează toate câmpurile');return;}
+  if(!email||!pass){authErr(t('fillAll'));return;}
   const btn=document.querySelector('#authContent .form-btn');
-  btn.disabled=true;btn.textContent='Se autentifică...';
+  btn.disabled=true;btn.textContent=t('signingIn');
   try{
     const r=await fetch(`${API}/auth/login`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password:pass})});
     const d=await r.json();
-    if(!r.ok){authErr(d.detail||'Email sau parolă incorectă');btn.disabled=false;btn.textContent='Autentifică-te →';return;}
+    if(!r.ok){authErr(d.detail||t('wrongCreds'));btn.disabled=false;btn.textContent=t('loginBtn');return;}
     localStorage.setItem('ts_token',d.token);
     closeAuth();await initAuth();
-  }catch(e){authErr('Backend offline');btn.disabled=false;btn.textContent='Autentifică-te →';}
+  }catch(e){authErr(t('backendOffline'));btn.disabled=false;btn.textContent=t('loginBtn');}
 }
 function authErr(msg){const e=document.getElementById('authErr');if(e){e.textContent='⚠️ '+msg;e.className='form-err show';}}
 function doLogout(){localStorage.removeItem('ts_token');currentUser=null;renderGuest();document.getElementById('userDropdown').classList.remove('open');}
@@ -949,8 +1102,8 @@ async function checkout(plan){
     const r=await fetch(`${API}/stripe/checkout`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token()},body:JSON.stringify({plan})});
     const d=await r.json();
     if(d.checkout_url)window.location.href=d.checkout_url;
-    else alert('Eroare Stripe: '+(d.detail||JSON.stringify(d)));
-  }catch(e){alert('Eroare conexiune: '+e.message);}
+    else alert(t('stripeError')+': '+(d.detail||JSON.stringify(d)));
+  }catch(e){alert(t('connError')+': '+e.message);}
 }
 async function openBillingPortal(){
   if(!token())return;
@@ -958,8 +1111,8 @@ async function openBillingPortal(){
     const r=await fetch(`${API}/stripe/portal`,{method:'POST',headers:{'Authorization':'Bearer '+token()}});
     const d=await r.json();
     if(d.portal_url)window.location.href=d.portal_url;
-    else alert('Nu ai o subscripție activă.');
-  }catch(e){alert('Eroare conexiune');}
+    else alert(t('noSub'));
+  }catch(e){alert(t('connError'));}
 }
 function esc(t){const d=document.createElement('div');d.textContent=String(t||'');return d.innerHTML;}
 function showErr(msg){const e=document.getElementById('errBox');e.textContent='⚠️ '+msg;e.className='err-box show';}

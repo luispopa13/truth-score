@@ -16,6 +16,7 @@ from pipeline.decomposition import (
     generate_targeted_queries, search_with_queries,
     factscore_verify, averitec_verify, wikidata_sparql_verify,
 )
+from pipeline.aggregate import build_sub_claim_results, aggregate_score
 from pipeline.helpers import (
     normalize_claim, is_temporal_claim, is_nuance_claim, is_strict_domain,
     get_source_recency_weight, build_nuance_queries,
@@ -24,7 +25,7 @@ from pipeline.helpers import (
     _domain, factcheck_rating_to_nli,
 )
 
-async def verify_claim(req: VerifyRequest):
+async def verify_claim(req: VerifyRequest, eco: bool = False):
     import time as _t
     claim = req.text.strip()
     key   = f"v3:{normalize_claim(claim)}"   # normalized cache key
@@ -83,6 +84,10 @@ async def verify_claim(req: VerifyRequest):
     # Modes: "always" (old behavior) | "fallback_only" (default, recommended)
     #        | "off" (free sources only)
     TAVILY_MODE = os.getenv("TAVILY_MODE", "fallback_only")
+    if eco:
+        # Eco mode (heavy-day paid user past threshold): free sources only,
+        # no paid Tavily spend — margin protection without a hard block.
+        TAVILY_MODE = "off"
     if ("TAVILY" not in labels and TAVILY_API_KEY
             and TAVILY_MODE == "always"):
         evidence_tasks.append(search_tavily(search_query))
@@ -216,6 +221,13 @@ async def verify_claim(req: VerifyRequest):
 
     # ── Step 3: Path A — Gemini reasoning ────────────────────
     t3 = _t.time()
+    # Per-sub-claim breakdown for compound claims (filled by FActScore below).
+    sub_results = []
+    # Split early (cheap) so we can force atomic decomposition on genuinely
+    # compound claims even when Path A is HIGH-confidence — a compound claim
+    # needs its parts scored individually, not just an overall verdict.
+    sub_claims = await split_claims(claim)
+    is_compound = len(sub_claims) > 1
     if gemini_client and top_k:
         # ── MODEL ROUTING with quality-escalation ──────────────
         # 1. pick_model(): easy short claims -> cheap Groq GPT-OSS;
@@ -224,13 +236,13 @@ async def verify_claim(req: VerifyRequest):
         #    ONCE with Gemini — users never see degraded verdicts; extra
         #    latency lands only on genuinely hard claims.
         claim_for_llm = claim_en if claim_en != claim else claim
-        chosen_model = pick_model(claim, topic)
+        chosen_model = pick_model(claim, topic, eco)
 
         score, verdict, confidence, explanation, supporting, contradicting, neutral = \
             await reason_with_gpt(claim_for_llm, top_k, rest, model_hint=chosen_model)
         models_used.append(chosen_model)
 
-        if chosen_model not in ("gemini",) and (verdict == "UNCERTAIN" or confidence == "LOW"):
+        if not eco and chosen_model not in ("gemini",) and (verdict == "UNCERTAIN" or confidence == "LOW"):
             print(f"  [ROUTE] cheap result weak ({verdict}/{confidence}) -> escalating to Gemini")
             score, verdict, confidence, explanation, supporting, contradicting, neutral = \
                 await reason_with_gpt(claim_for_llm, top_k, rest, model_hint="gemini")
@@ -242,7 +254,7 @@ async def verify_claim(req: VerifyRequest):
         # Runs only when Path A result is ambiguous or claim is high-risk.
         # Path B classifies stance of each source mathematically —
         # no LLM parametric memory involved in the final verdict.
-        if _path_b_triggers(score, verdict, claim, topic):
+        if not eco and _path_b_triggers(score, verdict, claim, topic):
             print(f"  [PATH-B] Triggered (score={score}, nuance={is_nuance_claim(claim)})")
             b_score, b_verdict, b_conf, b_expl = await reason_path_b(claim, top_k)
 
@@ -283,10 +295,18 @@ async def verify_claim(req: VerifyRequest):
         # LATENCY GATE: only on genuinely doubtful results — running it on
         # every medium-confidence claim added a full LLM round-trip to the
         # median response for marginal accuracy gain.
-        if confidence != "HIGH" or is_nuance_claim(claim) or is_strict_domain(claim, topic):
-            print(f"  [FACTSCORE] Running (score={score})")
-            fs_score, fs_verdict, fs_conf, fs_expl, _ = \
+        # In eco mode we still decompose genuinely compound claims (the
+        # per-sub-claim breakdown is a core product promise), but skip the
+        # extra accuracy-boosting FActScore runs on single doubtful claims.
+        if (is_compound or (not eco and (confidence != "HIGH"
+                or is_nuance_claim(claim) or is_strict_domain(claim, topic)))):
+            print(f"  [FACTSCORE] Running (score={score}, compound={is_compound})")
+            fs_score, fs_verdict, fs_conf, fs_expl, atom_results = \
                 await factscore_verify(claim, top_k)
+            if atom_results:
+                # Reclaim the per-atom breakdown + sources the pipeline already
+                # computed. This is the source->sub-claim mapping the product needs.
+                sub_results = build_sub_claim_results(atom_results)
             if fs_score is not None and fs_verdict is not None:
                 fs_dist  = abs(fs_score - 50)
                 cur_dist = abs(score - 50)
@@ -303,7 +323,7 @@ async def verify_claim(req: VerifyRequest):
         # ── Luna 3: AVeriTeC question decomposition ───────────
         # Generate verification questions, answer each with retrieval.
         # Resolves UNCERTAIN verdicts through targeted Q&A.
-        if verdict == "UNCERTAIN":
+        if not eco and verdict == "UNCERTAIN":
             print(f"  [AVERITEC] Running question decomposition")
             av_score, av_verdict, av_conf, av_expl = \
                 await averitec_verify(claim)
@@ -316,7 +336,7 @@ async def verify_claim(req: VerifyRequest):
         # ── Luna 4: Wikidata SPARQL for structured facts ──────
         # Verifies geographic, demographic, historical facts via
         # structured SPARQL queries on Wikidata. No API key needed.
-        if topic in ("geography", "history", "politics", "science"):
+        if not eco and topic in ("geography", "history", "politics", "science"):
             wikidata_srcs = await wikidata_sparql_verify(claim)
             if wikidata_srcs:
                 top_k = wikidata_srcs + top_k
@@ -353,7 +373,7 @@ async def verify_claim(req: VerifyRequest):
     )
 
     # Claim splitting & explainability (runs fast, parallel with cache write)
-    sub_claims      = await split_claims(claim)
+    # sub_claims already computed early (before reasoning) to gate decomposition.
     word_importance = compute_word_importance(claim, verdict, score)
 
     # ── Real confidence calibration ───────────────────────────
@@ -394,6 +414,15 @@ async def verify_claim(req: VerifyRequest):
     else:
         cal_conf = "Nesigur -- verifică manual"
 
+    # ── Weighted aggregate over sub-claims ────────────────────
+    # When the claim decomposed into multiple sub-claims, the overall verdict is
+    # the authority-weighted aggregate of the parts (not a plain mean), with a
+    # hard gate forcing FALSE on a decisively-false authoritative sub-claim.
+    aggregate_reason = ""
+    if sub_results:
+        agg_score, agg_verdict, agg_conf, aggregate_reason = aggregate_score(sub_results)
+        score, verdict, confidence = agg_score, agg_verdict, agg_conf
+
     result = VerifyResponse(
         claim=claim, score=score, verdict=verdict,
         confidence=confidence, explanation=explanation,
@@ -406,6 +435,8 @@ async def verify_claim(req: VerifyRequest):
         sub_claims=sub_claims if len(sub_claims) > 1 else [],
         word_importance=word_importance,
         calibrated_confidence=cal_conf,
+        sub_claim_results=sub_results,
+        aggregate_reason=aggregate_reason,
     )
     # Always store in local diskcache as last resort
     cache.set(key, result.model_dump(), expire=3600 * 6)

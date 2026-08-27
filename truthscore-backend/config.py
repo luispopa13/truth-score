@@ -141,9 +141,24 @@ MONGODB_URL          = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
 USDA_API_KEY         = os.getenv("USDA_API_KEY", "DEMO_KEY")
 TAVILY_API_KEY       = os.getenv("TAVILY_API_KEY", "")
 
+# Public base URL for building externally-visible links (Stripe return/success/
+# cancel). Defaults to localhost for dev; set PUBLIC_BASE_URL in prod.
+PUBLIC_BASE_URL      = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
+
 # ── OpenAI client ─────────────────────────────────────────────
 # OpenAI removed -- using Gemini
 GEMINI_MODEL = "gemini-2.5-flash"
+
+# ── LLM CASCADE (config-driven) ───────────────────────────────
+# The verification vision: try the best FREE model first, fall back to the
+# next free model, and only spend on a paid model as a last resort.
+#   Gemini 2.5 Flash (free tier)  →  Groq GPT-OSS (free tier)  →  paid
+# Override the whole chain via LLM_CASCADE (comma-separated model names).
+# LLM_PAID_FALLBACK names the paid model tried only when every free tier
+# fails; leave PAID empty (default) to never spend automatically.
+LLM_CASCADE = [m.strip() for m in
+               os.getenv("LLM_CASCADE", "gemini,groq").split(",") if m.strip()]
+LLM_PAID_FALLBACK = os.getenv("LLM_PAID_FALLBACK", "").strip()  # e.g. "gpt4o-mini"
 
 # IMPORTANT: Use ONLY GEMINI_API_KEY -- never GOOGLE_API_KEY (that's for Fact Check API)
 if GEMINI_API_KEY:

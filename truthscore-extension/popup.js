@@ -16,14 +16,8 @@ const TOPIC_ICONS = {
   climate:"🌡️",politics:"🏛️",sociology:"👥",psychology:"🧠",philosophy:"💭",
   ethics:"⚖️",religion:"✝️",nutrition:"🥗",news:"📰",general:"🔍"
 };
-const TOPIC_LABELS = {
-  medical:"Medicină",biology:"Biologie",chemistry:"Chimie",physics:"Fizică",
-  astronomy:"Astronomie",mathematics:"Matematică",logic:"Logică",cs_tech:"Informatică",
-  engineering:"Inginerie",geography:"Geografie",history:"Istorie",literature:"Literatură",
-  art:"Artă",sports:"Sport",economics:"Economie",business:"Business",climate:"Climă",
-  politics:"Politică",sociology:"Sociologie",psychology:"Psihologie",philosophy:"Filosofie",
-  ethics:"Etică",religion:"Religie",nutrition:"Nutriție",news:"Știri",general:"General"
-};
+// Topic labels come from the shared i18n table (TS_TOPIC_LABELS, language-aware).
+const TOPIC_LABELS = TS_TOPIC_LABELS;
 
 // ── Auth state ─────────────────────────────────────────────────
 // Token is mirrored to chrome.storage.local so the background service
@@ -107,7 +101,7 @@ function showLoggedIn(user) {
   const planColor = user.plan === "pro" ? "#818cf8" : user.plan === "enterprise" ? "#f59e0b" : "#8080a8";
   const usageEl = document.getElementById("usageInfo");
   if (usageEl) {
-    usageEl.textContent = `${user.used_today||0}/${user.daily_limit||10} azi`;
+    usageEl.textContent = t('usageToday', {used: user.used_today||0, limit: user.daily_limit||10});
     usageEl.style.display = "block";
   }
   const userInfoEl = document.getElementById("userInfo");
@@ -180,8 +174,8 @@ function applyFreeTierUX(d) {
     // this is a fact-checking product; scammy ads kill trust).
     slot.innerHTML =
       '<div style="display:flex;align-items:center;gap:8px">' +
-      '<span>⚡ Verificări nelimitate, fără acest banner</span>' +
-      '<a href="#" id="sponsorUpgrade" style="margin-left:auto;color:#a0a0ff;font-weight:600;text-decoration:none">Pro →</a>' +
+      '<span>' + t('unlimitedNoBanner') + '</span>' +
+      '<a href="#" id="sponsorUpgrade" style="margin-left:auto;color:#a0a0ff;font-weight:600;text-decoration:none">' + t('proArrow') + '</a>' +
       '</div>';
     document.getElementById("sponsorUpgrade")?.addEventListener("click", (e) => {
       e.preventDefault(); openUpgrade();
@@ -191,7 +185,7 @@ function applyFreeTierUX(d) {
   }
   if (typeof d?.quota_left === "number") {
     const fi = document.getElementById("footerInfo");
-    if (fi) fi.textContent = `Verificări rămase azi: ${d.quota_left}`;
+    if (fi) fi.textContent = t('quotaLeft', {n: d.quota_left});
   }
 }
 
@@ -199,7 +193,7 @@ async function doLogin() {
   const email = document.getElementById("loginEmail")?.value.trim();
   const pass = document.getElementById("loginPass")?.value;
   const errEl = document.getElementById("authErr");
-  if (!email || !pass) { if(errEl) errEl.textContent = "Completează toate câmpurile"; return; }
+  if (!email || !pass) { if(errEl) errEl.textContent = t('fillAll'); return; }
   try {
     const settings = await chrome.storage.sync.get("backendUrl");
     const base = settings.backendUrl || "http://localhost:8000";
@@ -209,12 +203,12 @@ async function doLogin() {
       body: JSON.stringify({ email, password: pass })
     });
     const d = await r.json();
-    if (!r.ok) { if(errEl) errEl.textContent = d.detail || "Eroare"; return; }
+    if (!r.ok) { if(errEl) errEl.textContent = d.detail || t('genericError'); return; }
     setToken(d.token);
     if(errEl) errEl.textContent = "";
     await initAuth();
     switchTab("verify");
-  } catch { if(errEl) errEl.textContent = "Backend offline"; }
+  } catch { if(errEl) errEl.textContent = t('backendOffline'); }
 }
 
 async function doRegister() {
@@ -222,7 +216,7 @@ async function doRegister() {
   const email = document.getElementById("regEmail")?.value.trim();
   const pass = document.getElementById("regPass")?.value;
   const errEl = document.getElementById("authErr");
-  if (!email || !pass) { if(errEl) errEl.textContent = "Completează toate câmpurile"; return; }
+  if (!email || !pass) { if(errEl) errEl.textContent = t('fillAll'); return; }
   try {
     const settings = await chrome.storage.sync.get("backendUrl");
     const base = settings.backendUrl || "http://localhost:8000";
@@ -233,12 +227,12 @@ async function doRegister() {
                               turnstile_token: _tsTurnstileToken })
     });
     const d = await r.json();
-    if (!r.ok) { if(errEl) errEl.textContent = d.detail || "Eroare"; return; }
+    if (!r.ok) { if(errEl) errEl.textContent = d.detail || t('genericError'); return; }
     setToken(d.token);
     if(errEl) errEl.textContent = "";
     await initAuth();
     switchTab("verify");
-  } catch { if(errEl) errEl.textContent = "Backend offline"; }
+  } catch { if(errEl) errEl.textContent = t('backendOffline'); }
 }
 
 function openUpgrade() {
@@ -251,7 +245,7 @@ function openDashboard() {
 
 async function doGoogleAuth() {
   const errEl = document.getElementById("authErr");
-  if (errEl) { errEl.textContent = "⏳ Se conectează cu Google..."; errEl.classList.add("show"); }
+  if (errEl) { errEl.textContent = t('connectingGoogle'); errEl.classList.add("show"); }
   try {
     // Get Google OAuth token via Chrome identity API
     const token = await new Promise((resolve, reject) => {
@@ -259,7 +253,7 @@ async function doGoogleAuth() {
         if (chrome.runtime.lastError) {
           reject(new Error(chrome.runtime.lastError.message));
         } else if (!token) {
-          reject(new Error("Token Google negăsit"));
+          reject(new Error(t('googleTokenMissing')));
         } else {
           resolve(token);
         }
@@ -276,7 +270,7 @@ async function doGoogleAuth() {
     });
     const d = await r.json();
     if (!r.ok) {
-      if (errEl) { errEl.textContent = "⚠️ " + (d.detail || "Eroare Google Auth"); errEl.classList.add("show"); }
+      if (errEl) { errEl.textContent = "⚠️ " + (d.detail || t('googleAuthError')); errEl.classList.add("show"); }
       return;
     }
     setToken(d.token);
@@ -284,7 +278,7 @@ async function doGoogleAuth() {
     await initAuth();
     switchTab("verify");
   } catch(e) {
-    const msg = e.message || "Eroare Google Auth";
+    const msg = e.message || t('googleAuthError');
     if (errEl) { errEl.textContent = "⚠️ " + msg; errEl.classList.add("show"); }
     console.error("[Google Auth]", e);
   }
@@ -311,7 +305,7 @@ function switchTab(name) {
 // ── VERIFY ────────────────────────────────────────────────────
 function onVerify() {
   const text = document.getElementById("claimInput").value.trim();
-  if (!text) { showErr("errBox","Introdu o afirmație."); return; }
+  if (!text) { showErr("errBox",t('enterClaim')); return; }
   runVerify(text);
 }
 
@@ -321,8 +315,8 @@ async function onPaste() {
     const res = await chrome.scripting.executeScript({target:{tabId:tab.id},func:()=>window.getSelection()?.toString()||""});
     const sel = res?.[0]?.result||"";
     if (sel?.length>3) document.getElementById("claimInput").value = sel.slice(0,4000);
-    else showErr("errBox","Selectează mai întâi text pe pagină.");
-  } catch { showErr("errBox","Nu s-a putut accesa pagina."); }
+    else showErr("errBox",t('selectFirst'));
+  } catch { showErr("errBox",t('noPageAccess')); }
 }
 
 async function onScan() {
@@ -330,13 +324,13 @@ async function onScan() {
   btn.textContent="⏳"; btn.disabled=true;
   try {
     const [tab] = await chrome.tabs.query({active:true,currentWindow:true});
-    await chrome.scripting.executeScript({target:{tabId:tab.id},files:["content.js"]}).catch(()=>{});
+    await chrome.scripting.executeScript({target:{tabId:tab.id},files:["i18n.js","content.js"]}).catch(()=>{});
     await chrome.scripting.insertCSS({target:{tabId:tab.id},files:["content.css"]}).catch(()=>{});
     await chrome.tabs.sendMessage(tab.id,{type:"SCAN_PAGE"});
     window.close();
   } catch(e) {
     showErr("errBox",e.message);
-    btn.textContent="🔍 Scan"; btn.disabled=false;
+    btn.textContent=t('scanPage'); btn.disabled=false;
   }
 }
 
@@ -345,10 +339,10 @@ async function runVerify(text) {
   setVerifyView("loading");
   currentResult = null;
   const steps = [
-    "Se clasifică domeniul...",
-    "Se caută dovezi...",
-    "Se analizează și se compară dovezile...",
-    "Se calculează TruthScore...",
+    t('stepClassify'),
+    t('stepSearch'),
+    t('stepCompare'),
+    t('stepScore'),
   ];
   let si=0;
   const iv = setInterval(()=>{
@@ -365,7 +359,7 @@ async function runVerify(text) {
     await refreshHistBadge();
   } catch(err) {
     clearInterval(iv);
-    showErr("errBox",err.message||"Eroare necunoscută.");
+    showErr("errBox",err.message||t('unknownError'));
     setVerifyView("empty");
   }
 }
@@ -381,27 +375,27 @@ function renderParagraph(d) {
     contradicting: [],
     neutral_sources: [],
     evidence_count: (d.results||[]).reduce((n,r)=>n+(r.evidence_count||0),0),
-    explanation: d.explanation || "Textul a fost împărțit și verificat pe afirmații.",
+    explanation: d.explanation || t('paraSplit'),
     models_used: [],
   };
   renderVerify(summary);
 
   const palette = {
-    TRUE:["#22c55e","✅ ADEVĂRAT"], FALSE:["#ef4444","❌ FALS"],
-    UNCERTAIN:["#f59e0b","⚠️ INCERT"], MIXED:["#8b5cf6","🔀 MIXT"]
+    TRUE:["#22c55e","✅ "+t('TRUE')], FALSE:["#ef4444","❌ "+t('FALSE')],
+    UNCERTAIN:["#f59e0b","⚠️ "+t('UNCERTAIN')], MIXED:["#8b5cf6","🔀 "+t('MIXED')]
   };
   const DICS={web:"🌐",wikipedia:"📖",wikidata:"🗄️",academic:"🎓",news:"📰",factcheck:"🔎"};
   const msrc=(g,clr,gl,lb,ref)=>{g=g||[];if(!g.length)return"";
-    const rows=g.slice(0,2).map(s=>`<a href="${esc(s.url||"#")}" target="_blank" rel="noopener" style="display:flex;gap:5px;align-items:center;font-size:10px;color:var(--text2);text-decoration:none;margin-top:3px;min-width:0"><span style="color:${clr};flex-shrink:0">${gl}</span>${ref?`<span style="flex-shrink:0;font-family:'JetBrains Mono',monospace;font-size:8px;font-weight:700;color:${clr};border:1px solid ${clr};border-radius:3px;padding:0 3px;opacity:.85">${ref}</span>`:""}<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${DICS[s.type]||"📄"} ${esc((s.publisher||s.title||"sursă").slice(0,70))}</span></a>`).join("");
-    return `<div style="margin-top:6px;padding-top:5px;border-top:1px dashed var(--border)"><span style="font-size:9px;font-weight:800;color:${clr};text-transform:uppercase;letter-spacing:.4px">${lb} (${g.length})</span>${rows}${g.length>2?`<div style="font-size:9px;color:var(--text2);opacity:.7;margin-top:2px">+${g.length-2} alte surse</div>`:""}</div>`;};
+    const rows=g.slice(0,2).map(s=>`<a href="${esc(s.url||"#")}" target="_blank" rel="noopener" style="display:flex;gap:5px;align-items:center;font-size:10px;color:var(--text2);text-decoration:none;margin-top:3px;min-width:0"><span style="color:${clr};flex-shrink:0">${gl}</span>${ref?`<span style="flex-shrink:0;font-family:'JetBrains Mono',monospace;font-size:8px;font-weight:700;color:${clr};border:1px solid ${clr};border-radius:3px;padding:0 3px;opacity:.85">${ref}</span>`:""}<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${DICS[s.type]||"📄"} ${esc((s.publisher||s.title||t('sourceFallback')).slice(0,70))}</span></a>`).join("");
+    return `<div style="margin-top:6px;padding-top:5px;border-top:1px dashed var(--border)"><span style="font-size:9px;font-weight:800;color:${clr};text-transform:uppercase;letter-spacing:.4px">${lb} (${g.length})</span>${rows}${g.length>2?`<div style="font-size:9px;color:var(--text2);opacity:.7;margin-top:2px">${t('otherSources',{n:g.length-2})}</div>`:""}</div>`;};
   document.getElementById("sourcesWrap").innerHTML = `
-    <div class="sec-label">Rezultat pe fiecare afirmație (${d.claim_count||d.results.length})</div>
+    <div class="sec-label">${t('perClaimResult',{n:d.claim_count||d.results.length})}</div>
     ${(d.results||[]).map((r,i)=>{
       const p=palette[r.verdict]||palette.UNCERTAIN;
       const sup=r.supporting||[], con=r.contradicting||[], neu=r.neutral_sources||[];
       const srcBlock=(sup.length||con.length)
-        ? msrc(sup,"#22c55e","✓","susțin",`#${i+1}`)+msrc(con,"#ef4444","✗","contrazic",`#${i+1}`)
-        : msrc(neu,"#9090a8","•","relevante",`#${i+1}`);
+        ? msrc(sup,"#22c55e","✓",t('supportN'),`#${i+1}`)+msrc(con,"#ef4444","✗",t('contradictN'),`#${i+1}`)
+        : msrc(neu,"#9090a8","•",t('relevantN'),`#${i+1}`);
       return `<button class="paragraph-claim" data-claim-index="${i}" style="display:block;width:100%;text-align:left;background:var(--bg3);border:1px solid var(--border);border-left:3px solid ${p[0]};border-radius:8px;padding:9px;margin:6px 0;color:var(--text);cursor:pointer">
         <div style="display:flex;justify-content:space-between;gap:8px;font-size:10px;color:${p[0]};font-weight:700"><span>${p[1]}</span><span>${esc(TOPIC_LABELS[r.topic]||r.topic||"General")} · ${r.score}%</span></div>
         <div style="font-size:12px;font-weight:600;margin-top:5px">${esc(r.claim||"")}</div>
@@ -410,11 +404,11 @@ function renderParagraph(d) {
           <div style="flex:1;height:4px;border-radius:99px;background:rgba(128,128,160,.22);overflow:hidden"><div style="height:100%;width:${Math.max(3,r.score)}%;background:${p[0]};border-radius:99px"></div></div>
           <span style="font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:700;color:${p[0]}">${r.score}%</span>
         </div>
-        <div style="margin-top:6px;font-size:9px;font-weight:700;color:var(--text2);opacity:.8">📎 SURSE · AFIRMAȚIA #${i+1} <span style="font-weight:500;opacity:.7">· „${esc((r.claim||"").slice(0,40))}${(r.claim||"").length>40?"…":""}"</span></div>
-        ${srcBlock||'<div style="font-size:10px;color:var(--text2);opacity:.65;margin-top:4px">fără dovezi directe</div>'}
+        <div style="margin-top:6px;font-size:9px;font-weight:700;color:var(--text2);opacity:.8">${t('claimSources',{n:i+1})} <span style="font-weight:500;opacity:.7">· „${esc((r.claim||"").slice(0,40))}${(r.claim||"").length>40?"…":""}"</span></div>
+        ${srcBlock||`<div style="font-size:10px;color:var(--text2);opacity:.65;margin-top:4px">${t('noDirectEvidence')}</div>`}
       </button>`;
     }).join("")}
-    <div style="font-size:10px;color:var(--text2);opacity:.6;margin:8px 0 2px">Apasă pe o afirmație pentru analiza ei completă.</div>`;
+    <div style="font-size:10px;color:var(--text2);opacity:.6;margin:8px 0 2px">${t('tapClaim')}</div>`;
   document.querySelectorAll(".paragraph-claim").forEach(btn=>btn.addEventListener("click",()=>{
     const r=d.results[Number(btn.dataset.claimIndex)];
     currentResult=r;
@@ -432,7 +426,7 @@ function renderVerify(d) {
   const color = verdict==="MIXED"?"#8b5cf6":
                 verdict==="TRUE"?"#22c55e":verdict==="FALSE"?"#ef4444":"#f59e0b";
   const icon = verdict==="TRUE"?"✅":verdict==="FALSE"?"❌":verdict==="MIXED"?"🔀":"⚠️";
-  const lbl  = verdict==="TRUE"?"ADEVĂRAT":verdict==="FALSE"?"FALS":verdict==="MIXED"?"MIXT (parțial adevărat)":"INCERT";
+  const lbl  = verdict==="TRUE"?t('TRUE'):verdict==="FALSE"?t('FALSE'):verdict==="MIXED"?t('MIXEDlong'):t('UNCERTAIN');
   const topic=d.topic||"general";
 
   setTimeout(()=>{
@@ -448,7 +442,7 @@ function renderVerify(d) {
 
   document.getElementById("confText").innerHTML =
     `<span style="opacity:.8">${TOPIC_ICONS[topic]||"🔍"} ${TOPIC_LABELS[topic]||topic}</span>&nbsp;·&nbsp;` +
-    (d.confidence==="HIGH"?"🟢 Ridicată":d.confidence==="MEDIUM"?"🟡 Medie":"🔴 Scăzută") +
+    (d.confidence==="HIGH"?t('confHigh'):d.confidence==="MEDIUM"?t('confMed'):t('confLow')) +
     (d.calibrated_confidence?` · ${d.calibrated_confidence}`:"");
   document.getElementById("explText").textContent = d.explanation||"";
 
@@ -458,7 +452,7 @@ function renderVerify(d) {
     <div style="flex:${con+.1};background:rgba(239,68,68,.4)"></div>
     <div style="flex:${Math.max(1,(d.neutral_sources||[]).length)};background:rgba(100,100,120,.25)"></div>`;
   document.getElementById("evLabel").textContent=
-    `${d.evidence_count||0} dovezi · ${sup} susțin · ${con} contrazic`;
+    `${d.evidence_count||0} ${t('evidence')} · ${sup} ${t('supportN')} · ${con} ${t('contradictN')}`;
 
   const SRC_ICONS={web:"🌐",wikipedia:"📖",wikidata:"🗄️",academic:"🎓",news:"📰",factcheck:"🔎"};
   const srcHtml=(group,cls,label)=>group.length
@@ -476,20 +470,20 @@ function renderVerify(d) {
   const neutralFallback = (!(d.supporting||[]).length && !(d.contradicting||[]).length)
     ? (d.neutral_sources||[]).slice(0,4) : [];
   document.getElementById("sourcesWrap").innerHTML=`
-    <div class="sec-label">Surse & Evidențe</div>
+    <div class="sec-label">${t('sourcesTitle')}</div>
     <div class="src-list">
-      ${srcHtml(d.supporting||[],"tag-s","✅ Susțin")}
-      ${srcHtml(d.contradicting||[],"tag-c","❌ Contrazic")}
-      ${neutralFallback.length?srcHtml(neutralFallback,"tag-n","⚪ Relevante"):""}
+      ${srcHtml(d.supporting||[],"tag-s",t('grpSupport'))}
+      ${srcHtml(d.contradicting||[],"tag-c",t('grpContradict'))}
+      ${neutralFallback.length?srcHtml(neutralFallback,"tag-n",t('grpRelevant')):""}
     </div>
     ${(d.sub_claims||[]).length>1?`
-    <div style="margin-top:10px;font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px">Sub-afirmații</div>
+    <div style="margin-top:10px;font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px">${t('subClaims')}</div>
     ${d.sub_claims.map(c=>`<div style="font-size:11px;padding:5px 8px;background:var(--bg3);border-radius:6px;margin-top:4px;cursor:pointer;border:1px solid var(--border)"
       onclick="document.getElementById('claimInput').value='${esc(c)}'"
     >▸ ${esc(c)}</div>`).join("")}`:""}`;
 
-  document.getElementById("fbYes").textContent="👍 Da";
-  document.getElementById("fbNo").textContent="👎 Nu";
+  document.getElementById("fbYes").textContent=t('yes');
+  document.getElementById("fbNo").textContent=t('no');
   document.getElementById("fbYes").disabled=false;
   document.getElementById("fbNo").disabled=false;
 }
@@ -502,8 +496,8 @@ function setVerifyView(view) {
 
 function submitFeedback(correct) {
   if (!currentResult) return;
-  document.getElementById("fbYes").textContent=correct?"✅":"👍 Da";
-  document.getElementById("fbNo").textContent=correct?"👎 Nu":"❌";
+  document.getElementById("fbYes").textContent=correct?"✅":t('yes');
+  document.getElementById("fbNo").textContent=correct?t('no'):"❌";
   document.getElementById("fbYes").disabled=true;
   document.getElementById("fbNo").disabled=true;
   chrome.runtime.sendMessage({type:"SUBMIT_FEEDBACK",data:{
@@ -517,7 +511,7 @@ function submitFeedback(correct) {
 // ── AI DETECT ─────────────────────────────────────────────────
 function onAIDetect() {
   const text=document.getElementById("aiInput").value.trim();
-  if (!text||text.length<20) { showErr("aiErrBox","Introdu cel puțin 20 de caractere."); return; }
+  if (!text||text.length<20) { showErr("aiErrBox",t('min20')); return; }
   runAIDetect(text);
 }
 
@@ -528,8 +522,8 @@ async function onAIPaste() {
       func:()=>window.getSelection()?.toString()||document.body.innerText.slice(0,2000)||""});
     const text=res?.[0]?.result||"";
     if (text.length>10) document.getElementById("aiInput").value=text.slice(0,2000);
-    else showErr("aiErrBox","Nu s-a putut extrage text.");
-  } catch { showErr("aiErrBox","Nu s-a putut accesa pagina."); }
+    else showErr("aiErrBox",t('noText'));
+  } catch { showErr("aiErrBox",t('noPageAccess')); }
 }
 
 async function runAIDetect(text) {
@@ -539,7 +533,7 @@ async function runAIDetect(text) {
     if (res?.error) throw new Error(res.error);
     renderAIResult(res);
   } catch(err) {
-    showErr("aiErrBox",err.message||"Eroare."); setAIView("empty");
+    showErr("aiErrBox",err.message||t('genericError')); setAIView("empty");
   }
 }
 
@@ -555,10 +549,10 @@ function renderAIResult(d) {
   document.getElementById("aiNum").textContent=aiPct+"%";
   document.getElementById("aiNum").style.color=color;
   const rb=document.getElementById("aiRisk");
-  rb.textContent={HIGH:"🔴 Risc ridicat",MEDIUM:"🟡 Risc mediu",LOW:"🟢 Risc scăzut"}[d.risk_level]||d.risk_level;
+  rb.textContent={HIGH:t('riskHigh'),MEDIUM:t('riskMed'),LOW:t('riskLow')}[d.risk_level]||d.risk_level;
   rb.className=`risk-badge risk-${d.risk_level||"LOW"}`;
   document.getElementById("aiVerdict").textContent=
-    d.verdict==="LIKELY_AI"?"🤖 Probabil AI":d.verdict==="LIKELY_HUMAN"?"✍️ Probabil om":"❓ Incert";
+    d.verdict==="LIKELY_AI"?t('likelyAI'):d.verdict==="LIKELY_HUMAN"?t('likelyHuman'):t('aiUncertain');
   document.getElementById("aiVerdict").style.color=color;
   document.getElementById("aiInterp").textContent=d.interpretation||"";
   document.getElementById("aiBar").style.width=aiPct+"%";
@@ -566,9 +560,9 @@ function renderAIResult(d) {
   document.getElementById("aiPct").textContent=aiPct+"%";
   document.getElementById("humanPct").textContent=(100-aiPct)+"%";
   document.getElementById("aiFeatures").innerHTML=`
-    <div class="ai-feat"><div class="ai-feat-val">${d.avg_sentence_length||"—"}</div><div class="ai-feat-lbl">Cuv/prop.</div></div>
-    <div class="ai-feat"><div class="ai-feat-val">${d.vocabulary_richness?Math.round(d.vocabulary_richness*100)+"%":"—"}</div><div class="ai-feat-lbl">Vocab</div></div>
-    <div class="ai-feat"><div class="ai-feat-val">${d.num_sentences||"—"}</div><div class="ai-feat-lbl">Propoziții</div></div>`;
+    <div class="ai-feat"><div class="ai-feat-val">${d.avg_sentence_length||"—"}</div><div class="ai-feat-lbl">${t('wordsPerSent')}</div></div>
+    <div class="ai-feat"><div class="ai-feat-val">${d.vocabulary_richness?Math.round(d.vocabulary_richness*100)+"%":"—"}</div><div class="ai-feat-lbl">${t('vocab')}</div></div>
+    <div class="ai-feat"><div class="ai-feat-val">${d.num_sentences||"—"}</div><div class="ai-feat-lbl">${t('sentences')}</div></div>`;
   document.getElementById("aiModel").textContent=d.model?`🤖 ${d.model}`:"";
 }
 
@@ -593,7 +587,7 @@ async function saveHistory(claim,result) {
 
 async function loadHistory() {
   const {ts_history=[]}=await chrome.storage.local.get("ts_history").catch(()=>({}));
-  document.getElementById("histTitle").textContent=`Ultimele ${ts_history.length} verificări`;
+  document.getElementById("histTitle").textContent=t('histTitleN',{n:ts_history.length});
   if (!ts_history.length) {
     document.getElementById("histEmpty").style.display="block";
     document.getElementById("histList").innerHTML=""; return;
@@ -602,7 +596,7 @@ async function loadHistory() {
   document.getElementById("histList").innerHTML=ts_history.map(item=>{
     const color=item.verdict==="TRUE"?"#22c55e":item.verdict==="FALSE"?"#ef4444":item.verdict==="MIXED"?"#8b5cf6":"#f59e0b";
     const icon=item.verdict==="TRUE"?"✅":item.verdict==="FALSE"?"❌":item.verdict==="MIXED"?"🔀":"⚠️";
-    const lbl=item.verdict==="TRUE"?"ADEVĂRAT":item.verdict==="FALSE"?"FALS":item.verdict==="MIXED"?"MIXT":"INCERT";
+    const lbl=item.verdict==="TRUE"?t('TRUE'):item.verdict==="FALSE"?t('FALSE'):item.verdict==="MIXED"?t('MIXED'):t('UNCERTAIN');
     const tIcon=TOPIC_ICONS[item.topic||"general"]||"🔍";
     return `<div class="hist-item" data-claim="${esc(item.claim)}">
       <div class="hist-score" style="color:${color};border-color:${color}">${item.score}</div>
@@ -613,7 +607,7 @@ async function loadHistory() {
           <span>${tIcon}</span><span>${formatTime(item.timestamp)}</span>
         </div>
       </div>
-      <button class="hist-rerun" title="Re-verifică">↻</button>
+      <button class="hist-rerun" title="${t('reverify')}">↻</button>
     </div>`;
   }).join("");
   document.querySelectorAll(".hist-item").forEach(el=>{
@@ -630,7 +624,7 @@ async function loadHistory() {
 }
 
 async function clearHistory() {
-  if (!confirm("Ștergi tot istoricul?")) return;
+  if (!confirm(t('confirmClear'))) return;
   await chrome.storage.local.set({ts_history:[]});
   await refreshHistBadge(); loadHistory();
 }
@@ -647,10 +641,10 @@ async function refreshHistBadge() {
 function formatTime(iso) {
   try {
     const diff=Math.floor((Date.now()-new Date(iso))/1000);
-    if (diff<60) return "acum";
+    if (diff<60) return t('now');
     if (diff<3600) return `${Math.floor(diff/60)}min`;
     if (diff<86400) return `${Math.floor(diff/3600)}h`;
-    return new Date(iso).toLocaleDateString("ro-RO",{day:"numeric",month:"short"});
+    return new Date(iso).toLocaleDateString(TS_LANG==='ro'?"ro-RO":"en-US",{day:"numeric",month:"short"});
   } catch { return ""; }
 }
 

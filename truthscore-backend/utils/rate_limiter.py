@@ -9,13 +9,10 @@ from datetime import datetime, timezone
 logger = logging.getLogger("truthscore.rate_limiter")
 
 # Daily limits per plan — these are the REAL production limits.
-# MUST stay in sync with auth.py's _PLAN_DAILY.  Source of truth: .env.
-PLAN_LIMITS = {
-    "free":       int(os.getenv("PLAN_FREE_DAILY", "10")),
-    "pro":        int(os.getenv("PLAN_PRO_DAILY", "200")),
-    "business":   int(os.getenv("PLAN_BUSINESS_DAILY", "800")),
-    "enterprise": int(os.getenv("PLAN_ENTERPRISE_DAILY", "9999")),
-}
+# Single source of truth lives in auth.py (_PLAN_DAILY); imported here so
+# the two never drift. auth.py has no top-level import of this module, so
+# importing auth here is cycle-free.
+from auth import _PLAN_DAILY as PLAN_LIMITS
 
 _PLAN_FEATURES = {
     "free":       {"api_keys": 1, "batch": False, "pdf": False, "widget": False, "models": ["gemini"]},
@@ -85,12 +82,14 @@ async def check_rate_limit(user: dict) -> Tuple[bool, dict]:
 
 async def _check_anon(redis) -> dict:
     """Anonymous users share a tiny global quota."""
+    from utils.abuse import ANON_DAILY_CAP
     key = "ts:rl:anon:" + _utc_date_str()
     try:
         used = await redis.incr(key)
         await redis.expire(key, 86400)
-        allowed = used <= 5
-        return {"allowed": allowed, "used": used, "limit": 5, "plan": "anonymous",
+        # `used` is POST-increment: allow exactly ANON_DAILY_CAP, block the next.
+        allowed = used <= ANON_DAILY_CAP
+        return {"allowed": allowed, "used": used, "limit": ANON_DAILY_CAP, "plan": "anonymous",
                 "reset_in_hours": _hours_until_midnight_utc()}
     except Exception:
         return {"allowed": False, "used": 0, "limit": 0, "plan": "anonymous",
@@ -111,6 +110,8 @@ async def _check_mongo_usage(user: dict) -> Tuple[bool, dict]:
         used = (usage or {}).get("usage", {}).get(today, 0)
         plan = user.get("plan", "free")
         limit = PLAN_LIMITS.get(plan, PLAN_LIMITS["free"])
+        # `used` is PRE-increment here (read before the $inc below), so `used < limit`
+        # allows exactly `limit` requests/day — same rule as the post-increment `<=` sites.
         allowed = used < limit
         await db.users.update_one(
             {"_id": __import__("bson").ObjectId(user_id)},

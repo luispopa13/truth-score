@@ -85,7 +85,7 @@ async def customer_portal(user=Depends(require_user)):
         raise HTTPException(400, "No subscription found")
     session = stripe.billing_portal.Session.create(
         customer=cust_id,
-        return_url="http://localhost:8000/app",
+        return_url=f"{PUBLIC_BASE_URL}/app",
     )
     return {"portal_url": session.url}
 

@@ -31,6 +31,25 @@ async def call_llm_raw(prompt: str, max_tokens: int = 1000,
                        model: str = "gemini",
                        thinking_budget: int = 0) -> str:
     """
+    Public LLM entrypoint — routes every call through the shared concurrency
+    limiter (utils.llm_queue) so 1000 concurrent users can't fan out into
+    1000 simultaneous provider requests (providers rate-limit ~600 RPM).
+    The actual tiered provider logic lives in _call_llm_raw_impl.
+    """
+    try:
+        from utils.llm_queue import enqueue_llm_call
+        return await enqueue_llm_call(
+            _call_llm_raw_impl, prompt, max_tokens, use_search, model, thinking_budget)
+    except Exception:
+        # Queue must never break the service — fall back to a direct call.
+        return await _call_llm_raw_impl(prompt, max_tokens, use_search, model, thinking_budget)
+
+
+async def _call_llm_raw_impl(prompt: str, max_tokens: int = 1000,
+                       use_search: bool = False,
+                       model: str = "gemini",
+                       thinking_budget: int = 0) -> str:
+    """
     Unified LLM caller with thinking mode DISABLED by default.
 
     model: "gemini" | "groq" | "gpt4o-mini"
@@ -135,7 +154,20 @@ async def call_llm_raw(prompt: str, max_tokens: int = 1000,
         except Exception as e:
             print(f"  [LLM] Groq error: {str(e)[:80]}")
 
-        print("  [LLM] All LLMs failed")
+    # ── Last resort: paid fallback (only if configured) ──────────
+    # Cascade vision: Gemini free → Groq free → paid. LLM_PAID_FALLBACK is
+    # empty by default, so we never spend automatically unless opted in.
+    _paid = globals().get("LLM_PAID_FALLBACK", "")
+    if _paid and model != _paid:
+        print(f"  [LLM] Free tiers exhausted -> paid fallback ({_paid})")
+        try:
+            return await _call_llm_raw_impl(
+                prompt, max_tokens=max_tokens, use_search=use_search,
+                model=_paid, thinking_budget=thinking_budget)
+        except Exception as e:
+            print(f"  [LLM] Paid fallback error: {str(e)[:80]}")
+
+    print("  [LLM] All LLMs failed")
     return ""
 
 
@@ -162,15 +194,19 @@ CHEAP_MODEL_ALIASES = {"groq", "cheap", "groq-gpt-oss-120b", "gpt-oss-120b"}
 EASY_CLAIM_MAX_WORDS = int(os.getenv("EASY_CLAIM_MAX_WORDS", "14"))
 
 
-def pick_model(claim: str, topic: str) -> str:
+def pick_model(claim: str, topic: str, eco: bool = False) -> str:
     """
     Fast-first routing with automatic escalation downstream:
+      - eco mode (heavy-day paid user past threshold) -> always cheap Groq,
+        never escalates; protects margin without a hard block
       - hard signals (absolute language / medical-scientific domain) -> Gemini
       - short simple claims -> cheap Groq GPT-OSS (~6x cheaper input)
       - everything else     -> Gemini (default quality)
     verify.py escalates to Gemini whenever the cheap result is LOW/UNCERTAIN,
     so quality is never sacrificed — latency only on genuinely hard claims.
     """
+    if eco:
+        return os.getenv("CHEAP_MODEL", "groq-gpt-oss-120b")
     if is_nuance_claim(claim) or is_strict_domain(claim, topic):
         return os.getenv("DEFAULT_MODEL", "gemini")
     if len(claim.split()) <= EASY_CLAIM_MAX_WORDS:
@@ -506,16 +542,19 @@ Respond ONLY with JSON:
                 weight *= 1.0  # no change
 
             if stance == "SUPPORTS":
+                src.stance = "supporting"
                 weighted_sum += weight * 1.0
                 total_weight += weight
                 if key_fact:
                     key_facts["supports"].append(f"{src.publisher}: {key_fact}")
             elif stance == "CONTRADICTS":
+                src.stance = "contradicting"
                 weighted_sum += weight * -1.0
                 total_weight += weight
                 if key_fact:
                     key_facts["contradicts"].append(f"{src.publisher}: {key_fact}")
             elif stance == "NEUTRAL":
+                src.stance = "neutral"
                 total_weight += weight * 0.3
             # IRRELEVANT = no weight
 
@@ -613,7 +652,11 @@ async def reason_with_gpt(
                          "Use your training knowledge to verify this claim. "
                          "Answer as a scientist/expert would, citing the established consensus.")
 
-    if lang == "ro":
+    # Unified reasoning path: the English prompt has the strongest calibration
+    # examples and adversarial process, and its LANGUAGE directive makes the
+    # model write the explanation in the claim's own language (English default).
+    # The Romanian-only branch below is kept for reference but disabled.
+    if False:  # lang == "ro"
         system_prompt = """Ești un sistem expert de fact-checking. Primești o afirmație și dovezi din surse multiple.
 
 PROCES ÎN 3 ETAPE:
@@ -681,9 +724,12 @@ QUALITY RULES:
 - For FALSE: explain what IS actually true.
 - For nuance/partial truths: acknowledge the true part, explain the false implication.
 
-CRITICAL: Respond ONLY with valid JSON. No markdown. Start with { end with }."""
-        # Knowledge injection for known hard claims
-        knowledge_ctx = get_knowledge_injection(claim)
+CRITICAL: Respond ONLY with valid JSON. No markdown. Start with { end with }.
+
+LANGUAGE: Write the "explanation" text in the SAME language as the claim above
+(e.g. a Spanish claim -> Spanish explanation, a French claim -> French). If the
+claim's language is unclear, write the explanation in English. All JSON keys and
+the verdict/confidence values stay in English exactly as specified."""
 
         user_prompt = f"""Claim to verify: "{claim}"
 {knowledge_ctx}

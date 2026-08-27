@@ -10,14 +10,16 @@ const HIGHLIGHT_CLASS = "ts-claim";
 const stats = { TRUE: 0, FALSE: 0, UNCERTAIN: 0, pending: 0 };
 // Free-tier notice shown inside inline panels (self-promo, never third-party
 // ads injected into pages — Chrome Web Store policy + user trust).
-const SPONSOR_LINE =
-  '<div class="tsp-sponsor">⚡ <b>TruthScore Pro</b> — verificări nelimitate, fără acest anunț</div>';
+// Built lazily so it reflects the language synced from chrome.storage.
+function sponsorLine() {
+  return '<div class="tsp-sponsor">' + t('sponsorLine') + '</div>';
+}
 
 // ── Safe chrome.runtime wrapper ──────────────────────────────
 function safeMsg(msg) {
   return new Promise((resolve) => {
     try {
-      if (!chrome?.runtime?.id) { resolve({ error: "Extension reloaded — reîncarcă pagina (F5)." }); return; }
+      if (!chrome?.runtime?.id) { resolve({ error: t('ctxReload') }); return; }
       chrome.runtime.sendMessage(msg, (res) => {
         if (chrome.runtime.lastError) {
           resolve({ error: chrome.runtime.lastError.message });
@@ -26,7 +28,7 @@ function safeMsg(msg) {
         }
       });
     } catch (e) {
-      resolve({ error: "Extension context invalidated — reîncarcă pagina." });
+      resolve({ error: t('ctxInvalidated') });
     }
   });
 }
@@ -82,11 +84,11 @@ async function runFullScan() {
   if (scanActive) { clearAll(); return; }
   scanActive = true;
   stats.TRUE = stats.FALSE = stats.UNCERTAIN = stats.pending = 0;
-  showIndicator("🔍 Se detectează claims verificabile...");
+  showIndicator(t('scanDetecting'));
 
   const pageText = extractPageText();
   if (!pageText || pageText.length < 50) {
-    showIndicator("Nu s-a găsit text suficient.");
+    showIndicator(t('scanNoText'));
     setTimeout(hideIndicator, 3000);
     scanActive = false; return;
   }
@@ -96,12 +98,12 @@ async function runFullScan() {
     const res = await safeMsg({ type: "DETECT_CLAIMS", text: pageText.slice(0, 30000) });
     claims = res?.claims || [];
   } catch {
-    showIndicator("❌ Backend offline."); setTimeout(hideIndicator, 4000);
+    showIndicator(t('scanBackendOffline')); setTimeout(hideIndicator, 4000);
     scanActive = false; return;
   }
 
   if (!claims.length) {
-    showIndicator("Niciun claim verificabil detectat."); setTimeout(hideIndicator, 3000);
+    showIndicator(t('scanNoClaims')); setTimeout(hideIndicator, 3000);
     scanActive = false; return;
   }
 
@@ -147,7 +149,7 @@ function highlightPending(claimText) {
       const mark = document.createElement("mark");
       mark.className = HIGHLIGHT_CLASS;
       mark.dataset.claim = claimText.slice(0, 200);
-      mark.title = "⏳ Se verifică...";
+      mark.title = t('verifyingShort');
       mark.style.cssText = "background:rgba(144,144,168,.15);border-bottom:2px solid #9090a8;cursor:pointer;border-radius:2px;padding:0 1px;transition:background .3s,border-color .3s";
       mark.addEventListener("click", (e) => { e.stopPropagation(); showPanel(mark.dataset.claim, mark.getBoundingClientRect()); });
       range.surroundContents(mark);
@@ -161,7 +163,7 @@ function applyVerdict(mark, verdict, score) {
   const C = { TRUE:{ bg:"rgba(34,197,94,.18)", border:"#22c55e", icon:"✅" }, FALSE:{ bg:"rgba(239,68,68,.18)", border:"#ef4444", icon:"❌" }, UNCERTAIN:{ bg:"rgba(245,158,11,.15)", border:"#f59e0b", icon:"⚠️" } };
   const c = C[verdict] || C.UNCERTAIN;
   mark.style.background = c.bg; mark.style.borderColor = c.border;
-  mark.title = `${c.icon} ${verdict} · Score: ${score}/100 · Click pentru detalii`;
+  mark.title = `${c.icon} ${verdict} · Score: ${score}/100 · ${t('clickDetails')}`;
   mark.dataset.verdict = verdict; mark.dataset.score = score;
 }
 
@@ -176,7 +178,7 @@ function showSummary() {
       <button id="ts-sum-close" style="background:none;border:none;cursor:pointer;color:#9090a8;font-size:14px;padding:2px 4px">✕</button>
     </div>
     <div id="ts-sum-body"></div>
-    <div class="ts-sum-footer"><button id="ts-sum-clear">🗑 Șterge highlights</button></div>`;
+    <div class="ts-sum-footer"><button id="ts-sum-clear">${t('clearHighlights')}</button></div>`;
   document.body.appendChild(summaryPanel);
   summaryPanel.querySelector("#ts-sum-close").addEventListener("click", clearAll);
   summaryPanel.querySelector("#ts-sum-clear").addEventListener("click", clearAll);
@@ -194,8 +196,8 @@ function updateSummary() {
       <span style="color:#f59e0b">⚠️ ${stats.UNCERTAIN}</span>
     </div>
     ${stats.pending > 0
-      ? `<div style="font-size:11px;color:#9090a8;margin-top:4px">⏳ ${stats.pending} în verificare...</div>`
-      : `<div style="font-size:11px;color:#9090a8;margin-top:4px">✅ Complet · ${total} claims</div>`}`;
+      ? `<div style="font-size:11px;color:#9090a8;margin-top:4px">⏳ ${stats.pending} ${t('scanVerifying')}</div>`
+      : `<div style="font-size:11px;color:#9090a8;margin-top:4px">✅ ${t('scanDone')} · ${total} ${t('scanClaims')}</div>`}`;
 }
 
 function clearAll() {
@@ -225,7 +227,7 @@ function showPanel(text, anchorRect) {
   p.innerHTML = `
     <div class="tsp-header"><span class="tsp-logo">🔍 TruthScore</span><button class="tsp-close">✕</button></div>
     <div class="tsp-claim">"${esc(text.slice(0,100))}${text.length>100?"…":""}"</div>
-    <div class="tsp-loading"><div class="tsp-spinner"></div><div class="tsp-load-text">Se analizează...</div></div>
+    <div class="tsp-loading"><div class="tsp-spinner"></div><div class="tsp-load-text">${t('analyzing')}</div></div>
     <div class="tsp-result" style="display:none"></div>`;
   document.body.appendChild(p);
   panel = p;
@@ -239,7 +241,7 @@ function showPanel(text, anchorRect) {
   }
   p.querySelector(".tsp-close").addEventListener("click", removePanel);
 
-  const msgs = ["Se caută în 17 surse...","Se rulează embeddings...","Se aplică NLI...","Se calculează TruthScore..."];
+  const msgs = [t('loadStep1'),t('loadStep2'),t('loadStep3'),t('loadStep4')];
   let mi = 0;
   const iv = setInterval(() => {
     if (!p.isConnected) { clearInterval(iv); return; }
@@ -250,7 +252,7 @@ function showPanel(text, anchorRect) {
 
   safeMsg({ type: "VERIFY_CLAIM", text }).then((res) => {
     clearInterval(iv);
-    if (!res || res.error === "Extension context invalidated — reîncarcă pagina.") { showErr(p, "Backend offline. Rulează: uvicorn main:app --reload"); return; }
+    if (!res || res.error === t('ctxInvalidated')) { showErr(p, t('backendHint')); return; }
     if (res.error) { showErr(p, res.error); return; }
     showResult(p, text, res);
     document.querySelectorAll("."+HIGHLIGHT_CLASS).forEach(m => {
@@ -271,7 +273,7 @@ function showResult(p, text, d) {
   const verdict = d.verdict || "UNCERTAIN";
   const color = verdict==="TRUE"?"#22c55e":verdict==="FALSE"?"#ef4444":verdict==="MIXED"?"#8b5cf6":"#f59e0b";
   const icon  = verdict==="TRUE"?"✅":verdict==="FALSE"?"❌":verdict==="MIXED"?"🔀":"⚠️";
-  const lbl   = verdict==="TRUE"?"ADEVĂRAT":verdict==="FALSE"?"FALS":verdict==="MIXED"?"MIXT (parțial adevărat)":"INCERT";
+  const lbl   = verdict==="TRUE"?t('TRUE'):verdict==="FALSE"?t('FALSE'):verdict==="MIXED"?t('MIXEDlong'):t('UNCERTAIN');
   const sup=d.supporting||[], con=d.contradicting||[], neu=d.neutral_sources||[];
   const icons={web:"🌐",wikipedia:"📖",wikidata:"🗄️",academic:"🎓",news:"📰",factcheck:"🔎"};
 
@@ -294,7 +296,7 @@ function showResult(p, text, d) {
       <div class="tsp-circle" style="color:${color};border-color:${color}">${d.score}</div>
       <div class="tsp-score-right">
         <div class="tsp-verdict" style="color:${color}">${icon} ${lbl}</div>
-        <div class="tsp-conf">${d.confidence==="HIGH"?"🟢 Ridicată":d.confidence==="MEDIUM"?"🟡 Medie":"🔴 Scăzută"}</div>
+        <div class="tsp-conf">${d.confidence==="HIGH"?t('confHigh'):d.confidence==="MEDIUM"?t('confMed'):t('confLow')}</div>
         <div class="tsp-expl">${esc(d.explanation||"")}</div>
       </div>
     </div>
@@ -303,17 +305,17 @@ function showResult(p, text, d) {
       <div style="flex:${con.length+.1};background:rgba(239,68,68,.35)"></div>
       <div style="flex:${Math.max(1,neu.length)};background:rgba(100,100,120,.25)"></div>
     </div>
-    <div class="tsp-ev-label">${d.evidence_count||0} dovezi · ${sup.length} susțin · ${con.length} contrazic</div>
+    <div class="tsp-ev-label">${d.evidence_count||0} ${t('evidence')} · ${sup.length} ${t('supportN')} · ${con.length} ${t('contradictN')}</div>
     <div class="tsp-sources">
-      ${srcGroup(sup,"#22c55e","✅ Susțin")}
-      ${srcGroup(con,"#ef4444","❌ Contrazic")}
-      ${!sup.length&&!con.length?srcGroup(neu.slice(0,2),"#9090a8","📄 Relevante"):""}
+      ${srcGroup(sup,"#22c55e",t('grpSupport'))}
+      ${srcGroup(con,"#ef4444",t('grpContradict'))}
+      ${!sup.length&&!con.length?srcGroup(neu.slice(0,2),"#9090a8",t('grpRelevant')):""}
     </div>
-    ${d.show_ads ? SPONSOR_LINE : ""}
+    ${d.show_ads ? sponsorLine() : ""}
     <div class="tsp-feedback" id="tsfb${fbId}">
-      <span class="tsp-fb-lbl">Verdictul e corect?</span>
-      <button class="tsp-fb-yes" data-fbid="${fbId}">👍 Da</button>
-      <button class="tsp-fb-no"  data-fbid="${fbId}">👎 Nu</button>
+      <span class="tsp-fb-lbl">${t('verdictCorrect')}</span>
+      <button class="tsp-fb-yes" data-fbid="${fbId}">${t('yes')}</button>
+      <button class="tsp-fb-no"  data-fbid="${fbId}">${t('no')}</button>
     </div>`;
 
   // Attach feedback listeners (avoid inline onclick + closure issues)
@@ -326,33 +328,33 @@ function showParagraphResult(p, text, d) {
   const verdict = d.verdict || "UNCERTAIN";
   const color = verdict==="TRUE"?"#22c55e":verdict==="FALSE"?"#ef4444":verdict==="MIXED"?"#8b5cf6":"#f59e0b";
   const icon  = verdict==="TRUE"?"✅":verdict==="FALSE"?"❌":verdict==="MIXED"?"🔀":"⚠️";
-  const lbl   = verdict==="TRUE"?"ADEVĂRAT":verdict==="FALSE"?"FALS":verdict==="MIXED"?"MIXT (parțial adevărat)":"INCERT";
+  const lbl   = verdict==="TRUE"?t('TRUE'):verdict==="FALSE"?t('FALSE'):verdict==="MIXED"?t('MIXEDlong'):t('UNCERTAIN');
   const icons={web:"🌐",wikipedia:"📖",wikidata:"🗄️",academic:"🎓",news:"📰",factcheck:"🔎"};
 
   const mini=(g,clr,gl,ref)=>{g=g||[];if(!g.length)return"";
     const rows=g.slice(0,2).map(s=>`<a class="tsp-src" href="${esc(s.url||"#")}" target="_blank" rel="noopener" style="border-left:3px solid ${clr}">
       <span class="tsp-src-icon">${icons[s.type]||"📄"}</span>
-      <div class="tsp-src-body"><div class="tsp-src-title">${esc((s.publisher||s.title||"sursă").slice(0,60))}</div></div>
+      <div class="tsp-src-body"><div class="tsp-src-title">${esc((s.publisher||s.title||t('sourceFallback')).slice(0,60))}</div></div>
       ${ref?`<span style="flex-shrink:0;font-family:'JetBrains Mono',monospace;font-size:8px;font-weight:700;color:${clr};border:1px solid ${clr};border-radius:3px;padding:0 3px;opacity:.85">${ref}</span>`:""}
       <span style="color:${clr};font-size:10px">${gl}</span></a>`).join("");
-    return rows+(g.length>2?`<div style="font-size:9px;color:#9090a8;margin:2px 0 4px">+${g.length-2} alte surse</div>`:"");};
+    return rows+(g.length>2?`<div style="font-size:9px;color:#9090a8;margin:2px 0 4px">${t('otherSources',{n:g.length-2})}</div>`:"");};
 
   const cards=(d.results||[]).map((r,idx)=>{
     const c =r.verdict==="TRUE"?"#22c55e":r.verdict==="FALSE"?"#ef4444":"#f59e0b";
     const ci=r.verdict==="TRUE"?"✅":r.verdict==="FALSE"?"❌":"⚠️";
-    const cl=r.verdict==="TRUE"?"ADEVĂRAT":r.verdict==="FALSE"?"FALS":"INCERT";
+    const cl=r.verdict==="TRUE"?t('TRUE'):r.verdict==="FALSE"?t('FALSE'):t('UNCERTAIN');
     const sup=r.supporting||[], con=r.contradicting||[], neu=r.neutral_sources||[];
     const srcs=(sup.length||con.length)?mini(sup,c,"✓",`#${idx+1}`)+mini(con,"#ef4444","✗",`#${idx+1}`):mini(neu,"#9090a8","•",`#${idx+1}`);
     return `<div style="border:1px solid rgba(128,128,160,.25);border-left:3px solid ${c};border-radius:8px;padding:7px;margin-top:7px;background:rgba(255,255,255,.02)">
-      <div style="display:flex;justify-content:space-between;gap:8px;font-size:10px;font-weight:800;color:${c}"><span>${ci} ${cl} <span style="font-size:8px;border:1px solid ${c};border-radius:3px;padding:0 3px;opacity:.85">#${idx+1}</span></span><span>📊 ${r.score}%${r.topic?" · "+esc(r.topic):""}</span></div>
+      <div style="display:flex;justify-content:space-between;gap:8px;font-size:10px;font-weight:800;color:${c}"><span>${ci} ${cl} <span style="font-size:8px;border:1px solid ${c};border-radius:3px;padding:0 3px;opacity:.85">#${idx+1}</span></span><span>📊 ${r.score}%${r.topic?" · "+esc(TS_TOPIC_LABELS[r.topic]||r.topic):""}</span></div>
       <div style="font-size:11.5px;font-weight:600;margin-top:4px">${esc(r.claim||"")}</div>
       <div style="font-size:10px;color:#9090a8;margin-top:3px">${esc((r.explanation||"").slice(0,140))}</div>
       <div style="display:flex;align-items:center;gap:7px;margin-top:5px">
         <div style="flex:1;height:3px;border-radius:99px;background:rgba(128,128,160,.25);overflow:hidden"><div style="height:100%;width:${Math.max(3,r.score)}%;background:${c};border-radius:99px"></div></div>
         <span style="flex-shrink:0;font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:700;color:${c}">${r.score}%</span>
       </div>
-      <div style="font-size:9px;font-weight:700;color:#9090a8;opacity:.85;margin-top:5px">📎 SURSE PENTRU AFIRMAȚIA #${idx+1}${r.claim?` · „${esc(r.claim.slice(0,42))}${r.claim.length>42?"…":""}"`:""}</div>
-      ${srcs||'<div style="font-size:10px;color:#9090a8;opacity:.6;margin-top:3px">fără dovezi directe</div>'}
+      <div style="font-size:9px;font-weight:700;color:#9090a8;opacity:.85;margin-top:5px">${t('claimSourcesPara',{n:idx+1})}${r.claim?` · „${esc(r.claim.slice(0,42))}${r.claim.length>42?"…":""}"`:""}</div>
+      ${srcs||`<div style="font-size:10px;color:#9090a8;opacity:.6;margin-top:3px">${t('noDirectEvidence')}</div>`}
     </div>`;}).join("");
 
   const fbId = ++_fbCounter;
@@ -363,16 +365,16 @@ function showParagraphResult(p, text, d) {
       <div class="tsp-circle" style="color:${color};border-color:${color}">${d.score}</div>
       <div class="tsp-score-right">
         <div class="tsp-verdict" style="color:${color}">${icon} ${lbl}</div>
-        <div class="tsp-conf">${d.confidence==="HIGH"?"🟢 Ridicată":d.confidence==="MEDIUM"?"🟡 Medie":"🔴 Scăzută"} · ${d.claim_count||d.results.length} afirmații</div>
+        <div class="tsp-conf">${d.confidence==="HIGH"?t('confHigh'):d.confidence==="MEDIUM"?t('confMed'):t('confLow')} · ${d.claim_count||d.results.length} ${t('claimsWord')}</div>
         <div class="tsp-expl">${esc(d.explanation||"")}</div>
       </div>
     </div>
     ${cards}
-    ${d.show_ads ? SPONSOR_LINE : ""}
+    ${d.show_ads ? sponsorLine() : ""}
     <div class="tsp-feedback" id="tsfb${fbId}">
-      <span class="tsp-fb-lbl">Analiza e corectă?</span>
-      <button class="tsp-fb-yes" data-fbid="${fbId}">👍 Da</button>
-      <button class="tsp-fb-no"  data-fbid="${fbId}">👎 Nu</button>
+      <span class="tsp-fb-lbl">${t('analysisCorrect')}</span>
+      <button class="tsp-fb-yes" data-fbid="${fbId}">${t('yes')}</button>
+      <button class="tsp-fb-no"  data-fbid="${fbId}">${t('no')}</button>
     </div>`;
 
   el.querySelector(".tsp-fb-yes").addEventListener("click", () => sendFeedback(fbId, true, p));
@@ -383,8 +385,8 @@ function sendFeedback(fbId, correct, panelEl) {
   const el = document.getElementById("tsfb" + fbId);
   if (!el) return;
   el.innerHTML = correct
-    ? "<span style='color:#22c55e;font-size:11px'>👍 Mulțumim!</span>"
-    : "<span style='color:#f59e0b;font-size:11px'>👎 Notat, vom îmbunătăți.</span>";
+    ? `<span style='color:#22c55e;font-size:11px'>${t('fbThanks')}</span>`
+    : `<span style='color:#f59e0b;font-size:11px'>${t('fbNoted')}</span>`;
   safeMsg({
     type: "SUBMIT_FEEDBACK",
     data: {

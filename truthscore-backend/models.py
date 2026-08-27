@@ -24,6 +24,11 @@ class Source(BaseModel):
     publisher: str   = ""
     nli:       NLIScore | None = None
     relevance: float = 0.0
+    # Which sub-claim this source is evidence for (-1 = not mapped / whole claim),
+    # and whether it supports/contradicts/is neutral toward that sub-claim.
+    # Additive with defaults so previously-cached Source blobs still deserialize.
+    claim_index: int = -1
+    stance:      str = ""
 
 
 class LatencyBreakdown(BaseModel):
@@ -52,6 +57,33 @@ class VerifyResponse(BaseModel):
     sub_claims:            list[str]        = Field(default_factory=list)
     word_importance:       list[dict]       = Field(default_factory=list)
     calibrated_confidence: str              = ""
+    # Per-sub-claim breakdown (empty for simple single claims). When populated,
+    # `score`/`verdict` above are the weighted aggregate of these, and
+    # `aggregate_reason` explains how the aggregate was reached.
+    sub_claim_results:     list["SubClaimResult"] = Field(default_factory=list)
+    aggregate_reason:      str              = ""
+
+
+
+class SubClaimResult(BaseModel):
+    """One decomposed sub-claim with its own score, verdict, and mapped sources."""
+    claim_index:         int
+    claim:               str
+    score:               int
+    verdict:             str
+    confidence:          str
+    explanation:         str          # always set, never empty
+    topic:               str          = "general"
+    supporting:          list[Source] = Field(default_factory=list)
+    contradicting:       list[Source] = Field(default_factory=list)
+    neutral_sources:     list[Source] = Field(default_factory=list)
+    evidence_count:      int          = 0
+    weight:              float        = 1.0
+
+
+# VerifyResponse references SubClaimResult as a forward ref; resolve it now that
+# SubClaimResult is defined.
+VerifyResponse.model_rebuild()
 
 
 
@@ -62,6 +94,7 @@ class TextAnalysisResponse(BaseModel):
     score: int
     confidence: str
     explanation: str
+    aggregate_reason: str = ""
     results: list[VerifyResponse] = Field(default_factory=list)
     claim_count: int = 0
     mixed: bool = False
@@ -115,8 +148,8 @@ class BatchVerifyResponse(BaseModel):
 
 class CheckoutRequest(BaseModel):
     plan: str = "pro"
-    success_url: str = "http://localhost:8000/app?payment=success"
-    cancel_url: str = "http://localhost:8000/app"
+    success_url: str = f"{PUBLIC_BASE_URL}/app?payment=success"
+    cancel_url: str = f"{PUBLIC_BASE_URL}/app"
 
 
 class GoogleAuthRequest(BaseModel):
