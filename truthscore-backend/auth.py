@@ -594,7 +594,7 @@ async def google_exchange(code: str, code_verifier: str, redirect_uri: str):
     Called by the /auth/google/callback page after Google redirects back."""
     import os as _os
     client_id     = _os.getenv("GOOGLE_CLIENT_ID", "809996736507-hatvv1gfev0b2sgnaqjq2vlqvfqateav.apps.googleusercontent.com")
-    client_secret = _os.getenv("GOOGLE_CLIENT_SECRET", "")
+    client_secret = _os.getenv("GOOGLE_CLIENT_SECRET") or _os.getenv("GOOGLE_WEB_CLIENT_SECRET", "")
     if not client_secret:
         raise HTTPException(500, "GOOGLE_CLIENT_SECRET not configured")
     try:
