@@ -731,9 +731,11 @@ LANGUAGE: Write the "explanation" text in the SAME language as the claim above
 claim's language is unclear, write the explanation in English. All JSON keys and
 the verdict/confidence values stay in English exactly as specified."""
 
+        # knowledge_ctx: optional extra context injected by callers (e.g. from
+        # a prior Gemini knowledge call). Empty string when not provided.
+        knowledge_ctx = ""
         user_prompt = f"""Claim to verify: "{claim}"
 {knowledge_ctx}
-
 Evidence collected from {len(top_evidence)} sources:
 {evidence_block}
 
