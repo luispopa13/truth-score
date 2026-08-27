@@ -28,7 +28,7 @@ try:
         register_user, login_user, get_current_user, require_user,
         check_rate_limit, get_user_out, upgrade_user_plan,
         UserRegister, UserLogin, UserOut, PLANS, create_token,
-        google_auth, google_callback, AUTH_AVAILABLE,
+        google_auth, google_callback, google_exchange, AUTH_AVAILABLE,
     )
 except ImportError as e:
     print(f"[WARN] Auth not available: {e}")
@@ -43,6 +43,7 @@ except ImportError as e:
     async def create_token(*a,**k): return ""
     async def google_auth(*a,**k): raise HTTPException(503, "Google auth not configured")
     async def google_callback(*a,**k): raise HTTPException(503, "Google auth not configured")
+    async def google_exchange(*a,**k): raise HTTPException(503, "Google auth not configured")
 
 # Payments
 try:
@@ -768,6 +769,16 @@ async def auth_google(req: GoogleAuthRequest):
 @app.get("/auth/google/callback")
 async def auth_google_callback():
     return await google_callback()
+
+
+class GoogleExchangeRequest(BaseModel):
+    code: str
+    code_verifier: str = ""
+    redirect_uri: str = ""
+
+@app.post("/auth/google/exchange")
+async def auth_google_exchange(req: GoogleExchangeRequest):
+    return await google_exchange(req.code, req.code_verifier, req.redirect_uri)
 
 
 # ── Payment endpoints ─────────────────────────────────────

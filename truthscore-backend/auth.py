@@ -548,22 +548,26 @@ async def google_auth(req: GoogleAuthRequest):
 
 
 async def google_callback():
-    """Handle Google OAuth callback for web dashboard."""
+    """Handle Google OAuth callback for web dashboard (authorization code + PKCE flow)."""
     return HTMLResponse(content="""<!DOCTYPE html>
 <html><head><meta charset="UTF-8"/><title>TruthScore -- Autentificare</title></head>
 <body style="background:#06060e;color:#eeeef8;font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh">
 <script>
-// Extract token from URL hash (implicit flow)
-const hash = window.location.hash.substring(1);
-const params = new URLSearchParams(hash);
-const accessToken = params.get('access_token');
-const state = params.get('state');
+// Authorization code flow: code arrives as query param, code_verifier stored in sessionStorage
+const params = new URLSearchParams(window.location.search);
+const code = params.get('code');
+const error = params.get('error');
 
-if (accessToken) {
-  fetch('/auth/google', {
+if (error) {
+  document.getElementById('msg').textContent = 'Eroare Google: ' + error;
+} else if (code) {
+  const codeVerifier = sessionStorage.getItem('ts_pkce_verifier');
+  const redirectUri = window.location.origin + '/auth/google/callback';
+  sessionStorage.removeItem('ts_pkce_verifier');
+  fetch('/auth/google/exchange', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({token: accessToken})
+    body: JSON.stringify({code, code_verifier: codeVerifier, redirect_uri: redirectUri})
   })
   .then(r => r.json())
   .then(d => {
@@ -578,8 +582,77 @@ if (accessToken) {
     document.getElementById('msg').textContent = 'Eroare conexiune: ' + e.message;
   });
 } else {
-  document.getElementById('msg').textContent = 'Token Google negăsit. Încearcă din nou.';
+  document.getElementById('msg').textContent = 'Cod Google negăsit. Încearcă din nou.';
 }
 </script>
 <div id="msg" style="font-size:16px">[loading] Se autentifică cu Google...</div>
 </body></html>""")
+
+
+async def google_exchange(code: str, code_verifier: str, redirect_uri: str):
+    """Exchange authorization code + PKCE verifier for a TruthScore JWT.
+    Called by the /auth/google/callback page after Google redirects back."""
+    import os as _os
+    client_id     = _os.getenv("GOOGLE_CLIENT_ID", "809996736507-hatvv1gfev0b2sgnaqjq2vlqvfqateav.apps.googleusercontent.com")
+    client_secret = _os.getenv("GOOGLE_CLIENT_SECRET", "")
+    if not client_secret:
+        raise HTTPException(500, "GOOGLE_CLIENT_SECRET not configured")
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            # Step 1: exchange code for access token
+            token_resp = await client.post(
+                "https://oauth2.googleapis.com/token",
+                data={
+                    "code":          code,
+                    "client_id":     client_id,
+                    "client_secret": client_secret,
+                    "redirect_uri":  redirect_uri,
+                    "grant_type":    "authorization_code",
+                    "code_verifier": code_verifier or "",
+                },
+            )
+            if token_resp.status_code != 200:
+                raise HTTPException(401, f"Google token exchange failed: {token_resp.text[:200]}")
+            access_token = token_resp.json().get("access_token", "")
+            if not access_token:
+                raise HTTPException(401, "No access token in Google response")
+
+            # Step 2: fetch user info
+            user_resp = await client.get(
+                "https://www.googleapis.com/oauth2/v3/userinfo",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            if user_resp.status_code != 200:
+                raise HTTPException(401, "Failed to fetch Google user info")
+            info = user_resp.json()
+
+        email = info.get("email", "").lower()
+        name  = info.get("name", "") or info.get("given_name", "")
+        if not email:
+            raise HTTPException(400, "Email negăsit în contul Google")
+
+        db = get_db()
+        user = await db.users.find_one({"email": email})
+        if not user:
+            from bson import ObjectId
+            from datetime import datetime as _dt, timezone as _tz
+            new_user = {
+                "email": email, "password": "", "name": name,
+                "plan": "free", "created_at": _dt.now(_tz.utc),
+                "auth_provider": "google",
+                "stripe_customer_id": "", "stripe_subscription_id": "",
+                "usage": {},
+            }
+            result = await db.users.insert_one(new_user)
+            user_id = str(result.inserted_id)
+        else:
+            user_id = str(user["_id"])
+
+        from auth import create_token
+        token = create_token(user_id)
+        return {"token": token, "user_id": user_id, "email": email, "name": name}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Eroare Google OAuth exchange: {str(e)[:100]}")
