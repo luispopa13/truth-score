@@ -123,9 +123,20 @@ async def anon_ip_check(ip: str):
     redis = get_async_redis()
     base = {"plan": "anonymous", "used": 0, "limit": ANON_DAILY_CAP}
     if not redis or not ip:
-        info = dict(base); info["allowed"] = True
-        info["note"] = "no-redis dev mode — anonymous not counted"
-        return True, info
+        # Without Redis we cannot count anonymous usage per IP. Failing OPEN here
+        # gives every anonymous visitor UNLIMITED free verifications the moment
+        # Redis is down — a cost/abuse hole in production. So we fail OPEN only in
+        # an explicit dev opt-in, and fail CLOSED in prod (anon must sign in; the
+        # Mongo-backed quota still serves registered users). Priority: protect the
+        # paid LLM spend over anonymous convenience when the counter is missing.
+        if _DEV_OPT_IN:
+            info = dict(base); info["allowed"] = True
+            info["note"] = "no-redis dev mode — anonymous not counted"
+            return True, info
+        info = dict(base); info["allowed"] = False
+        info["note"] = ("anonymous quota unavailable (no Redis) — "
+                        "creează un cont gratuit pentru a continua")
+        return False, info
     day = _utc_day()
     key = f"ts:anon:{ip}:{day}"
     try:
@@ -135,8 +146,14 @@ async def anon_ip_check(ip: str):
         info = dict(base); info.update({"used": used, "allowed": allowed})
         return allowed, info
     except Exception:
-        info = dict(base); info["allowed"] = True
-        return True, info
+        # Redis was reachable at startup but the call failed mid-request. Same
+        # reasoning as above: fail CLOSED in prod, open only under dev opt-in.
+        if _DEV_OPT_IN:
+            info = dict(base); info["allowed"] = True
+            return True, info
+        info = dict(base); info["allowed"] = False
+        info["note"] = "anonymous quota check failed — creează un cont gratuit"
+        return False, info
 
 
 # ── 4. Feedback-bonus checks (gamified calibration data collection) ──

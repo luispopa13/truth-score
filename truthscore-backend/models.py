@@ -123,7 +123,10 @@ class ClaimDetectResponse(BaseModel):
 class FeedbackRequest(BaseModel):
     claim:          str
     verdict:        str  = ""
-    score:          int  = 0
+    # None (not 0) is the "unset" sentinel so /feedback can fall back to
+    # predicted_score. A default of 0 would look like a real score of zero and
+    # suppress the alias, mislabeling extension feedback as score=0.
+    score:          int | None = None
     topic:          str  = "general"
     correct:        bool = False
     failure_reason: str  = ""

@@ -199,9 +199,47 @@ def _to_bool(v) -> bool:
     return str(v).strip().upper() in ("YES", "TRUE", "1")
 
 
+def _load_interaction_index() -> dict:
+    """Map interaction_id -> the server-logged interaction (authoritative
+    score/topic/verdict), sourced from pipeline.case_study's interactions log.
+
+    Calibration must reflect the score TruthScore ACTUALLY returned, not the
+    value a client echoed back with its feedback — the browser extension can omit
+    `score` (defaults to 50) or send a stale one, which would silently poison the
+    ECE curve. Joining on interaction_id recovers the true score. Best-effort:
+    returns {} if the log module/file is missing, so calibration still works
+    (it just falls back to the client-supplied score, as before)."""
+    try:
+        from pipeline.case_study import INTERACTIONS_FILE
+    except Exception:
+        return {}
+    index: dict = {}
+    try:
+        if INTERACTIONS_FILE.exists():
+            with open(INTERACTIONS_FILE, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    iid = rec.get("interaction_id")
+                    if iid:
+                        index[iid] = rec   # last write wins (latest re-verify)
+    except Exception as e:
+        print(f"[FEEDBACK] interaction-log join skipped: {e}")
+    return index
+
+
 def load_feedback_records() -> list:
     """Return all feedback records: the durable JSONL log if present, else the
-    in-memory store. Each record has score/correct/topic keys."""
+    in-memory store. Each record has score/correct/topic keys.
+
+    Where a record carries an interaction_id, score/topic are backfilled from
+    the server-side interaction log (join) so the calibration curve uses the
+    score TruthScore returned rather than the client-echoed value."""
     records: list = []
     try:
         if FEEDBACK_FILE.exists():
@@ -218,6 +256,19 @@ def load_feedback_records() -> list:
         print(f"[FEEDBACK] read failed, using in-memory store: {e}")
     if not records:
         records = list(_feedback_store)
+
+    # Join on interaction_id to recover the authoritative score/topic.
+    idx = _load_interaction_index()
+    if idx:
+        for r in records:
+            iid = r.get("interaction_id")
+            src = idx.get(iid) if iid else None
+            if not src:
+                continue
+            if src.get("score") is not None:
+                r["score"] = src["score"]
+            if src.get("topic"):
+                r["topic"] = src["topic"]
     return records
 
 

@@ -259,7 +259,8 @@ async def enforce_quota(user: dict | None, text: str, client_ip: str) -> dict | 
         )
     if info and not info.get("allowed"):
         if info.get("plan") == "anonymous":
-            detail = ("Ai folosit cele 3 verificari gratuite anonime. "
+            _cap = info.get("limit", 5)
+            detail = (f"Ai folosit cele {_cap} verificari gratuite anonime. "
                       "Creeaza un cont gratuit pentru 10/zi + bonusuri.")
         else:
             detail = (f"Limita zilnica de {info.get('limit')} verificari atinsa. "

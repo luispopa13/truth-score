@@ -148,11 +148,16 @@ def test_anonymous_verify_limited():
 
 
 def test_detect_claims_without_auth():
-    """detect-claims can stay lightweight/open for usability."""
+    """detect-claims requires no account, but it DOES invoke an LLM so it's
+    rate-limited (anon per-IP cap). Assert it's reachable without auth and, when
+    the quota allows the call, returns the claim list — tolerating 429 so a
+    shared/exhausted anon counter (or a fail-closed no-Redis prod posture)
+    doesn't spuriously fail the suite."""
     c = _make_client()
     r = c.post("/detect-claims", json={"text": "Vaccines cause autism. The earth is flat."})
-    assert r.status_code == 200
-    assert "claims" in r.json()
+    assert r.status_code in (200, 429)
+    if r.status_code == 200:
+        assert "claims" in r.json()
 
 
 if __name__ == "__main__":

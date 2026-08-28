@@ -101,7 +101,10 @@ async def retrieve_and_rank(claim: str, *, eco: bool = False) -> RetrievalResult
         print(f"  [NUANCE] Absolute language detected -> adding exception search")
         nuance_queries = build_nuance_queries(claim)
         evidence_tasks.append(search_ddg_wiki(nuance_queries[0]))
-        labels.append("NUANCE_EXCEPTION")
+        # Label must contain a _SLOW_KEYS token (this IS a ddg/wiki search) so it
+        # gets the 12s slow budget, not the 7s fast one — otherwise it times out
+        # before returning, killing the counter-evidence nuance search entirely.
+        labels.append("NUANCE_DDG_WIKI")
         if TAVILY_API_KEY and TAVILY_MODE == "always":
             evidence_tasks.append(search_tavily(nuance_queries[1]))
             labels.append("NUANCE_TAVILY")
@@ -200,7 +203,7 @@ async def retrieve_and_rank(claim: str, *, eco: bool = False) -> RetrievalResult
         print(f"  [TAVILY] Free evidence thin ({len(all_evidence)}) -> paid top-up")
         try:
             tavily_results = await asyncio.wait_for(
-                search_tavily(search_query), timeout=8.0)
+                search_tavily(search_query), timeout=12.0)
             print(f"  [TAVILY-TOPUP] +{len(tavily_results)} sources")
             all_evidence.extend(tavily_results)
             tavily_topup_used = True
@@ -337,6 +340,11 @@ async def verify_claim(req: VerifyRequest, eco: bool = False):
                     a_distance       = abs(score - 50)
                     b_distance       = abs(b_score - 50)
                     nuance_or_strict = is_nuance_claim(claim) or is_strict_domain(claim, topic)
+                    # Snapshot BEFORE any reassignment below — the explanation
+                    # strings reference the *initial* (Path A) verdict, but the
+                    # reassignments overwrite `verdict` first, so reading it later
+                    # would echo the new verdict as if it were the original.
+                    orig_verdict = verdict
 
                     if verdict != b_verdict:
                         if nuance_or_strict or b_distance > a_distance + 10:
@@ -347,7 +355,7 @@ async def verify_claim(req: VerifyRequest, eco: bool = False):
                             verdict     = b_verdict
                             confidence  = b_conf
                             explanation = (f"[Evidence-based] {b_expl} "
-                                          f"(Initial assessment was {verdict})")
+                                          f"(Initial assessment was {orig_verdict})")
                             models_used.append("evidence-stance-classifier")
                         else:
                             print(f"  [PATH-B] Conflict -> UNCERTAIN")
@@ -356,7 +364,7 @@ async def verify_claim(req: VerifyRequest, eco: bool = False):
                             confidence  = "LOW"
                             explanation = (f"Conflicting evidence: sources suggest "
                                           f"{b_verdict} but overall assessment "
-                                          f"suggested {verdict}. {b_expl}")
+                                          f"suggested {orig_verdict}. {b_expl}")
                     else:
                         avg_score = (score + b_score) // 2
                         score     = avg_score
@@ -459,12 +467,28 @@ async def verify_claim(req: VerifyRequest, eco: bool = False):
         sources_per_second=src_per_sec,
     )
 
+    # ── Weighted aggregate over sub-claims ────────────────────
+    # When the claim decomposed into multiple sub-claims, the overall verdict is
+    # the authority-weighted aggregate of the parts (not a plain mean), with a
+    # hard gate forcing FALSE on a decisively-false authoritative sub-claim.
+    # This MUST run BEFORE the word-importance + calibrated-confidence below,
+    # because it overrides score/verdict/confidence. Computing those
+    # explainability fields from the pre-aggregate verdict made the UI's
+    # confidence label and highlighted words contradict the final score bar.
+    aggregate_reason = ""
+    if sub_results:
+        agg_score, agg_verdict, agg_conf, aggregate_reason = aggregate_score(sub_results)
+        score, verdict, confidence = agg_score, agg_verdict, agg_conf
+
     # Claim splitting & explainability (runs fast, parallel with cache write)
     # sub_claims already computed early (before reasoning) to gate decomposition.
     word_importance = compute_word_importance(claim, verdict, score)
 
     # ── Real confidence calibration ───────────────────────────
-    # Based on: score distance from 50, source quality, agreement
+    # Based on: score distance from 50, source quality, agreement. For a
+    # decomposed claim this refines the aggregate's confidence from the FINAL
+    # aggregate score + whole-claim source mix, so it stays consistent with the
+    # score bar the user sees.
     score_distance = abs(score - 50)          # 0=uncertain, 50=certain
     n_factcheck    = sum(1 for s in supporting + contradicting
                         if s.type == "factcheck")
@@ -500,15 +524,6 @@ async def verify_claim(req: VerifyRequest, eco: bool = False):
         cal_conf = "Nesigur -- dovezi insuficiente, verifică manual"
     else:
         cal_conf = "Nesigur -- verifică manual"
-
-    # ── Weighted aggregate over sub-claims ────────────────────
-    # When the claim decomposed into multiple sub-claims, the overall verdict is
-    # the authority-weighted aggregate of the parts (not a plain mean), with a
-    # hard gate forcing FALSE on a decisively-false authoritative sub-claim.
-    aggregate_reason = ""
-    if sub_results:
-        agg_score, agg_verdict, agg_conf, aggregate_reason = aggregate_score(sub_results)
-        score, verdict, confidence = agg_score, agg_verdict, agg_conf
 
     result = VerifyResponse(
         claim=claim, score=score, verdict=verdict,

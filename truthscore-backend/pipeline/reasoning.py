@@ -708,37 +708,37 @@ Hard claims requiring extra care:
         except Exception as e:
             print(f"  [CONSENSUS] Groq error: {str(e)[:60]}")
 
-    # If still UNCERTAIN after consensus -> only commit to a verdict when the
-    # score leans far enough off the fence to justify it. A near-50 score means
-    # the evidence genuinely doesn't decide either way, so forcing TRUE/FALSE
-    # there manufactures false confidence — honest UNCERTAIN is the better answer
-    # (priority #2: verdicts grounded in evidence). Require a >=10-point margin.
-    _DECISIVE_MARGIN = 10
-    if verdict == "UNCERTAIN" and abs(score - 50) >= _DECISIVE_MARGIN:
-        if score > 50:
+    # If still UNCERTAIN after consensus -> commit to a verdict only when the
+    # score crosses a canonical decision threshold (config.py VERDICT_TRUE_AT /
+    # VERDICT_FALSE_AT). A score inside the neutral band means the evidence
+    # genuinely doesn't decide either way, so forcing TRUE/FALSE there
+    # manufactures false confidence — honest UNCERTAIN is the better answer
+    # (priority #2). Using the same thresholds as the rest of the pipeline keeps
+    # the chip consistent with the score bar the user sees.
+    if verdict == "UNCERTAIN":
+        if score >= VERDICT_TRUE_AT:
             verdict, confidence = "TRUE", "LOW"
-            explanation = f"[Low confidence] Evidence slightly favors this claim. {explanation}"
-            print(f"  [FORCE-TRUE] score={score}>50 (margin>={_DECISIVE_MARGIN}) -> TRUE LOW")
-        else:
+            explanation = f"[Low confidence] Evidence favors this claim. {explanation}"
+            print(f"  [FORCE-TRUE] score={score}>={VERDICT_TRUE_AT} -> TRUE LOW")
+        elif score < VERDICT_FALSE_AT:
             verdict, confidence = "FALSE", "LOW"
-            explanation = f"[Low confidence] Evidence slightly contradicts this claim. {explanation}"
-            print(f"  [FORCE-FALSE] score={score}<50 (margin>={_DECISIVE_MARGIN}) -> FALSE LOW")
+            explanation = f"[Low confidence] Evidence contradicts this claim. {explanation}"
+            print(f"  [FORCE-FALSE] score={score}<{VERDICT_FALSE_AT} -> FALSE LOW")
 
     # ── Verdict/score reconciliation (single-claim path) ──────────
     # After the consensus tie-breaks above, the numeric `score` may have been
-    # nudged toward the fence while `verdict` kept its old TRUE/FALSE label — so
-    # we can end up asserting "TRUE" over a sub-50 score (or "FALSE" over a
-    # >50 score), which is a visible correctness bug (the UI score bar would
-    # contradict the chip). The score is the aggregate authority, so when the
-    # two genuinely disagree we DON'T hard-flip to the opposite claim (that risks
-    # asserting a fresh falsehood) — we downgrade to an honest UNCERTAIN/LOW.
-    # A small dead-band tolerates rounding (a FALSE at score 49 is fine).
-    _RECONCILE_BAND = 3
-    if verdict == "TRUE" and score < 50 - _RECONCILE_BAND:
-        print(f"  [RECONCILE] verdict=TRUE but score={score} -> UNCERTAIN LOW")
-        verdict, confidence = "UNCERTAIN", "LOW"
-    elif verdict == "FALSE" and score > 50 + _RECONCILE_BAND:
-        print(f"  [RECONCILE] verdict=FALSE but score={score} -> UNCERTAIN LOW")
+    # nudged while `verdict` kept its old label — so we can end up asserting
+    # "TRUE" over a score the thresholds read as FALSE/UNCERTAIN (or vice-versa),
+    # a visible correctness bug (the UI score bar contradicts the chip). The
+    # score is the aggregate authority, so we derive the verdict the score
+    # IMPLIES via the canonical thresholds; when the stated verdict disagrees we
+    # DON'T hard-flip to the opposite claim (that risks asserting a fresh
+    # falsehood) — we downgrade to an honest UNCERTAIN/LOW.
+    score_implies = ("TRUE"  if score >= VERDICT_TRUE_AT else
+                     "FALSE" if score <  VERDICT_FALSE_AT else "UNCERTAIN")
+    if verdict in ("TRUE", "FALSE") and verdict != score_implies:
+        print(f"  [RECONCILE] verdict={verdict} but score={score} "
+              f"implies {score_implies} -> UNCERTAIN LOW")
         verdict, confidence = "UNCERTAIN", "LOW"
 
     # Ensure at least one source is shown
