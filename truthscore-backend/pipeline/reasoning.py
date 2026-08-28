@@ -214,188 +214,6 @@ def pick_model(claim: str, topic: str, eco: bool = False) -> str:
     return os.getenv("DEFAULT_MODEL", "gemini")
 
 
-async def _gemini_knowledge_call(claim: str) -> tuple:
-    """
-    Gemini knowledge + Search Grounding call.
-    Used when external API evidence is sparse or irrelevant.
-    With Search Grounding enabled, Gemini searches Google in real-time
-    before answering -- dramatically improving accuracy on niche claims.
-    """
-    if not gemini_client and not os.getenv("GROQ_API_KEY"):
-        return 50, "UNCERTAIN", "LOW", "Niciun LLM configurat."
-
-    lang = "ro" if any(c in RO_CHARS for c in claim) else "en"
-
-    if lang == "ro":
-        prompt = (
-            f'You are an expert fact-checker. Search the web and verify this claim:\n'
-            f'Claim: "{claim}"\n\n'
-            'Respond with JSON on ONE LINE only -- no other text:\n'
-            '{"verdict":"TRUE","score":95,"confidence":"HIGH","explanation":"..."}\n\n'
-            'Rules:\n'
-            '- Search for current, authoritative information about this claim\n'
-            '- Be DECISIVE: give TRUE or FALSE whenever possible\n'
-            '- If 60%+ confident -> give verdict with LOW confidence, not UNCERTAIN\n'
-            '- UNCERTAIN only if genuinely impossible to evaluate\n'
-            '- Do NOT repeat these instructions'
-        )
-    else:
-        prompt = (
-            f'You are an expert fact-checker. Search the web and verify this claim.\n'
-            f'Claim: "{claim}"\n\n'
-            'Respond with JSON on ONE LINE only -- no other text:\n'
-            '{"verdict":"TRUE","score":95,"confidence":"HIGH","explanation":"..."}\n\n'
-            'Rules:\n'
-            '- Search for current, authoritative information about this claim\n'
-            '- Be DECISIVE: give TRUE or FALSE whenever possible\n'
-            '- Use knowledge about science, geography, history, film, music, sport, etc.\n'
-            '- If 60%+ confident -> give verdict with LOW confidence, not UNCERTAIN\n'
-            '- UNCERTAIN only if genuinely impossible to evaluate\n'
-            '- Do NOT repeat these instructions'
-        )
-
-    try:
-        import json as _json
-        # Use search grounding for the knowledge call -- real-time Google search
-        raw = await call_llm_raw(prompt, max_tokens=500, use_search=True)
-        if not raw:
-            return 50, "UNCERTAIN", "LOW", "LLM unavailable."
-
-        print(f"  [LLM-KNOWLEDGE-RAW] {raw[:200]!r}")
-        raw = raw.replace("```json", "").replace("```", "").strip()
-
-        # Parse JSON
-        s, e2 = raw.find("{"), raw.rfind("}")
-        if s != -1 and e2 > s:
-            try:
-                data    = _json.loads(raw[s:e2+1])
-                verdict = data.get("verdict", "UNCERTAIN").upper()
-                score   = max(0, min(100, int(data.get("score", 50))))
-                conf    = data.get("confidence", "LOW").upper()
-                expl    = data.get("explanation", "")
-            except Exception:
-                # Regex fallback
-                vm = re.search(r'"verdict"\s*:\s*"(TRUE|FALSE|UNCERTAIN)"', raw, re.IGNORECASE)
-                sm = re.search(r'"score"\s*:\s*(\d+)', raw)
-                cm = re.search(r'"confidence"\s*:\s*"(HIGH|MEDIUM|LOW)"', raw, re.IGNORECASE)
-                em = re.search(r'"explanation"\s*:\s*"(.*?)(?:"|$)', raw, re.DOTALL)
-                verdict = vm.group(1).upper() if vm else "UNCERTAIN"
-                score   = int(sm.group(1)) if sm else 50
-                conf    = cm.group(1).upper() if cm else "LOW"
-                expl    = em.group(1).replace("\\n", " ") if em else ""
-        else:
-            vm = re.search(r'"verdict"\s*:\s*"(TRUE|FALSE|UNCERTAIN)"', raw, re.IGNORECASE)
-            sm = re.search(r'"score"\s*:\s*(\d+)', raw)
-            cm = re.search(r'"confidence"\s*:\s*"(HIGH|MEDIUM|LOW)"', raw, re.IGNORECASE)
-            em = re.search(r'"explanation"\s*:\s*"(.*?)(?:"|$)', raw, re.DOTALL)
-            verdict = vm.group(1).upper() if vm else "UNCERTAIN"
-            score   = int(sm.group(1)) if sm else 50
-            conf    = cm.group(1).upper() if cm else "LOW"
-            expl    = em.group(1).replace("\\n", " ") if em else ""
-
-        if verdict not in ("TRUE", "FALSE", "UNCERTAIN"):
-            verdict = "UNCERTAIN"
-        print(f"  [LLM-KNOWLEDGE] verdict={verdict} score={score} conf={conf}")
-        return score, verdict, conf, expl
-
-    except Exception as e:
-        print(f"  [LLM-KNOWLEDGE] Error: {str(e)[:100]}")
-        return 50, "UNCERTAIN", "LOW", "Eroare temporară LLM."
-
-
-
-# ════════════════════════════════════════════════════════════
-# KNOWLEDGE INJECTION
-# For claims where Gemini's training data is outdated or wrong,
-# inject verified facts directly into the prompt.
-# This overrides Gemini's parametric knowledge with ground truth.
-# ════════════════════════════════════════════════════════════
-
-KNOWLEDGE_OVERRIDES = {
-    # KEY = substring to match in claim (lowercase)
-    # VALUE = fact to inject into prompt
-
-    "alcohol": (
-        "CRITICAL FACT (2024 scientific consensus): The belief that moderate "
-        "alcohol reduces heart disease has been OVERTURNED. A 2018 Lancet "
-        "meta-analysis of 700,000 people found NO safe level of alcohol. "
-        "A 2022 JAMA study using Mendelian randomization showed the apparent "
-        "benefit was a statistical artifact from confounding. WHO (2023) states "
-        "no amount of alcohol is beneficial. Claims about alcohol health benefits "
-        "are FALSE based on current evidence."
-    ),
-    "dna with banana": (
-        "CRITICAL FACT: Humans DO share approximately 44-60% of DNA with bananas. "
-        "This is scientifically verified by NCBI and multiple genomics studies. "
-        "Both species share ancient genes for basic cellular functions like DNA "
-        "replication, energy metabolism, and cell cycle control. This claim is TRUE "
-        "and well-established in molecular biology."
-    ),
-    "50 percent of dna with banana": (
-        "CRITICAL FACT: TRUE. Humans share ~50% of gene sequences with bananas. "
-        "This is confirmed by NCBI, PubMed, and standard genomics textbooks."
-    ),
-    "50% of dna with banana": (
-        "CRITICAL FACT: TRUE. Humans share ~50% of gene sequences with bananas."
-    ),
-    "space is completely silent": (
-        "CRITICAL FACT: The claim uses 'completely' which makes it FALSE. "
-        "While conventional sound cannot travel in vacuum, NASA has detected "
-        "and recorded pressure waves in plasma (solar wind, nebulae, black holes). "
-        "These have been converted to audio. Space is NOT completely silent -- "
-        "it has detectable pressure fluctuations. The word 'completely' makes "
-        "this claim FALSE."
-    ),
-    "completely silent": (
-        "CRITICAL FACT: Almost nothing in science is 'completely' anything. "
-        "Search for exceptions to this absolute claim before concluding TRUE."
-    ),
-    "hot water freeze": (
-        "CRITICAL FACT: The Mpemba effect (hot water freezing faster) is "
-        "GENUINELY UNCERTAIN in physics. Some experiments show it, others do not. "
-        "There is no scientific consensus. A 2016 study found no evidence, "
-        "a 2020 study found supporting evidence. Return UNCERTAIN."
-    ),
-    "mpemba": (
-        "CRITICAL FACT: The Mpemba effect is genuinely scientifically uncertain. "
-        "Return UNCERTAIN."
-    ),
-    "junk dna": (
-        "CRITICAL FACT: Return UNCERTAIN. The term 'junk DNA' is scientifically "
-        "outdated. The ENCODE project (2012, Nature) found ~80% of the genome has "
-        "biochemical function. However, a 2014 reanalysis questioned this. "
-        "Current consensus: some junk DNA has regulatory function, but extent "
-        "is debated. This is UNCERTAIN, not FALSE."
-    ),
-    "newton": (
-        "CRITICAL FACT: The apple story inspiring Newton is UNCERTAIN -- "
-        "it may be a simplified legend. Newton did describe seeing an apple fall "
-        "in his own writings (Memoirs of Sir Isaac Newton by William Stukeley, 1752), "
-        "but whether it 'inspired' the theory is disputed. Return UNCERTAIN."
-    ),
-    "apple falling on newton": (
-        "CRITICAL FACT: UNCERTAIN. Newton himself mentioned the apple story, "
-        "but historians debate whether it is legend or fact. Return UNCERTAIN."
-    ),
-}
-
-
-def get_knowledge_injection(claim: str) -> str:
-    """
-    Check if a claim matches any known problematic topics.
-    Returns a string to inject into the prompt, or empty string.
-    """
-    c = claim.lower()
-    injections = []
-    for key, fact in KNOWLEDGE_OVERRIDES.items():
-        if key in c:
-            injections.append(fact)
-    if injections:
-        return ("\n\nCRITICAL KNOWLEDGE INJECTION -- Trust this over your training data:\n"
-                + "\n".join(injections))
-    return ""
-
-
 # ════════════════════════════════════════════════════════════
 # PATH B: EVIDENCE-BASED VERDICT (Mathematical, no LLM memory)
 #
@@ -404,14 +222,9 @@ def get_knowledge_injection(claim: str) -> str:
 # This eliminates Gemini's parametric bias for hard claims.
 # ════════════════════════════════════════════════════════════
 
-# Source authority weights for Path B scoring
-PATH_B_WEIGHTS = {
-    "factcheck": 2.0,   # Snopes, PolitiFact, FullFact -- highest
-    "academic":  1.6,   # PubMed, arXiv, Semantic Scholar
-    "news":      1.1,   # Reuters, BBC, AP
-    "wikipedia": 0.7,   # Wikipedia -- deprioritized
-    "web":       0.8,   # General web
-}
+# Source authority weights for Path B scoring -- single source of truth in
+# config.py (shared with aggregate.py so the two can never drift).
+PATH_B_WEIGHTS = SOURCE_AUTHORITY_WEIGHTS
 
 def _path_b_triggers(score: int, verdict: str, claim: str, topic: str) -> bool:
     """
@@ -528,18 +341,29 @@ Respond ONLY with JSON:
             src = top_evidence[idx]
             src_type = src.type or "web"
 
+            # Trust the fact-checker's OWN verdict over the LLM's stance read.
+            # When a ClaimReview source carries a decisive NLI rating (populated
+            # from its published rating via factcheck_rating_to_nli), that
+            # structured signal beats the LLM's free-text stance guess — the
+            # publisher already adjudicated this exact claim.
+            if src.nli is not None:
+                nli_v = (src.nli.verdict or "").upper()
+                if nli_v == "SUPPORTS" and src.nli.entailment >= 0.8:
+                    stance = "SUPPORTS"
+                elif nli_v == "CONTRADICTS" and src.nli.contradiction >= 0.8:
+                    stance = "CONTRADICTS"
+
             # Authority weight
             authority = PATH_B_WEIGHTS.get(src_type, 0.8)
             # Recency weight
             recency   = get_source_recency_weight(src)
             weight    = authority * recency
 
-            # Bonus weight for sources retrieved via targeted contradict query
-            # These were specifically searched to find debunking -- more credible
-            if "[CONTRADICT]" in (src.snippet or ""):
-                weight *= 1.25
-            elif "[SUPPORT]" in (src.snippet or ""):
-                weight *= 1.0  # no change
+            # Targeted-query provenance is symmetric: a source found via a
+            # "find debunking" search is no more credible than one found via a
+            # "find support" search. Weighting CONTRADICT higher baked a
+            # systematic FALSE-bias into every verdict. Authority + recency
+            # (already applied above) are the only credibility signals.
 
             if stance == "SUPPORTS":
                 src.stance = "supporting"
@@ -567,9 +391,9 @@ Respond ONLY with JSON:
         b_score    = max(0, min(100, b_score))
 
         # Verdict from score
-        if b_score >= 62:
+        if b_score >= VERDICT_TRUE_AT:
             b_verdict = "TRUE"
-        elif b_score < 38:
+        elif b_score < VERDICT_FALSE_AT:
             b_verdict = "FALSE"
         else:
             b_verdict = "UNCERTAIN"
@@ -590,24 +414,35 @@ Respond ONLY with JSON:
         n_support  = sum(1 for s in stances if s.get("stance","").upper() == "SUPPORTS")
         n_contra   = sum(1 for s in stances if s.get("stance","").upper() == "CONTRADICTS")
 
-        # Tie-breaking: if score is in ambiguous zone AND authoritative
-        # sources contradict, nudge toward FALSE.
-        # Rationale: in science, burden of proof is on extraordinary claims.
-        # If trusted sources (PubMed, WHO, factcheck) contradict at tie → FALSE.
-        if 38 <= b_score <= 62 and n_contra > 0:
-            auth_contra = 0
+        # Tie-breaking: in the ambiguous zone, let AUTHORITATIVE sources decide,
+        # symmetrically. Whichever side (support vs contradict) has more trusted
+        # sources (factcheck/academic/news) breaks the tie in its own direction.
+        # (The old rule only ever nudged FALSE, baking in a systematic bias;
+        # authoritative *support* was silently ignored.)
+        if VERDICT_FALSE_AT <= b_score <= VERDICT_TRUE_AT:
+            auth_contra = auth_support = 0
             for item in stances:
-                if item.get("stance", "").upper() == "CONTRADICTS":
-                    i = item.get("index", 0) - 1
-                    if 0 <= i < len(top_evidence):
-                        if top_evidence[i].type in ("factcheck", "academic", "news"):
-                            auth_contra += 1
-            if auth_contra >= 1:
+                st = item.get("stance", "").upper()
+                if st not in ("CONTRADICTS", "SUPPORTS"):
+                    continue
+                i = item.get("index", 0) - 1
+                if 0 <= i < len(top_evidence) and top_evidence[i].type in ("factcheck", "academic", "news"):
+                    if st == "CONTRADICTS":
+                        auth_contra += 1
+                    else:
+                        auth_support += 1
+            if auth_contra > auth_support:
                 b_score   = 28
                 b_verdict = "FALSE"
-                b_explanation = (f"[Tie-break: authoritative contradictions found] "
+                b_explanation = (f"[Tie-break: authoritative contradictions outweigh support] "
                                 f"{b_explanation}")
-                print(f"  [PATH-B] Tie-break -> FALSE (auth_contra={auth_contra})")
+                print(f"  [PATH-B] Tie-break -> FALSE (auth_contra={auth_contra} > auth_support={auth_support})")
+            elif auth_support > auth_contra:
+                b_score   = 72
+                b_verdict = "TRUE"
+                b_explanation = (f"[Tie-break: authoritative support outweighs contradictions] "
+                                f"{b_explanation}")
+                print(f"  [PATH-B] Tie-break -> TRUE (auth_support={auth_support} > auth_contra={auth_contra})")
 
         print(f"  [PATH-B] score={b_score} verdict={b_verdict} "
               f"support={n_support} contra={n_contra} weight={total_weight:.2f}")
@@ -652,41 +487,11 @@ async def reason_with_gpt(
                          "Use your training knowledge to verify this claim. "
                          "Answer as a scientist/expert would, citing the established consensus.")
 
-    # Unified reasoning path: the English prompt has the strongest calibration
-    # examples and adversarial process, and its LANGUAGE directive makes the
-    # model write the explanation in the claim's own language (English default).
-    # The Romanian-only branch below is kept for reference but disabled.
-    if False:  # lang == "ro"
-        system_prompt = """Ești un sistem expert de fact-checking. Primești o afirmație și dovezi din surse multiple.
-
-PROCES ÎN 3 ETAPE:
-1. FILTRARE: Ignoră sursele irelevante. O sursă e relevantă dacă conține date factuale.
-2. VERIFICARE: Din sursele relevante, extrage date concrete. Compară cu afirmația.
-3. CONCLUZIE: Bazată pe dovezi și cunoștințele tale generale.
-
-IMPORTANT -- FII DECISIV:
-- Încearcă ÎNTOTDEAUNA să dai TRUE sau FALSE. Evită UNCERTAIN.
-- UNCERTAIN este permis NUMAI dacă afirmația e genuinamente ambiguă.
-- Dacă cunoști răspunsul din cunoștințele tale -> folosește-le.
-- Dacă ești 60%+ sigur -> dă răspunsul cu confidence LOW, nu UNCERTAIN.
-- UNCERTAIN = ultimă opțiune, nu prima.
-
-Reguli:
-- Dovezile confirmă -> TRUE cu explicație specifică
-- Dovezile contrazic -> FALSE cu explicație specifică
-- Surse goale sau irelevante -> folosește cunoștințele generale, nu da UNCERTAIN
-- UNCERTAIN numai dacă e genuinamente imposibil de verificat
-
-CRITIC: Răspunde DOAR cu JSON valid. Fără markdown. Începe cu { termină cu }."""
-        user_prompt = f"""Afirmație: "{claim}"
-
-Dovezi colectate din {len(top_evidence)} surse:
-{evidence_block}
-
-Analizează și răspunde cu JSON exact:
-{{"verdict":"TRUE sau FALSE sau UNCERTAIN","score":0-100,"confidence":"HIGH sau MEDIUM sau LOW","explanation":"3-5 propoziții. OBLIGATORIU: citează surse SPECIFICE pe nume (ex: 'Conform PubMed [1]...', 'Reuters [2] raportează că...'). Include cifre, date, fapte concrete. Explică DE CE e adevărat/fals cu dovezi directe.","supporting_indices":[indicii surselor care susțin, ex:[1,3]],"contradicting_indices":[indicii care contrazic, ex:[2]],"neutral_indices":[indicii neutri/irelevante],"irrelevant_indices":[indicii surselor complet irelevante]}}"""
-    else:
-        system_prompt = """You are an expert fact-checking system. You receive a claim and evidence from multiple sources.
+    # Unified reasoning path: one English prompt with the strongest calibration
+    # examples and adversarial process. Its LANGUAGE directive makes the model
+    # write the explanation in the claim's own language (English default), so a
+    # separate Romanian prompt is unnecessary.
+    system_prompt = """You are an expert fact-checking system. You receive a claim and evidence from multiple sources.
 
 You are an expert fact-checker with access to real-time web search.
 Your job: determine if the claim is TRUE, FALSE, or UNCERTAIN.
@@ -731,11 +536,8 @@ LANGUAGE: Write the "explanation" text in the SAME language as the claim above
 claim's language is unclear, write the explanation in English. All JSON keys and
 the verdict/confidence values stay in English exactly as specified."""
 
-        # knowledge_ctx: optional extra context injected by callers (e.g. from
-        # a prior Gemini knowledge call). Empty string when not provided.
-        knowledge_ctx = ""
-        user_prompt = f"""Claim to verify: "{claim}"
-{knowledge_ctx}
+    user_prompt = f"""Claim to verify: "{claim}"
+
 Evidence collected from {len(top_evidence)} sources:
 {evidence_block}
 
@@ -768,7 +570,7 @@ Hard claims requiring extra care:
     try:
         import json as _json
         full_prompt = system_prompt + "\n\n" + user_prompt
-        raw = await call_llm_raw(full_prompt, max_tokens=3000, use_search=True,
+        raw = await call_llm_raw(full_prompt, max_tokens=1000, use_search=False,
                                  model=model_hint)
         if not raw:
             return 50, "UNCERTAIN", "LOW", "LLM unavailable.", [], [], top_evidence[:3]
@@ -866,7 +668,9 @@ Hard claims requiring extra care:
         try:
             from groq import Groq as _Groq
             import asyncio as _aio, json as _json
-            _gc = _Groq(api_key=groq_key)
+            # Reuse the module-level client when available (avoids re-opening an
+            # HTTP connection pool on every low-confidence claim).
+            _gc = _groq_client or _Groq(api_key=groq_key)
             loop = _aio.get_event_loop()
             resp = await loop.run_in_executor(None,
                 lambda: _gc.chat.completions.create(
@@ -904,16 +708,38 @@ Hard claims requiring extra care:
         except Exception as e:
             print(f"  [CONSENSUS] Groq error: {str(e)[:60]}")
 
-    # If still UNCERTAIN after consensus -> force decisive verdict
-    if verdict == "UNCERTAIN" and score != 50:
+    # If still UNCERTAIN after consensus -> only commit to a verdict when the
+    # score leans far enough off the fence to justify it. A near-50 score means
+    # the evidence genuinely doesn't decide either way, so forcing TRUE/FALSE
+    # there manufactures false confidence — honest UNCERTAIN is the better answer
+    # (priority #2: verdicts grounded in evidence). Require a >=10-point margin.
+    _DECISIVE_MARGIN = 10
+    if verdict == "UNCERTAIN" and abs(score - 50) >= _DECISIVE_MARGIN:
         if score > 50:
             verdict, confidence = "TRUE", "LOW"
             explanation = f"[Low confidence] Evidence slightly favors this claim. {explanation}"
-            print(f"  [FORCE-TRUE] score={score}>50 -> TRUE LOW")
+            print(f"  [FORCE-TRUE] score={score}>50 (margin>={_DECISIVE_MARGIN}) -> TRUE LOW")
         else:
             verdict, confidence = "FALSE", "LOW"
             explanation = f"[Low confidence] Evidence slightly contradicts this claim. {explanation}"
-            print(f"  [FORCE-FALSE] score={score}<=50 -> FALSE LOW")
+            print(f"  [FORCE-FALSE] score={score}<50 (margin>={_DECISIVE_MARGIN}) -> FALSE LOW")
+
+    # ── Verdict/score reconciliation (single-claim path) ──────────
+    # After the consensus tie-breaks above, the numeric `score` may have been
+    # nudged toward the fence while `verdict` kept its old TRUE/FALSE label — so
+    # we can end up asserting "TRUE" over a sub-50 score (or "FALSE" over a
+    # >50 score), which is a visible correctness bug (the UI score bar would
+    # contradict the chip). The score is the aggregate authority, so when the
+    # two genuinely disagree we DON'T hard-flip to the opposite claim (that risks
+    # asserting a fresh falsehood) — we downgrade to an honest UNCERTAIN/LOW.
+    # A small dead-band tolerates rounding (a FALSE at score 49 is fine).
+    _RECONCILE_BAND = 3
+    if verdict == "TRUE" and score < 50 - _RECONCILE_BAND:
+        print(f"  [RECONCILE] verdict=TRUE but score={score} -> UNCERTAIN LOW")
+        verdict, confidence = "UNCERTAIN", "LOW"
+    elif verdict == "FALSE" and score > 50 + _RECONCILE_BAND:
+        print(f"  [RECONCILE] verdict=FALSE but score={score} -> UNCERTAIN LOW")
+        verdict, confidence = "UNCERTAIN", "LOW"
 
     # Ensure at least one source is shown
     # If Gemini classified all as irrelevant, promote neutral sources
@@ -939,14 +765,3 @@ Hard claims requiring extra care:
             neutral = real_neutral
 
     return score, verdict, confidence, explanation, supporting, contradicting, neutral
-
-
-# ════════════════════════════════════════════════════════════
-# CROSS-ENCODER RERANKING
-# Much better precision than cosine similarity alone.
-# Pipeline: cosine filter (fast, high recall) ->
-#           cross-encoder rerank (slower, high precision)
-# Model: cross-encoder/ms-marco-MiniLM-L-6-v2
-# ════════════════════════════════════════════════════════════
-
-_cross_encoder = None

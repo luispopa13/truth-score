@@ -20,7 +20,7 @@ is the single biggest, zero-risk cost cut in the project.**
 ### Real cost per verdict (after the fix)
 - Reasoning call (Gemini Flash, no thinking): ~ **$0.0006–0.001 / verdict**
 - With semantic caching, 30–50% of claims never reach the LLM → **cost ~ $0**
-- Even a Pro user burning all 300 checks/day only costs you **~$6.3/month**
+- Even a Pro user burning all 200 checks/day only costs you **~$4.8/month**
   against a **9.99 €** subscription → healthy margin, even in the worst case.
 
 ### Why NOT self-hosting / fine-tuning for now
@@ -57,8 +57,8 @@ Browser Extension / Widget / API
 - **FastAPI stateless + horizontal scaling** — more instances behind a load
   balancer; Redis + MongoDB are the shared state.
 - **Redis semantic cache** — exact *and* near-duplicate claims served free.
-- **Redis rate limiter** — atomic per-plan daily quotas (free 15/day, pro 300,
-  business 2000, enterprise 9999).
+- **Redis rate limiter** — atomic per-plan daily quotas (free 10/day, pro 200,
+  business 800, enterprise 9999).
 - **LLM concurrency cap** (`LLM_CONCURRENCY`, default 8) — a semaphore stops
   1000 users firing 1000 parallel provider calls and hitting 429s.
 - **MongoDB pooling** — `maxPoolSize` tuned for many concurrent reads.
@@ -84,9 +84,9 @@ Path A + Path B (mathematical evidence stance scoring) + FActScore + AVeriTeC
 
 ## 4. Monetization model
 
-- **Free (15/day)** → conversion hook
-- **Pro 9.99 €/mo** → 300 checks/day — core revenue
-- **Business 39.99 €/mo** → 2000/day, batch + PDF + widget
+- **Free (10/day)** → conversion hook
+- **Pro 9.99 €/mo** → 200 checks/day — core revenue
+- **Business 29.99 €/mo** → 800/day, batch + PDF + widget
 - **Enterprise** → negotiated, 9999+/day, custom contracts
 
 Monetization runs on **your own Stripe subscriptions** (not the store).
@@ -105,15 +105,23 @@ cp truthscore-backend/.env.example truthscore-backend/.env
 # 2. Install Python deps
 cd truthscore-backend && pip install -r requirements.txt
 
-# 3. Start Redis (optional but recommended for scaling)
+# 3. Download the ranking models (~640 MB, NOT in git) into ./models
+#    The backend needs these for cross-encoder ranking — skipping this
+#    makes the pipeline crash on first request.
+python scripts/download_models.py
+
+# 4. Start Redis (optional but recommended for scaling)
 docker compose up redis -d
 
-# 4. Run the API
-cd truthscore-backend && uvicorn main:app --reload
+# 5. Run the API
+uvicorn main:app --reload
 
-# 5. Tests
+# 6. Tests
 python run_tests.py   # 15 validation tests (no network)
 ```
+
+> Note: `docker compose up --build` reads `truthscore-backend/.env`, so create it
+> from step 1 first — the compose file expects it to exist.
 
 Full local stack (backend + Redis):
 ```bash
@@ -149,8 +157,8 @@ docker compose up --build   # backend :8000, redis :6379
 `utils/metrics.py` makes margin math explicit:
 ```python
 MODEL_COSTS = {
-    "gemini-2.5-flash":        {"input": 0.075, "output": 0.60},  # thinking OFF
-    "gemini-2.5-flash-think":  {"input": 0.075, "output": 3.50},  # avoid
+    "gemini-2.5-flash":        {"input": 0.30, "output": 0.60},  # thinking OFF
+    "gemini-2.5-flash-think":  {"input": 0.30, "output": 3.50},  # avoid
 }
 ```
 

@@ -189,8 +189,3 @@ def _cosine(a, b) -> float:
         return dot / (norm_a * norm_b)
     except Exception:
         return 0.0
-
-
-def cosine_similarity(a: list, b: list) -> float:
-    """Public alias for backwards compatibility."""
-    return _cosine(a, b)

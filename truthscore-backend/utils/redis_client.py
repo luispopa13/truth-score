@@ -83,6 +83,32 @@ def get_sync_redis():
     return _sync_redis
 
 
+async def verify_async_redis():
+    """
+    Actually open a connection and PING. `from_url` only builds a lazy client,
+    so without this a down/absent Redis is never detected and callers waste a
+    connect-timeout on every command. Call once at app startup: on failure the
+    async client is nulled so `redis_available()` and every `if redis:` guard
+    correctly fall back to local-only mode.
+    """
+    global _aredis_client
+    client = get_async_redis()
+    if client is None:
+        return False
+    try:
+        await client.ping()
+        logger.info("Redis (async) verified: %s", get_redis_url(0))
+        return True
+    except Exception as e:
+        logger.warning("Redis unreachable — local-only mode: %s", e)
+        try:
+            await client.close()
+        except Exception:
+            pass
+        _aredis_client = None
+        return False
+
+
 async def close_redis():
     global _aredis_client
     if _aredis_client:

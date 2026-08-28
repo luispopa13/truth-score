@@ -16,9 +16,13 @@ def _get_llm():
     from pipeline.reasoning import call_llm_raw, reason_path_b
     return call_llm_raw, reason_path_b
 
-async def call_llm_raw(prompt, max_tokens=1000, use_search=False):
+async def call_llm_raw(prompt, max_tokens=1000, use_search=False, model="groq"):
+    # Auxiliary pipeline calls (HyDE query generation, FActScore atom splitting,
+    # AVeriTeC question decomposition) are simple structured tasks — route them
+    # to cheap/fast Groq by default. _call_llm_raw_impl already falls back to
+    # Gemini automatically if Groq errors, so quality is preserved on failure.
     _f, _ = _get_llm()
-    return await _f(prompt, max_tokens=max_tokens, use_search=use_search)
+    return await _f(prompt, max_tokens=max_tokens, use_search=use_search, model=model)
 
 async def reason_path_b(claim, top_evidence):
     _, _f = _get_llm()
@@ -286,7 +290,7 @@ async def factscore_verify(claim: str, top_evidence: list) -> tuple:
     else:
         # Mixed results → UNCERTAIN
         avg = sum(a["score"] for a in atom_results) // total
-        f_score   = max(38, min(61, avg))  # force into UNCERTAIN zone
+        f_score   = max(VERDICT_FALSE_AT, min(VERDICT_TRUE_AT - 1, avg))  # force into UNCERTAIN zone
         f_verdict = "UNCERTAIN"
         f_expl = (f"Mixed evidence: {len(true_atoms)} sub-claims supported, "
                   f"{len(false_atoms)} contradicted, {len(unc_atoms)} unclear.")
@@ -351,11 +355,19 @@ async def averitec_generate_questions(claim: str) -> list:
 
 async def averitec_answer_question(question: str) -> dict:
     """Answer a single verification question using retrieval + Gemini."""
-    sources = []
+    # These three searches are independent — fire them concurrently instead of
+    # awaiting one at a time (~3x faster per question). Order of results is
+    # preserved (tavily, ddg_wiki, semantic_scholar) for deterministic ranking.
+    search_tasks = []
     if TAVILY_API_KEY:
-        sources += await search_tavily(question)
-    sources += await search_ddg_wiki(question)
-    sources += await search_semantic_scholar(question)
+        search_tasks.append(search_tavily(question))
+    search_tasks.append(search_ddg_wiki(question))
+    search_tasks.append(search_semantic_scholar(question))
+    results = await asyncio.gather(*search_tasks, return_exceptions=True)
+    sources = []
+    for r in results:
+        if isinstance(r, list):
+            sources += r
 
     if not sources:
         return {"question": question, "answer": "No evidence found", "stance": "NEUTRAL"}
@@ -638,92 +650,3 @@ async def search_with_queries(queries: dict) -> list:
 
     print(f"  [QUERIES] Retrieved {len(all_sources)} sources from targeted queries")
     return all_sources
-
-
-
-    """
-    Classify topic, translate, build factual search query.
-    Returns (topic, search_query_en, claim_en)
-    """
-    if not gemini_client:
-        return detect_topic(claim), _build_search_query(claim), claim
-
-    safe = claim.replace('\\', '').replace('"', "'")[:300]
-
-    prompt = f"""Analyze this claim and return ONE LINE of JSON.
-Claim: "{safe}"
-
-JSON only, no text before/after:
-{{"t":"TOPIC","q":"max 5 english keywords","e":"english translation"}}
-
-Topics: medical biology chemistry physics astronomy mathematics logic cs_tech engineering geography history literature art sports economics business climate politics sociology psychology philosophy ethics religion nutrition news general
-- geography: mountains, rivers, countries, capitals, cities, space/astronomy facts about Earth
-- science: physics, space, astronomy, chemistry
-- sports: athletes, teams, games, records
-
-Query rules: search for FACTS about the subject (not the claim). No superlatives.
-Examples of correct JSON (english must be the FULL CLAIM translated, not the query!):
-- Claim: "varful moldoveanu cel mai inalt din lume" -> {{"topic":"geography","query":"Moldoveanu Peak altitude height Romania","english":"Moldoveanu Peak is the highest peak in the world"}}
-- Claim: "Great Wall visible from space" -> {{"topic":"geography","query":"Great Wall of China width visibility naked eye space","english":"The Great Wall of China is visible from space"}}
-- Claim: "vaccinurile cauzeaza autism" -> {{"topic":"medical","query":"vaccines autism scientific studies","english":"Vaccines cause autism"}}
-- Claim: "Romania joined EU in 2007" -> {{"topic":"geography","query":"Romania European Union accession 2007 date","english":"Romania joined the European Union in 2007"}}
-- Claim: "Romania a aderat la UE in 2007" -> {{"topic":"geography","query":"Romania EU accession membership year","english":"Romania joined the European Union in 2007"}}
-
-Return ONLY the JSON, nothing else. english = full claim in English."""
-
-    try:
-        import asyncio as _asyncio, json as _json
-        loop = _asyncio.get_event_loop()
-        resp = await loop.run_in_executor(
-            None,
-            lambda: gemini_client.models.generate_content(
-                model=GEMINI_MODEL,
-                contents=prompt,
-                config=make_gemini_config(max_tokens=300, use_search=False, thinking_budget=0)
-            )
-        )
-        raw = resp.text.strip()
-        # Strip markdown fences (Gemini sometimes wraps in ```json...```)
-        raw = re.sub(r"```(?:json)?\s*", "", raw).strip()
-        raw = re.sub(r"```\s*$", "", raw).strip()
-        print(f"  [TOPIC-RAW] {raw[:200]!r}")
-
-        # Initialize defaults
-        topic, query, claim_en = "general", "", claim
-
-        # Step 1: Try full JSON parse
-        s, e2 = raw.find("{"), raw.rfind("}")
-        if s != -1 and e2 > s:
-            try:
-                data = _json.loads(raw[s:e2+1])
-                topic    = str(data.get("topic", data.get("t","general"))).lower().strip()
-                query    = str(data.get("query",  data.get("q",""))).strip()
-                claim_en = str(data.get("english", data.get("e", claim))).strip()
-            except Exception:
-                pass  # fall through to regex
-
-        # Step 2: Always try regex as fallback/supplement
-        # (works even on truncated JSON)
-        # Support both long keys (topic/query/english) and short keys (t/q/e)
-        tm = re.search(r'"(?:topic|t)"\s*:\s*"([^"]+)"', raw, re.IGNORECASE)
-        qm = re.search(r'"(?:query|q)"\s*:\s*"([^"]+)"', raw, re.IGNORECASE)
-        em = re.search(r'"(?:english|e)"\s*:\s*"([^"]+)"', raw, re.IGNORECASE)
-        if tm and topic == "general": topic    = tm.group(1).lower().strip()
-        if qm and not query:          query    = qm.group(1).strip()
-        if em and claim_en == claim:  claim_en = em.group(1).strip()
-
-        # Validate
-        from pipeline.source_plan import DOMAIN_SOURCES as _DS; valid = set(_DS.keys())
-        if topic not in valid:
-            topic = detect_topic(claim)
-        if not query or len(query) < 3:
-            query = _build_search_query(claim_en or claim)
-        if not claim_en or len(claim_en) < 5:
-            claim_en = claim
-
-        print(f"  [TOPIC] {topic!r} | q: {query!r} | en: {claim_en[:60]!r}")
-        return topic, query, claim_en
-
-    except Exception as e:
-        print(f"  [TOPIC] failed ({e}) -- fallback")
-        return detect_topic(claim), _build_search_query(claim), claim

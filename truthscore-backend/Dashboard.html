@@ -120,6 +120,12 @@ main{flex:1;padding:64px 24px 80px;max-width:960px;margin:0 auto;width:100%}
 }
 .err-box{display:none;padding:10px 14px;background:var(--red-bg);border:1px solid var(--red-border);border-radius:9px;color:#fca5a5;font-size:13px;margin-bottom:14px}
 .err-box.show{display:block}
+.toast-wrap{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:9999;display:flex;flex-direction:column;gap:8px;pointer-events:none}
+.toast{min-width:220px;max-width:min(90vw,420px);padding:12px 16px;border-radius:10px;font-size:13px;line-height:1.4;box-shadow:0 8px 24px rgba(0,0,0,.35);opacity:0;transform:translateY(10px);transition:opacity .25s,transform .25s;pointer-events:auto}
+.toast.show{opacity:1;transform:translateY(0)}
+.toast.ok{background:var(--green-bg,#0f2e1a);border:1px solid var(--green-border,#1f6f43);color:#86efac}
+.toast.err{background:var(--red-bg);border:1px solid var(--red-border);color:#fca5a5}
+.toast.info{background:#1a2438;border:1px solid #2b3a5c;color:#bcd0f5}
 textarea{
   width:100%;padding:16px 18px;
   background:rgba(255,255,255,.025);
@@ -360,11 +366,10 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
       oninput="onInput()"></textarea>
     <div class="input-meta">
       <span class="hint" data-i18n="ctrlEnter">💡 Ctrl+Enter to verify</span>
-      <span class="char-count" id="charCount">0/500</span>
+      <span class="char-count" id="charCount">0/4000</span>
     </div>
     <div class="btn-row">
       <button class="btn btn-secondary" onclick="nextExample()" data-i18n="example">💡 Example</button>
-      <button class="btn btn-secondary" onclick="clearCache()" data-i18n-title="clearCache" title="Clear cache">🗑</button>
       <button class="btn btn-primary" id="verifyBtn" onclick="runVerify()" data-i18n="verifyNow">🔍 Verify now</button>
     </div>
     <div class="loading" id="vLoad">
@@ -431,44 +436,9 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
     <button class="modal-x" onclick="closePricing()">✕</button>
     <div class="modal-title" data-i18n="pricingTitle2">Planuri & Prețuri</div>
     <div class="modal-sub" style="margin-bottom:22px" data-i18n="pricingSub2">Simplu și transparent. Cancel oricând.</div>
-    <div class="plans-grid">
-      <div class="plan">
-        <div class="plan-name">Free</div>
-        <div class="plan-price"><sup>€</sup>0</div>
-        <div class="plan-period" data-i18n="priceForever">pentru totdeauna</div>
-        <button class="plan-btn pbtn-b" onclick="closePricing();showAuth('register')" data-i18n="registerBtn">Înregistrează-te</button>
-        <ul class="plan-feats">
-          <li data-i18n-html="fChecks10">✅ 10 verificări / zi</li><li data-i18n-html="fDomains">✅ 26 domenii</li>
-          <li data-i18n-html="fExtension">✅ Extensie browser</li><li data-i18n-html="fAiDetect">✅ AI Detect</li>
-          <li class="off" data-i18n-html="fPdfOff">❌ Rapoarte PDF</li><li class="off" data-i18n-html="fBatchOff">❌ Batch verify</li><li class="off" data-i18n-html="fWidgetOff">❌ Widget embed</li>
-        </ul>
-      </div>
-      <div class="plan featured">
-        <div class="plan-badge" data-i18n="mostPopular">⭐ POPULAR</div>
-        <div class="plan-name">Pro</div>
-        <div class="plan-price"><sup>€</sup>9</div>
-        <div class="plan-period" data-i18n="priceMonth">/ lună</div>
-        <button class="plan-btn pbtn-a" onclick="checkout('pro')" data-i18n="choosePro">Alege Pro →</button>
-        <ul class="plan-feats">
-          <li data-i18n-html="fChecks500">✅ <strong>500 verificări / zi</strong></li><li data-i18n-html="fDomains">✅ 26 domenii</li>
-          <li data-i18n-html="fExtension">✅ Extensie browser</li><li data-i18n-html="fAiDetect">✅ AI Detect</li>
-          <li data-i18n-html="fPdfOn">✅ <strong>Rapoarte PDF</strong></li><li data-i18n-html="fBatch50">✅ <strong>Batch (50)</strong></li>
-          <li data-i18n-html="fWidgetOn">✅ <strong>Widget embed</strong></li>
-        </ul>
-      </div>
-      <div class="plan">
-        <div class="plan-name">Enterprise</div>
-        <div class="plan-price"><sup>€</sup>49</div>
-        <div class="plan-period" data-i18n="priceMonth">/ lună</div>
-        <button class="plan-btn pbtn-b" onclick="checkout('enterprise')" data-i18n="chooseEnterprise">Alege Enterprise →</button>
-        <ul class="plan-feats">
-          <li data-i18n-html="fChecksUnl">✅ <strong>Nelimitat / zi</strong></li><li data-i18n-html="fDomains">✅ 26 domenii</li>
-          <li data-i18n-html="fExtension">✅ Extensie browser</li><li data-i18n-html="fAiDetect">✅ AI Detect</li>
-          <li data-i18n-html="fPdfOnPlain">✅ Rapoarte PDF</li><li data-i18n-html="fBatch500">✅ <strong>Batch (500)</strong></li>
-          <li data-i18n-html="fApiSla">✅ <strong>API + SLA</strong></li>
-        </ul>
-      </div>
-    </div>
+    <!-- Cards are rendered dynamically from GET /plans by renderPlans() so the
+         prices/limits shown can never drift from the backend PLANS source. -->
+    <div class="plans-grid" id="plansGrid"></div>
   </div>
 </div>
 
@@ -519,6 +489,7 @@ const I18N={
     stepVerdict:'Form the verdict', stepVerdictD:'Each fact has its own verdict, and the final one reflects the level of agreement.',
     claimN:'CLAIM', enterClaim:'Enter a claim.', backendOffline:'Backend offline. Start: uvicorn main:app --reload',
     pdfError:'PDF generation error', stripeError:'Stripe error', connError:'Connection error', noSub:'You have no active subscription.',
+    paymentOk:'✅ Payment processed! Your account has been updated.', googleFail:'Google login failed', googleNetErr:'Google login: network error',
     createAccount:'Create account', createSub:'Free · 10 checks/day · No card',
     fieldName:'Name', fieldNamePh:'Your name', fieldEmail:'Email', fieldPass:'Password', passPh:'At least 6 characters',
     createBtn:'Create free account →', orSep:'or', continueGoogle:'Continue with Google',
@@ -538,6 +509,10 @@ const I18N={
     fPdfOff:'❌ PDF reports', fBatchOff:'❌ Batch verify', fWidgetOff:'❌ Widget embed',
     fPdfOn:'✅ <strong>PDF reports</strong>', fBatch50:'✅ <strong>Batch (50)</strong>', fWidgetOn:'✅ <strong>Widget embed</strong>',
     fPdfOnPlain:'✅ PDF reports', fBatch500:'✅ <strong>Batch (500)</strong>', fApiSla:'✅ <strong>API + SLA</strong>',
+    checksPerDay:'{n} checks / day', unlimitedChecks:'Unlimited / day',
+    featDomains:'26 domains', featExtension:'Browser extension', featAiDetect:'AI Detect',
+    featPdf:'PDF reports', featBatch:'Batch ({n})', featWidget:'Widget embed', featApiSla:'API + SLA',
+    choosePlan:'Choose {n} →', planCurrentBtn:'Current plan',
     pricingTitle2:'Plans & Pricing', pricingSub2:'Simple and transparent. Cancel anytime.',
   },
   ro:{
@@ -575,6 +550,7 @@ const I18N={
     stepVerdict:'Formulăm verdictul', stepVerdictD:'Fiecare fapt are propriul verdict, iar cel final reflectă nivelul de acord.',
     claimN:'AFIRMAȚIA', enterClaim:'Introdu o afirmație.', backendOffline:'Backend offline. Pornește: uvicorn main:app --reload',
     pdfError:'Eroare generare PDF', stripeError:'Eroare Stripe', connError:'Eroare conexiune', noSub:'Nu ai o subscripție activă.',
+    paymentOk:'✅ Plată procesată! Contul tău a fost actualizat.', googleFail:'Autentificare Google eșuată', googleNetErr:'Google login: eroare de rețea',
     createAccount:'Creează cont', createSub:'Gratuit · 10 verificări/zi · Fără card',
     fieldName:'Nume', fieldNamePh:'Numele tău', fieldEmail:'Email', fieldPass:'Parolă', passPh:'Minim 6 caractere',
     createBtn:'Creează cont gratuit →', orSep:'sau', continueGoogle:'Continuă cu Google',
@@ -594,13 +570,30 @@ const I18N={
     fPdfOff:'❌ Rapoarte PDF', fBatchOff:'❌ Batch verify', fWidgetOff:'❌ Widget embed',
     fPdfOn:'✅ <strong>Rapoarte PDF</strong>', fBatch50:'✅ <strong>Batch (50)</strong>', fWidgetOn:'✅ <strong>Widget embed</strong>',
     fPdfOnPlain:'✅ Rapoarte PDF', fBatch500:'✅ <strong>Batch (500)</strong>', fApiSla:'✅ <strong>API + SLA</strong>',
+    checksPerDay:'{n} verificări / zi', unlimitedChecks:'Nelimitat / zi',
+    featDomains:'26 domenii', featExtension:'Extensie browser', featAiDetect:'AI Detect',
+    featPdf:'Rapoarte PDF', featBatch:'Batch ({n})', featWidget:'Widget embed', featApiSla:'API + SLA',
+    choosePlan:'Alege {n} →', planCurrentBtn:'Planul curent',
     pricingTitle2:'Planuri & Prețuri', pricingSub2:'Simplu și transparent. Cancel oricând.',
   },
 };
 let LANG=(localStorage.getItem('ts_lang')||(navigator.language||'en').slice(0,2).toLowerCase());
 if(!I18N[LANG])LANG='en';
 function t(k){return (I18N[LANG]&&I18N[LANG][k])||I18N.en[k]||k;}
-function setLang(l){if(!I18N[l])l='en';LANG=l;localStorage.setItem('ts_lang',l);applyI18n();if(lastResult)renderAll(lastResult);}
+// Non-blocking toast — replaces alert() for transient status/errors so the
+// page never freezes on a modal dialog. kind: 'ok' | 'err' | 'info'.
+function toast(msg,kind){
+  kind=kind||'info';
+  let wrap=document.getElementById('toastWrap');
+  if(!wrap){wrap=document.createElement('div');wrap.id='toastWrap';wrap.className='toast-wrap';document.body.appendChild(wrap);}
+  const el=document.createElement('div');
+  el.className='toast '+kind;
+  el.textContent=msg;
+  wrap.appendChild(el);
+  requestAnimationFrame(()=>el.classList.add('show'));
+  setTimeout(()=>{el.classList.remove('show');setTimeout(()=>el.remove(),300);},kind==='err'?5000:3500);
+}
+function setLang(l){if(!I18N[l])l='en';LANG=l;localStorage.setItem('ts_lang',l);applyI18n();if(_plansCache)renderPlans();if(lastResult)renderAll(lastResult);}
 function applyI18n(){
   document.documentElement.lang=LANG;
   document.querySelectorAll('[data-i18n]').forEach(el=>{el.textContent=t(el.getAttribute('data-i18n'));});
@@ -722,12 +715,6 @@ function onInput(){
   document.getElementById('charCount').textContent=`${v.length}/4000`;
 }
 function nextExample(){document.getElementById('claimInput').value=EXAMPLES[exIdx%EXAMPLES.length];onInput();exIdx++;}
-async function clearCache(){
-  const btn=document.querySelectorAll('.btn-secondary')[1];
-  btn.textContent='⏳';btn.disabled=true;
-  await fetch(`${API}/clear-cache`,{method:'POST'}).catch(()=>{});
-  btn.textContent='✅';setTimeout(()=>{btn.textContent='🗑';btn.disabled=false;},1500);
-}
 async function runVerify(){
   const text=document.getElementById('claimInput').value.trim();
   if(!text){showErr(t('enterClaim'));return;}
@@ -752,6 +739,7 @@ async function runVerify(){
     const r=await fetch(`${API}${endpoint}`,{method:'POST',headers,body:JSON.stringify({text})});
     if(!r.ok)throw new Error(`HTTP ${r.status}: ${await r.text()}`);
     const d=await r.json();
+    d._interactionId=r.headers.get('X-TruthScore-Interaction-Id')||'';
     ensureAds(r.headers.get('X-TruthScore-Show-Ads')==='1');
     clearInterval(stepTimer);
     document.getElementById('vLoad').className='loading';
@@ -780,7 +768,7 @@ function renderTextAnalysis(d){
   window.jumpClaim=i=>{const b=window._tabBtn('explain');if(b)b.click();setTimeout(()=>{const el=document.getElementById('exp-'+i);if(el){el.classList.remove('hl');void el.offsetWidth;el.classList.add('hl');el.scrollIntoView({behavior:'smooth',block:'start'});}},70);};
   const DIC={web:'🌐',wikipedia:'📖',wikidata:'🗄️',academic:'🎓',news:'📰',factcheck:'🔎'};
   document.getElementById('tp-sources').innerHTML=`<div class="sec-lbl">${t('sourcesTitle')} (${reg.length})</div><div style="font-size:11px;color:var(--text2);margin:-2px 0 10px">${LANG==='ro'?'Numerotate global pentru tot paragraful · verde = susține, roșu = contrazice (atribuirea în fila Sub-claims)':'Numbered globally for the whole paragraph · green = supports, red = contradicts (attribution in the Sub-claims tab)'}</div>`+
-    reg.map((s,n)=>`<a id="src-${n}" class="src-line" href="${esc(s.url||'#')}" target="_blank" rel="noopener"><span class="src-num">${n}</span><span style="color:${s._stance==='ts'?'var(--green)':s._stance==='tc'?'var(--red)':'var(--text2)'};flex-shrink:0">${s._stance==='ts'?'✓':s._stance==='tc'?'✗':'•'}</span><span class="src-pub">${DIC[s.type]||'📄'} ${esc((s.publisher||'sursă').slice(0,42))}</span><span class="src-title" title="${esc(s.title||'')}">${esc(s.title||'')}</span></a>`).join('');
+    reg.map((s,n)=>`<a id="src-${n}" class="src-line" href="${safeUrl(s.url)}" target="_blank" rel="noopener"><span class="src-num">${n}</span><span style="color:${s._stance==='ts'?'var(--green)':s._stance==='tc'?'var(--red)':'var(--text2)'};flex-shrink:0">${s._stance==='ts'?'✓':s._stance==='tc'?'✗':'•'}</span><span class="src-pub">${DIC[s.type]||'📄'} ${esc((s.publisher||'sursă').slice(0,42))}</span><span class="src-title" title="${esc(s.title||'')}">${esc(s.title||'')}</span></a>`).join('');
       const PROC=LANG==='ro'?[['🔍','Despărțire','Paragraful a fost spart în afirmații atomice, independente și verificabile.'],['🔎','Căutare țintită','Pentru fiecare afirmație s-au adus surse din domenii de încredere, adaptate topicului ei.'],['⚖️','Cântărire dovezilor','Cross-encoder + NLI au evaluat fiecare sursă ca susținere sau contrazicere.'],['🧠','Verdict','Modelul de limbaj a sintetizat scorul final doar din dovezile cântărite, cu citări obligatorii.']]:[['🔍','Splitting','The paragraph was broken into atomic, independent, verifiable claims.'],['🔎','Targeted search','For each claim, sources were pulled from trusted domains matched to its topic.'],['⚖️','Weighing evidence','A cross-encoder + NLI scored every source as supporting or contradicting.'],['🧠','Verdict','The language model synthesized the final score only from the weighted evidence, with mandatory citations.']];
   document.getElementById('tp-explain').innerHTML=`<div class="sec-lbl">${t('verifySteps')}</div>${PROC.map(p=>`<div class="proc-step"><span style="font-size:16px;flex-shrink:0">${p[0]}</span><span><b>${p[1]}</b> — ${p[2]}</span></div>`).join('')}`+
     d.results.map((r,i)=>{const color=r.verdict==='TRUE'?'var(--green)':r.verdict==='FALSE'?'var(--red)':'var(--yellow)';
@@ -789,7 +777,7 @@ function renderTextAnalysis(d){
     d.results.map((r,i)=>{const color=r.verdict==='TRUE'?'var(--green)':r.verdict==='FALSE'?'var(--red)':'var(--yellow)';
       const label=r.verdict==='TRUE'?t('TRUE'):r.verdict==='FALSE'?t('FALSE'):t('UNCERTAIN');
       const lrow=(g,c,ic)=>{let seen=new Set(),out='';(g||[]).forEach(s=>{if(!s||!s._ref||seen.has(s._ref))return;seen.add(s._ref);
-        out+=`<a class="src-line" href="${esc(s.url||'#')}" target="_blank" rel="noopener" style="padding:5px 9px"><span class="src-num">${s._ref}</span><span style="color:${c};flex-shrink:0;font-size:11px">${ic}</span><span class="src-pub">${DIC[s.type]||'📄'} ${esc((s.publisher||'source').slice(0,38))}</span><span class="src-title">${esc((s.title||'').slice(0,64))}</span></a>`;});return out;};
+        out+=`<a class="src-line" href="${safeUrl(s.url)}" target="_blank" rel="noopener" style="padding:5px 9px"><span class="src-num">${s._ref}</span><span style="color:${c};flex-shrink:0;font-size:11px">${ic}</span><span class="src-pub">${DIC[s.type]||'📄'} ${esc((s.publisher||'source').slice(0,38))}</span><span class="src-title">${esc((s.title||'').slice(0,64))}</span></a>`;});return out;};
       const refBlock=lrow(r.supporting,'var(--green)','✓')+lrow(r.contradicting,'var(--red)','✗')+lrow(r.neutral_sources,'var(--text2)','•')||`<div style="font-size:10px;color:var(--text2);opacity:.7">${t('noDirect')}</div>`;
       return `<div class="sub-item" onclick="jumpClaim(${i})" style="display:block;border-left:3px solid ${color};margin-bottom:8px;cursor:pointer">
         <div style="display:flex;justify-content:space-between;gap:12px;color:${color};font-size:11px;font-weight:800"><span>${t('claimN')} #${i+1}</span><span>${label} · ${TOPIC_ICONS[r.topic]||'🔍'} ${esc(TOPIC_LABELS[r.topic]||r.topic)}</span></div>
@@ -868,7 +856,7 @@ function renderSources(d){
   const grp=(arr,cls,lbl)=>arr.length?`
     <div class="grp-lbl" style="color:${cls==='ts'?'var(--green)':cls==='tc'?'var(--red)':'var(--text2)'}">${lbl} (${arr.length})</div>
     ${arr.slice(0,10).map(s=>`
-      <a class="src" href="${esc(s.url||'#')}" target="_blank" rel="noopener">
+      <a class="src" href="${safeUrl(s.url)}" target="_blank" rel="noopener">
         <span class="src-ico">${SRC_ICONS[s.type]||'📄'}</span>
         <div class="src-body">
           <div class="src-title">${esc(s.title||'')}</div>
@@ -961,7 +949,7 @@ function renderSub(d){
   const DIC={web:'🌐',wikipedia:'📖',wikidata:'🗄️',academic:'🎓',news:'📰',factcheck:'🔎'};
   if(subs.length){
     const lrow=(g,c,ic)=>{let out='';(g||[]).forEach(s=>{if(!s)return;
-      out+=`<a class="src-line" href="${esc(s.url||'#')}" target="_blank" rel="noopener" style="padding:5px 9px"><span style="color:${c};flex-shrink:0;font-size:11px">${ic}</span><span class="src-pub">${DIC[s.type]||'📄'} ${esc((s.publisher||'source').slice(0,38))}</span><span class="src-title">${esc((s.title||'').slice(0,64))}</span></a>`;});return out;};
+      out+=`<a class="src-line" href="${safeUrl(s.url)}" target="_blank" rel="noopener" style="padding:5px 9px"><span style="color:${c};flex-shrink:0;font-size:11px">${ic}</span><span class="src-pub">${DIC[s.type]||'📄'} ${esc((s.publisher||'source').slice(0,38))}</span><span class="src-title">${esc((s.title||'').slice(0,64))}</span></a>`;});return out;};
     const cards=subs.map((r,i)=>{
       const color=r.verdict==='TRUE'?'var(--green)':r.verdict==='FALSE'?'var(--red)':'var(--yellow)';
       const label=r.verdict==='TRUE'?t('TRUE'):r.verdict==='FALSE'?t('FALSE'):t('UNCERTAIN');
@@ -979,10 +967,11 @@ function renderSub(d){
     return;
   }
   const sc=d.sub_claims||[];
+  window._subClaims=sc;  // index-based dispatch: never interpolate claim text into an inline handler
   document.getElementById('tp-sub').innerHTML=sc.length>1?`
     <div class="sec-lbl">${t('subTitle')} (${sc.length})</div>
     <div style="font-size:12px;color:var(--text2);margin-bottom:10px">${t('verifyIndividually')}</div>
-    ${sc.map(c=>`<div class="sub-item" onclick="verifySub('${esc(c)}')">
+    ${sc.map((c,i)=>`<div class="sub-item" onclick="verifySubIdx(${i})">
       <span style="color:var(--accent);font-size:11px">▸</span>
       <span style="font-size:13px">${esc(c)}</span>
       <span class="sub-arr">${t('verifyArrow')}</span>
@@ -1000,19 +989,20 @@ function verifySub(claim){
   window.scrollTo({top:0,behavior:'smooth'});
   setTimeout(runVerify,300);
 }
+function verifySubIdx(i){const c=(window._subClaims||[])[i];if(c!=null)verifySub(c);}
 async function sendFb(correct,d){
   document.getElementById('fbY').disabled=true;document.getElementById('fbN').disabled=true;
   document.getElementById('fbY').textContent=correct?'✅':'👍';
   document.getElementById('fbN').textContent=correct?'👎':'❌';
   await fetch(`${API}/feedback`,{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({claim:(d.claim||'').slice(0,300),predicted_verdict:d.verdict||'UNCERTAIN',predicted_score:d.score||50,user_says_correct:correct,source_page:location.href})}).catch(()=>{});
+    body:JSON.stringify({claim:(d.claim||'').slice(0,300),predicted_verdict:d.verdict||'UNCERTAIN',predicted_score:d.score||50,user_says_correct:correct,source_page:location.href,interaction_id:(d._interactionId||lastResult?._interactionId||'')})}).catch(()=>{});
 }
 async function downloadPDF(){
   if(!lastResult)return;
   const t=token();if(!t){showPricing();return;}
   const text=lastResult.claim||document.getElementById('claimInput').value.trim();
   const r=await fetch(`${API}/verify/pdf`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+t},body:JSON.stringify({text})});
-  if(!r.ok){alert(t('pdfError'));return;}
+  if(!r.ok){toast((I18N[LANG]||I18N.en).pdfError||I18N.en.pdfError,'err');return;}
   const blob=await r.blob();
   const url=URL.createObjectURL(blob);
   const a=document.createElement('a');a.href=url;a.download=`truthscore_${lastResult.verdict||'report'}_${lastResult.score||0}.pdf`;
@@ -1053,7 +1043,7 @@ function renderLogin(){
 }
 async function doGoogleAuth(){
   const clientId='809996736507-hatvv1gfev0b2sgnaqjq2vlqvfqateav.apps.googleusercontent.com';
-  const redirectUri=window.location.origin+'/auth/google/callback';
+  const redirectUri=window.location.origin+'/';
   // PKCE: generate code_verifier + code_challenge
   const array=new Uint8Array(32);
   crypto.getRandomValues(array);
@@ -1105,7 +1095,59 @@ async function doLogin(){
 }
 function authErr(msg){const e=document.getElementById('authErr');if(e){e.textContent='⚠️ '+msg;e.className='form-err show';}}
 function doLogout(){localStorage.removeItem('ts_token');currentUser=null;renderGuest();document.getElementById('userDropdown').classList.remove('open');}
-function showPricing(){document.getElementById('pricingOverlay').className='overlay show';}
+let _plansCache=null;
+async function renderPlans(){
+  const grid=document.getElementById('plansGrid');
+  if(!grid)return;
+  let plans=_plansCache;
+  if(!plans){
+    try{const r=await fetch(`${API}/plans`);plans=await r.json();_plansCache=plans;}
+    catch(e){grid.textContent=t('connError');return;}
+  }
+  const order=['free','pro','business','enterprise'];
+  const curPlan=(currentUser&&currentUser.plan)||'free';
+  grid.textContent='';
+  order.forEach(key=>{
+    const p=plans[key];if(!p)return;
+    const card=document.createElement('div');
+    card.className='plan'+(key==='pro'?' featured':'');
+    if(key==='pro'){const b=document.createElement('div');b.className='plan-badge';b.textContent='⭐ '+t('mostPopular');card.appendChild(b);}
+    const nm=document.createElement('div');nm.className='plan-name';nm.textContent=p.name||key;card.appendChild(nm);
+    const pr=document.createElement('div');pr.className='plan-price';
+    const sup=document.createElement('sup');sup.textContent='€';pr.appendChild(sup);
+    const price=Number(p.price||0);
+    pr.appendChild(document.createTextNode(Number.isInteger(price)?String(price):price.toFixed(2)));
+    card.appendChild(pr);
+    const per=document.createElement('div');per.className='plan-period';
+    per.textContent=price===0?t('priceForever'):t('priceMonth');card.appendChild(per);
+    const btn=document.createElement('button');btn.className='plan-btn '+(key==='pro'?'pbtn-a':'pbtn-b');
+    if(curPlan===key&&token()){btn.textContent=t('planCurrentBtn');btn.disabled=true;btn.style.opacity='.5';btn.style.cursor='default';}
+    else if(key==='free'){btn.textContent=t('registerBtn');btn.onclick=()=>{closePricing();showAuth('register');};}
+    else{btn.textContent=t('choosePlan').replace('{n}',p.name||key);btn.onclick=()=>checkout(key);}
+    card.appendChild(btn);
+    const ul=document.createElement('ul');ul.className='plan-feats';
+    const f=p.features||{};
+    const lim=Number(p.daily_limit||0);
+    const addFeat=(txt,on,strong)=>{
+      const li=document.createElement('li');if(!on)li.className='off';
+      li.appendChild(document.createTextNode(on?'✅ ':'❌ '));
+      if(strong&&on){const s=document.createElement('strong');s.textContent=txt;li.appendChild(s);}
+      else li.appendChild(document.createTextNode(txt));
+      ul.appendChild(li);
+    };
+    addFeat(lim>=9999?t('unlimitedChecks'):t('checksPerDay').replace('{n}',lim),true,key!=='free');
+    addFeat(t('featDomains'),true,false);
+    addFeat(t('featExtension'),true,false);
+    addFeat(t('featAiDetect'),true,false);
+    addFeat(t('featPdf'),!!f.pdf,!!f.pdf);
+    addFeat(f.batch?t('featBatch').replace('{n}',Number(p.batch_limit||0)):t('featBatch').replace(' ({n})',''),!!f.batch,!!f.batch);
+    addFeat(t('featWidget'),!!f.widget,!!f.widget);
+    if(f.api_quota&&(f.api_quota>0||f.api_quota===-1))addFeat(t('featApiSla'),true,true);
+    card.appendChild(ul);
+    grid.appendChild(card);
+  });
+}
+function showPricing(){renderPlans();document.getElementById('pricingOverlay').className='overlay show';}
 function closePricing(){document.getElementById('pricingOverlay').className='overlay';}
 async function checkout(plan){
   if(!token()){showAuth('register');closePricing();return;}
@@ -1113,8 +1155,8 @@ async function checkout(plan){
     const r=await fetch(`${API}/stripe/checkout`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token()},body:JSON.stringify({plan})});
     const d=await r.json();
     if(d.checkout_url)window.location.href=d.checkout_url;
-    else alert(t('stripeError')+': '+(d.detail||JSON.stringify(d)));
-  }catch(e){alert(t('connError')+': '+e.message);}
+    else toast(t('stripeError')+': '+(d.detail||JSON.stringify(d)),'err');
+  }catch(e){toast(t('connError')+': '+e.message,'err');}
 }
 async function openBillingPortal(){
   if(!token())return;
@@ -1122,21 +1164,46 @@ async function openBillingPortal(){
     const r=await fetch(`${API}/stripe/portal`,{method:'POST',headers:{'Authorization':'Bearer '+token()}});
     const d=await r.json();
     if(d.portal_url)window.location.href=d.portal_url;
-    else alert(t('noSub'));
-  }catch(e){alert(t('connError'));}
+    else toast(t('noSub'),'info');
+  }catch(e){toast(t('connError'),'err');}
 }
-function esc(t){const d=document.createElement('div');d.textContent=String(t||'');return d.innerHTML;}
+// Escape ALL five HTML-significant chars incl. both quote styles, so esc()
+// output is safe inside text nodes AND inside "double"- or 'single'-quoted
+// attributes. (The old version only escaped <>& — a source title/url with a
+// quote could break out of an attribute and inject an event handler.)
+function esc(t){return String(t==null?'':t).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+// Only allow web/mailto links. Anything else (javascript:, data:, vbscript:…)
+// collapses to '#' so a malicious source URL can't run script on click.
+function safeUrl(u){u=String(u==null?'':u).trim();return /^(https?:|mailto:)/i.test(u)?esc(u):'#';}
 function showErr(msg){const e=document.getElementById('errBox');e.textContent='⚠️ '+msg;e.className='err-box show';}
 function hideErr(){document.getElementById('errBox').className='err-box';}
 
 renderGuest();
-setTimeout(()=>initAuth(),50);
+// Google OAuth: Google redirects back to "/" with ?code=. Exchange it, then clean the URL.
+(async function handleGoogleReturn(){
+  const p=new URLSearchParams(location.search);
+  const code=p.get('code'); const gerr=p.get('error');
+  if(gerr){history.replaceState({},'',location.pathname);setTimeout(()=>initAuth(),50);return;}
+  if(!code){setTimeout(()=>initAuth(),50);return;}
+  const verifier=sessionStorage.getItem('ts_pkce_verifier');
+  sessionStorage.removeItem('ts_pkce_verifier');
+  const redirectUri=window.location.origin+'/';
+  try{
+    const r=await fetch(`${API}/auth/google/exchange`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code,code_verifier:verifier||'',redirect_uri:redirectUri})});
+    const d=await r.json();
+    if(r.ok&&d.token){localStorage.setItem('ts_token',d.token);}
+    else{toast(t('googleFail')+': '+(d.detail||''),'err');}
+  }catch(e){toast(t('googleNetErr'),'err');}
+  history.replaceState({},'',location.pathname);
+  initAuth();
+})();
 const urlClaim=new URLSearchParams(location.search).get('claim');
 if(urlClaim){document.getElementById('claimInput').value=urlClaim;onInput();setTimeout(runVerify,500);}
 if(new URLSearchParams(location.search).get('pricing')==='1')setTimeout(showPricing,300);
-// Anonymous visitors (free tier) may see a display unit without verifying first.
-if(!token())setTimeout(()=>ensureAds(true),1500);
-if(new URLSearchParams(location.search).get('payment')==='success')setTimeout(()=>{alert('✅ Plată procesată! Contul tău a fost actualizat.');initAuth();},500);
+// Ads are materialized only AFTER the first verify (see the ensureAds call in
+// the verify flow), never on a cold page load — a visitor who hasn't used the
+// product yet shouldn't be greeted by an ad slot.
+if(new URLSearchParams(location.search).get('payment')==='success')setTimeout(()=>{toast(t('paymentOk'),'ok');initAuth();},500);
 </script>
 </body>
 </html>

@@ -1,6 +1,7 @@
 """
 TruthScore — Main verification pipeline.
 """
+from dataclasses import dataclass
 from config import *
 from models import *
 from utils.cache import cache
@@ -25,41 +26,32 @@ from pipeline.helpers import (
     _domain, factcheck_rating_to_nli,
 )
 
-async def verify_claim(req: VerifyRequest, eco: bool = False):
+@dataclass
+class RetrievalResult:
+    """Everything /verify, batch, and PDF need out of the shared retrieval+rank stage."""
+    topic:        str
+    search_query: str
+    claim_en:     str
+    top_k:        list
+    rest:         list
+    all_evidence: list
+    models_used:  list
+    t_retrieval:  float
+    t_embedding:  float
+
+
+async def retrieve_and_rank(claim: str, *, eco: bool = False) -> RetrievalResult:
+    """Shared evidence retrieval + two-stage ranking for /verify, batch, and PDF.
+
+    Runs the full domain-routed retrieval cascade (topic detection, HyDE,
+    targeted queries, counter-evidence, per-source time budgets, URL dedup, and
+    the fallback_only paid-Tavily top-up) followed by embedding + cross-encoder
+    reranking. Returns the ranked top_k / rest, the full deduped evidence, the
+    detected topic/search_query/claim_en, model tags accrued so far, and the
+    retrieval/embedding timings. Single source of truth so batch and PDF stop
+    reimplementing an inferior flat-5s copy of the /verify pipeline.
+    """
     import time as _t
-    claim = req.text.strip()
-    key   = f"v3:{normalize_claim(claim)}"   # normalized cache key
-    t_total_start = _t.time()
-
-    # ── Distributed semantic cache (exact + near-duplicate) ───
-    # Cache hits are FREE — no LLM, no evidence fetch, no rate-limit cost.
-    try:
-        from utils.semantic_cache import semantic_lookup, semantic_store
-        hit = await semantic_lookup(claim)
-        if hit:
-            hit["cached"] = True
-            print(f"  [CACHE] HIT (semantic) for '{claim[:50]}'")
-            return VerifyResponse(**hit)
-    except Exception:
-        # Fall back to legacy diskcache
-        hit = cache.get(key)
-        if hit:
-            hit["cached"] = True
-            return VerifyResponse(**hit)
-
-    # ── Math shortcut ─────────────────────────────────────────
-    math_result = evaluate_math_claim(claim)
-    if math_result:
-        score, expl = math_result
-        verdict    = "TRUE" if score >= 62 else ("FALSE" if score < 38 else "UNCERTAIN")
-        result = VerifyResponse(
-            claim=claim, score=score, verdict=verdict,
-            confidence="HIGH", explanation=expl,
-            models_used=["mathematical-evaluator"],
-        )
-        cache.set(key, result.model_dump(), expire=3600 * 24)
-        return result
-
     # ── Step 1: Evidence Retrieval — all LLM pre-steps IN PARALLEL ──
     # topic + HyDE + targeted queries run concurrently (was: serial topic
     # first) -> saves one full LLM round-trip (~0.7-1.5s) on every claim.
@@ -137,12 +129,33 @@ async def verify_claim(req: VerifyRequest, eco: bool = False):
     if "SEMANTIC_SCHOLAR" not in labels:
         evidence_tasks.append(search_semantic_scholar(search_query))
         labels.append("SEMANTIC_FALLBACK")
-    # Cap each source at 5 seconds -- slow sources get skipped
+    # Always add OpenAlex — 250M works, keyless. Broadest free academic index;
+    # self-guards (returns [] when the claim isn't scholarly) so it's a cheap
+    # backstop that never needs an API key.
+    if "OPENALEX" not in labels:
+        evidence_tasks.append(search_openalex(search_query))
+        labels.append("OPENALEX_FALLBACK")
+    # Per-source time budgets. Fast structured APIs are capped tight, but the
+    # web / search fallbacks (DDG-wiki, Britannica scrape, counter-evidence,
+    # Tavily, GDELT) legitimately take longer — their own internal timeouts are
+    # 10-15s. The old flat 5s cap killed them *before* they could ever return,
+    # so the primary web fallbacks contributed zero evidence. Sources run
+    # concurrently in the gather below, so the total retrieval time is bounded
+    # by the slowest budget, not their sum. (Priorities: evidence quality > latency.)
+    _SLOW_SOURCE_BUDGET = float(os.getenv("SLOW_SOURCE_TIMEOUT", "12"))
+    _FAST_SOURCE_BUDGET = float(os.getenv("FAST_SOURCE_TIMEOUT", "7"))
+    _SLOW_KEYS = ("DDG", "WIKI", "BRITANNICA", "COUNTER", "TAVILY", "GDELT", "SCRAPE")
+
+    def _budget_for(label: str) -> float:
+        L = (label or "").upper()
+        return _SLOW_SOURCE_BUDGET if any(k in L for k in _SLOW_KEYS) else _FAST_SOURCE_BUDGET
+
     async def _with_timeout(coro, label):
+        budget = _budget_for(label)
         try:
-            return await asyncio.wait_for(coro, timeout=5.0)
+            return await asyncio.wait_for(coro, timeout=budget)
         except asyncio.TimeoutError:
-            print(f"  [{label}] TIMEOUT (>5s)")
+            print(f"  [{label}] TIMEOUT (>{budget:.0f}s)")
             return []
         except Exception as e:
             return e
@@ -180,6 +193,7 @@ async def verify_claim(req: VerifyRequest, eco: bool = False):
     # Free sources came back thin → now (and only now) spend on Tavily.
     # Most claims never reach this line, cutting search cost ~70%.
     MIN_EVIDENCE = int(os.getenv("MIN_FREE_EVIDENCE", "6"))
+    tavily_topup_used = False
     if (TAVILY_MODE == "fallback_only" and TAVILY_API_KEY
             and "TAVILY_FALLBACK" not in labels
             and len(all_evidence) < MIN_EVIDENCE):
@@ -189,7 +203,7 @@ async def verify_claim(req: VerifyRequest, eco: bool = False):
                 search_tavily(search_query), timeout=8.0)
             print(f"  [TAVILY-TOPUP] +{len(tavily_results)} sources")
             all_evidence.extend(tavily_results)
-            models_used_extra = ["tavily-topup"]
+            tavily_topup_used = True
         except Exception as e:
             print(f"  [TAVILY-TOPUP] failed: {e}")
 
@@ -199,6 +213,8 @@ async def verify_claim(req: VerifyRequest, eco: bool = False):
     # Stage A: Embedding cosine similarity (fast, high recall) -> top 30
     # Stage B: Cross-encoder reranking (slower, high precision) -> top 12
     models_used = []
+    if tavily_topup_used:
+        models_used.append("tavily-topup")
     t2 = _t.time()
 
     # Stage A -- embedding filter: many -> 30
@@ -219,6 +235,57 @@ async def verify_claim(req: VerifyRequest, eco: bool = False):
     print(f"  [RANK] {len(all_evidence)} -> embed top {EMBED_BROAD_K}"
           f" -> cross-encoder top {len(top_k)} | {t_embedding:.0f}ms")
 
+    return RetrievalResult(
+        topic=topic, search_query=search_query, claim_en=claim_en,
+        top_k=top_k, rest=rest, all_evidence=all_evidence,
+        models_used=models_used, t_retrieval=t_retrieval, t_embedding=t_embedding,
+    )
+
+
+async def verify_claim(req: VerifyRequest, eco: bool = False):
+    import time as _t
+    claim = req.text.strip()
+    key   = f"v3:{normalize_claim(claim)}"   # normalized cache key
+    t_total_start = _t.time()
+
+    # ── Distributed semantic cache (exact + near-duplicate) ───
+    # Cache hits are FREE — no LLM, no evidence fetch, no rate-limit cost.
+    try:
+        from utils.semantic_cache import semantic_lookup, semantic_store
+        hit = await semantic_lookup(claim)
+        if hit:
+            hit["cached"] = True
+            print(f"  [CACHE] HIT (semantic) for '{claim[:50]}'")
+            return VerifyResponse(**hit)
+    except Exception:
+        # Fall back to legacy diskcache
+        hit = cache.get(key)
+        if hit:
+            hit["cached"] = True
+            return VerifyResponse(**hit)
+
+    # ── Math shortcut ─────────────────────────────────────────
+    math_result = evaluate_math_claim(claim)
+    if math_result:
+        score, expl = math_result
+        verdict    = "TRUE" if score >= VERDICT_TRUE_AT else ("FALSE" if score < VERDICT_FALSE_AT else "UNCERTAIN")
+        result = VerifyResponse(
+            claim=claim, score=score, verdict=verdict,
+            confidence="HIGH", explanation=expl,
+            models_used=["mathematical-evaluator"],
+        )
+        cache.set(key, result.model_dump(), expire=3600 * 24)
+        return result
+
+    # ── Steps 1+2: shared evidence retrieval + two-stage ranking ──
+    # Extracted into retrieve_and_rank() so /verify, batch, and PDF share ONE
+    # retrieval+rank implementation (per-source budgets, dedup, cross-encoder).
+    _rr = await retrieve_and_rank(claim, eco=eco)
+    topic, search_query, claim_en = _rr.topic, _rr.search_query, _rr.claim_en
+    top_k, rest, all_evidence = _rr.top_k, _rr.rest, _rr.all_evidence
+    models_used = _rr.models_used
+    t_retrieval, t_embedding = _rr.t_retrieval, _rr.t_embedding
+
     # ── Step 3: Path A — Gemini reasoning ────────────────────
     t3 = _t.time()
     # Per-sub-claim breakdown for compound claims (filled by FActScore below).
@@ -229,118 +296,138 @@ async def verify_claim(req: VerifyRequest, eco: bool = False):
     sub_claims = await split_claims(claim)
     is_compound = len(sub_claims) > 1
     if gemini_client and top_k:
-        # ── MODEL ROUTING with quality-escalation ──────────────
-        # 1. pick_model(): easy short claims -> cheap Groq GPT-OSS;
-        #    hard signals -> straight to Gemini.
-        # 2. If the cheap result comes back weak (LOW/UNCERTAIN), re-run
-        #    ONCE with Gemini — users never see degraded verdicts; extra
-        #    latency lands only on genuinely hard claims.
-        claim_for_llm = claim_en if claim_en != claim else claim
-        chosen_model = pick_model(claim, topic, eco)
-
-        score, verdict, confidence, explanation, supporting, contradicting, neutral = \
-            await reason_with_gpt(claim_for_llm, top_k, rest, model_hint=chosen_model)
-        models_used.append(chosen_model)
-
-        if not eco and chosen_model not in ("gemini",) and (verdict == "UNCERTAIN" or confidence == "LOW"):
-            print(f"  [ROUTE] cheap result weak ({verdict}/{confidence}) -> escalating to Gemini")
-            score, verdict, confidence, explanation, supporting, contradicting, neutral = \
-                await reason_with_gpt(claim_for_llm, top_k, rest, model_hint="gemini")
-            models_used.append("gemini-escalation")
-
-        scored = top_k + rest
-
-        # ── Path B — Evidence-based cross-check ──────────────
-        # Runs only when Path A result is ambiguous or claim is high-risk.
-        # Path B classifies stance of each source mathematically —
-        # no LLM parametric memory involved in the final verdict.
-        if not eco and _path_b_triggers(score, verdict, claim, topic):
-            print(f"  [PATH-B] Triggered (score={score}, nuance={is_nuance_claim(claim)})")
-            b_score, b_verdict, b_conf, b_expl = await reason_path_b(claim, top_k)
-
-            if b_score is not None and b_verdict is not None:
-                a_distance       = abs(score - 50)
-                b_distance       = abs(b_score - 50)
-                nuance_or_strict = is_nuance_claim(claim) or is_strict_domain(claim, topic)
-
-                if verdict != b_verdict:
-                    if nuance_or_strict or b_distance > a_distance + 10:
-                        print(f"  [PATH-B] Override: A={verdict}({score}) "
-                              f"-> B={b_verdict}({b_score}) "
-                              f"({'evidence-priority' if nuance_or_strict else 'more decisive'})")
-                        score       = b_score
-                        verdict     = b_verdict
-                        confidence  = b_conf
-                        explanation = (f"[Evidence-based] {b_expl} "
-                                      f"(Initial assessment was {verdict})")
-                        models_used.append("evidence-stance-classifier")
-                    else:
-                        print(f"  [PATH-B] Conflict -> UNCERTAIN")
-                        score       = 50
-                        verdict     = "UNCERTAIN"
-                        confidence  = "LOW"
-                        explanation = (f"Conflicting evidence: sources suggest "
-                                      f"{b_verdict} but overall assessment "
-                                      f"suggested {verdict}. {b_expl}")
-                else:
-                    avg_score = (score + b_score) // 2
-                    score     = avg_score
-                    if confidence == "LOW":
-                        confidence = "MEDIUM"
-                    print(f"  [PATH-B] Both agree: {verdict} -> confidence boosted")
-
-        # ── Luna 2: FActScore atomic decomposition ────────────
-        # Decompose compound claims into atomic facts, verify each.
-        # Catches partial truths where one sub-claim is false.
-        # LATENCY GATE: only on genuinely doubtful results — running it on
-        # every medium-confidence claim added a full LLM round-trip to the
-        # median response for marginal accuracy gain.
-        # In eco mode we still decompose genuinely compound claims (the
-        # per-sub-claim breakdown is a core product promise), but skip the
-        # extra accuracy-boosting FActScore runs on single doubtful claims.
-        if (is_compound or (not eco and (confidence != "HIGH"
-                or is_nuance_claim(claim) or is_strict_domain(claim, topic)))):
-            print(f"  [FACTSCORE] Running (score={score}, compound={is_compound})")
-            fs_score, fs_verdict, fs_conf, fs_expl, atom_results = \
-                await factscore_verify(claim, top_k)
-            if atom_results:
-                # Reclaim the per-atom breakdown + sources the pipeline already
-                # computed. This is the source->sub-claim mapping the product needs.
-                sub_results = build_sub_claim_results(atom_results)
-            if fs_score is not None and fs_verdict is not None:
-                fs_dist  = abs(fs_score - 50)
-                cur_dist = abs(score - 50)
-                if fs_dist > cur_dist + 5:
-                    print(f"  [FACTSCORE] Override: {verdict}({score}) "
-                          f"-> {fs_verdict}({fs_score})")
-                    score, verdict, confidence, explanation = \
-                        fs_score, fs_verdict, fs_conf, fs_expl
-                    models_used.append("factscore-decomposition")
-                elif fs_verdict != verdict and fs_dist > 10:
-                    score, verdict, confidence = 50, "UNCERTAIN", "LOW"
-                    explanation = f"Atomic analysis conflicts. {fs_expl}"
-
-        # ── Luna 3: AVeriTeC question decomposition ───────────
-        # Generate verification questions, answer each with retrieval.
-        # Resolves UNCERTAIN verdicts through targeted Q&A.
-        if not eco and verdict == "UNCERTAIN":
-            print(f"  [AVERITEC] Running question decomposition")
-            av_score, av_verdict, av_conf, av_expl = \
-                await averitec_verify(claim)
-            if av_score is not None and av_verdict in ("TRUE", "FALSE"):
-                print(f"  [AVERITEC] Resolved: {av_verdict}({av_score})")
-                score, verdict, confidence, explanation = \
-                    av_score, av_verdict, av_conf, av_expl
-                models_used.append("averitec-qa")
-
-        # ── Luna 4: Wikidata SPARQL for structured facts ──────
-        # Verifies geographic, demographic, historical facts via
-        # structured SPARQL queries on Wikidata. No API key needed.
+        # Wikidata SPARQL is independent of the LLM verdict chain (it only adds
+        # structured sources for geo/history/politics/science). Launch it now so
+        # it runs concurrently with Path A/B/FActScore/AVeriTeC instead of
+        # tacking a serial SPARQL round-trip onto the end.
+        wikidata_task = None
         if not eco and topic in ("geography", "history", "politics", "science"):
-            wikidata_srcs = await wikidata_sparql_verify(claim)
-            if wikidata_srcs:
-                top_k = wikidata_srcs + top_k
-                print(f"  [WIKIDATA] Added {len(wikidata_srcs)} structured sources")
+            wikidata_task = asyncio.create_task(wikidata_sparql_verify(claim))
+        try:
+            # ── MODEL ROUTING with quality-escalation ──────────────
+            # 1. pick_model(): easy short claims -> cheap Groq GPT-OSS;
+            #    hard signals -> straight to Gemini.
+            # 2. If the cheap result comes back weak (LOW/UNCERTAIN), re-run
+            #    ONCE with Gemini — users never see degraded verdicts; extra
+            #    latency lands only on genuinely hard claims.
+            claim_for_llm = claim_en if claim_en != claim else claim
+            chosen_model = pick_model(claim, topic, eco)
+
+            score, verdict, confidence, explanation, supporting, contradicting, neutral = \
+                await reason_with_gpt(claim_for_llm, top_k, rest, model_hint=chosen_model)
+            models_used.append(chosen_model)
+
+            if not eco and chosen_model not in ("gemini",) and (verdict == "UNCERTAIN" or confidence == "LOW"):
+                print(f"  [ROUTE] cheap result weak ({verdict}/{confidence}) -> escalating to Gemini")
+                score, verdict, confidence, explanation, supporting, contradicting, neutral = \
+                    await reason_with_gpt(claim_for_llm, top_k, rest, model_hint="gemini")
+                models_used.append("gemini-escalation")
+
+            scored = top_k + rest
+
+            # ── Path B — Evidence-based cross-check ──────────────
+            # Runs only when Path A result is ambiguous or claim is high-risk.
+            # Path B classifies stance of each source mathematically —
+            # no LLM parametric memory involved in the final verdict.
+            if not eco and _path_b_triggers(score, verdict, claim, topic):
+                print(f"  [PATH-B] Triggered (score={score}, nuance={is_nuance_claim(claim)})")
+                b_score, b_verdict, b_conf, b_expl = await reason_path_b(claim, top_k)
+
+                if b_score is not None and b_verdict is not None:
+                    a_distance       = abs(score - 50)
+                    b_distance       = abs(b_score - 50)
+                    nuance_or_strict = is_nuance_claim(claim) or is_strict_domain(claim, topic)
+
+                    if verdict != b_verdict:
+                        if nuance_or_strict or b_distance > a_distance + 10:
+                            print(f"  [PATH-B] Override: A={verdict}({score}) "
+                                  f"-> B={b_verdict}({b_score}) "
+                                  f"({'evidence-priority' if nuance_or_strict else 'more decisive'})")
+                            score       = b_score
+                            verdict     = b_verdict
+                            confidence  = b_conf
+                            explanation = (f"[Evidence-based] {b_expl} "
+                                          f"(Initial assessment was {verdict})")
+                            models_used.append("evidence-stance-classifier")
+                        else:
+                            print(f"  [PATH-B] Conflict -> UNCERTAIN")
+                            score       = 50
+                            verdict     = "UNCERTAIN"
+                            confidence  = "LOW"
+                            explanation = (f"Conflicting evidence: sources suggest "
+                                          f"{b_verdict} but overall assessment "
+                                          f"suggested {verdict}. {b_expl}")
+                    else:
+                        avg_score = (score + b_score) // 2
+                        score     = avg_score
+                        if confidence == "LOW":
+                            confidence = "MEDIUM"
+                        print(f"  [PATH-B] Both agree: {verdict} -> confidence boosted")
+
+            # ── Luna 2: FActScore atomic decomposition ────────────
+            # Decompose compound claims into atomic facts, verify each.
+            # Catches partial truths where one sub-claim is false.
+            # LATENCY GATE: only on genuinely doubtful results — running it on
+            # every medium-confidence claim added a full LLM round-trip to the
+            # median response for marginal accuracy gain.
+            # In eco mode we still decompose genuinely compound claims (the
+            # per-sub-claim breakdown is a core product promise), but skip the
+            # extra accuracy-boosting FActScore runs on single doubtful claims.
+            if (is_compound or (not eco and (confidence != "HIGH"
+                    or is_nuance_claim(claim) or is_strict_domain(claim, topic)))):
+                print(f"  [FACTSCORE] Running (score={score}, compound={is_compound})")
+                fs_score, fs_verdict, fs_conf, fs_expl, atom_results = \
+                    await factscore_verify(claim, top_k)
+                if atom_results:
+                    # Reclaim the per-atom breakdown + sources the pipeline already
+                    # computed. This is the source->sub-claim mapping the product needs.
+                    sub_results = build_sub_claim_results(atom_results)
+                if fs_score is not None and fs_verdict is not None:
+                    fs_dist  = abs(fs_score - 50)
+                    cur_dist = abs(score - 50)
+                    if fs_dist > cur_dist + 5:
+                        print(f"  [FACTSCORE] Override: {verdict}({score}) "
+                              f"-> {fs_verdict}({fs_score})")
+                        score, verdict, confidence, explanation = \
+                            fs_score, fs_verdict, fs_conf, fs_expl
+                        models_used.append("factscore-decomposition")
+                    elif fs_verdict != verdict and fs_dist > 10:
+                        score, verdict, confidence = 50, "UNCERTAIN", "LOW"
+                        explanation = f"Atomic analysis conflicts. {fs_expl}"
+
+            # ── Luna 3: AVeriTeC question decomposition ───────────
+            # Generate verification questions, answer each with retrieval.
+            # Resolves UNCERTAIN verdicts through targeted Q&A.
+            if not eco and verdict == "UNCERTAIN":
+                print(f"  [AVERITEC] Running question decomposition")
+                av_score, av_verdict, av_conf, av_expl = \
+                    await averitec_verify(claim)
+                if av_score is not None and av_verdict in ("TRUE", "FALSE"):
+                    print(f"  [AVERITEC] Resolved: {av_verdict}({av_score})")
+                    score, verdict, confidence, explanation = \
+                        av_score, av_verdict, av_conf, av_expl
+                    models_used.append("averitec-qa")
+
+            # ── Luna 4: Wikidata SPARQL for structured facts ──────
+            # Verifies geographic, demographic, historical facts via
+            # structured SPARQL queries on Wikidata. No API key needed.
+            # Task was launched at the top of this block; collect it here and
+            # surface the structured sources into the response so the user
+            # actually sees them (they're evidence, not just an internal signal).
+            if wikidata_task is not None:
+                wikidata_srcs = await wikidata_task
+                wikidata_task = None  # collected — nothing left to clean up
+                if wikidata_srcs:
+                    for s in wikidata_srcs:
+                        s.stance = "neutral"
+                    neutral = wikidata_srcs + neutral
+                    print(f"  [WIKIDATA] Surfaced {len(wikidata_srcs)} structured sources")
+        finally:
+            # If reasoning raised before we collected it, don't leak a pending
+            # SPARQL task (silent "Task was destroyed but it is pending" + a
+            # dangling network round-trip).
+            if wikidata_task is not None and not wikidata_task.done():
+                wikidata_task.cancel()
     elif all_evidence:
         # No Gemini configured — evidence collected but no reasoner available.
         scored = all_evidence

@@ -39,12 +39,13 @@ SEARCH_COSTS = {
     "pubmed_arxiv_cr":  0.0,     # free academic APIs
 }
 
-# Pricing plans (monthly) — these set your MARGIN
+# Pricing plans (monthly) — these set your MARGIN.
+# Prices come from the single source of truth in auth.py (_PLAN_PRICES) so the
+# margin math here can never disagree with what customers are actually charged.
+from auth import _PLAN_PRICES as _AUTH_PLAN_PRICES
 PLAN_PRICES = {
-    "free":       {"price": 0,      "currency": "EUR"},
-    "pro":        {"price": 9.99,   "currency": "EUR"},
-    "business":   {"price": 39.99,  "currency": "EUR"},
-    "enterprise": {"price": 199,    "currency": "EUR"},
+    plan: {"price": price, "currency": "EUR"}
+    for plan, price in _AUTH_PLAN_PRICES.items()
 }
 
 

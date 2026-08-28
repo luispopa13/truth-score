@@ -131,11 +131,11 @@ def test_plans_include_business():
     assert plans["pro"]["daily_limit"] == 200
 
 
-def test_metrics_cost_ok():
+def test_metrics_cost_protected():
+    """Cost/margin metrics are admin-only — must not be public."""
     c = _make_client()
     r = c.get("/metrics/cost")
-    assert r.status_code == 200
-    assert "cost_usd" in r.json()
+    assert r.status_code in (401, 403)
 
 
 def test_anonymous_verify_limited():

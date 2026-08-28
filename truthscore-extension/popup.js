@@ -106,7 +106,7 @@ function showLoggedIn(user) {
   }
   const userInfoEl = document.getElementById("userInfo");
   if (userInfoEl) {
-    userInfoEl.innerHTML = `<span style="color:var(--text2);font-size:11px">${user.email}</span> <span style="color:${planColor};font-size:10px;font-weight:700;margin-left:4px">${(user.plan||"free").toUpperCase()}</span>`;
+    userInfoEl.innerHTML = `<span style="color:var(--text2);font-size:11px">${esc(user.email)}</span> <span style="color:${planColor};font-size:10px;font-weight:700;margin-left:4px">${esc((user.plan||"free").toUpperCase())}</span>`;
     userInfoEl.style.display = "flex";
   }
   // Show upgrade button for free users
@@ -235,12 +235,16 @@ async function doRegister() {
   } catch { if(errEl) errEl.textContent = t('backendOffline'); }
 }
 
-function openUpgrade() {
-  chrome.tabs.create({ url: "http://localhost:8000/?pricing=1" });
+async function openUpgrade() {
+  const { backendUrl } = await chrome.storage.sync.get("backendUrl");
+  const base = backendUrl || "http://localhost:8000";
+  chrome.tabs.create({ url: `${base}/?pricing=1` });
 }
 
-function openDashboard() {
-  chrome.tabs.create({ url: "http://localhost:8000/" });
+async function openDashboard() {
+  const { backendUrl } = await chrome.storage.sync.get("backendUrl");
+  const base = backendUrl || "http://localhost:8000";
+  chrome.tabs.create({ url: `${base}/` });
 }
 
 async function doGoogleAuth() {
@@ -386,7 +390,7 @@ function renderParagraph(d) {
   };
   const DICS={web:"🌐",wikipedia:"📖",wikidata:"🗄️",academic:"🎓",news:"📰",factcheck:"🔎"};
   const msrc=(g,clr,gl,lb,ref)=>{g=g||[];if(!g.length)return"";
-    const rows=g.slice(0,2).map(s=>`<a href="${esc(s.url||"#")}" target="_blank" rel="noopener" style="display:flex;gap:5px;align-items:center;font-size:10px;color:var(--text2);text-decoration:none;margin-top:3px;min-width:0"><span style="color:${clr};flex-shrink:0">${gl}</span>${ref?`<span style="flex-shrink:0;font-family:'JetBrains Mono',monospace;font-size:8px;font-weight:700;color:${clr};border:1px solid ${clr};border-radius:3px;padding:0 3px;opacity:.85">${ref}</span>`:""}<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${DICS[s.type]||"📄"} ${esc((s.publisher||s.title||t('sourceFallback')).slice(0,70))}</span></a>`).join("");
+    const rows=g.slice(0,2).map(s=>`<a href="${safeUrl(s.url)}" target="_blank" rel="noopener" style="display:flex;gap:5px;align-items:center;font-size:10px;color:var(--text2);text-decoration:none;margin-top:3px;min-width:0"><span style="color:${clr};flex-shrink:0">${gl}</span>${ref?`<span style="flex-shrink:0;font-family:'JetBrains Mono',monospace;font-size:8px;font-weight:700;color:${clr};border:1px solid ${clr};border-radius:3px;padding:0 3px;opacity:.85">${ref}</span>`:""}<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${DICS[s.type]||"📄"} ${esc((s.publisher||s.title||t('sourceFallback')).slice(0,70))}</span></a>`).join("");
     return `<div style="margin-top:6px;padding-top:5px;border-top:1px dashed var(--border)"><span style="font-size:9px;font-weight:800;color:${clr};text-transform:uppercase;letter-spacing:.4px">${lb} (${g.length})</span>${rows}${g.length>2?`<div style="font-size:9px;color:var(--text2);opacity:.7;margin-top:2px">${t('otherSources',{n:g.length-2})}</div>`:""}</div>`;};
   document.getElementById("sourcesWrap").innerHTML = `
     <div class="sec-label">${t('perClaimResult',{n:d.claim_count||d.results.length})}</div>
@@ -457,7 +461,7 @@ function renderVerify(d) {
   const SRC_ICONS={web:"🌐",wikipedia:"📖",wikidata:"🗄️",academic:"🎓",news:"📰",factcheck:"🔎"};
   const srcHtml=(group,cls,label)=>group.length
     ?`<div class="src-grp-label" style="color:${cls==="tag-s"?"var(--green)":cls==="tag-c"?"var(--red)":"var(--text2)"}">${label} (${group.length})</div>`
-      +group.slice(0,6).map(s=>`<a class="src" href="${esc(s.url||"#")}" target="_blank" rel="noopener">
+      +group.slice(0,6).map(s=>`<a class="src" href="${safeUrl(s.url)}" target="_blank" rel="noopener">
         <span>${SRC_ICONS[s.type]||"📄"}</span>
         <div class="src-body">
           <div class="src-title">${esc(s.title||"")}</div>
@@ -478,8 +482,8 @@ function renderVerify(d) {
     </div>
     ${(d.sub_claims||[]).length>1?`
     <div style="margin-top:10px;font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px">${t('subClaims')}</div>
-    ${d.sub_claims.map(c=>`<div style="font-size:11px;padding:5px 8px;background:var(--bg3);border-radius:6px;margin-top:4px;cursor:pointer;border:1px solid var(--border)"
-      onclick="document.getElementById('claimInput').value='${esc(c)}'"
+    ${(window.tsSubClaims=(d.sub_claims||[])).map((c,i)=>`<div style="font-size:11px;padding:5px 8px;background:var(--bg3);border-radius:6px;margin-top:4px;cursor:pointer;border:1px solid var(--border)"
+      onclick="tsSetClaim(${i})"
     >▸ ${esc(c)}</div>`).join("")}`:""}`;
 
   document.getElementById("fbYes").textContent=t('yes');
@@ -650,4 +654,9 @@ function formatTime(iso) {
 
 function showErr(id,msg){const el=document.getElementById(id);el.textContent="⚠️ "+msg;el.classList.add("show");}
 function hideErr(id){document.getElementById(id).classList.remove("show");}
-function esc(t){const d=document.createElement("div");d.appendChild(document.createTextNode(String(t||"")));return d.innerHTML;}
+function esc(t){return String(t==null?"":t).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
+function safeUrl(u){u=String(u==null?"":u).trim();return /^(https?:|mailto:)/i.test(u)?esc(u):"#";}
+// Index-based dispatch for the sub-claim shortcuts — never interpolate claim
+// text into an inline handler (HTML→JS double-decode makes that injectable).
+window.tsSubClaims=window.tsSubClaims||[];
+window.tsSetClaim=function(i){const c=(window.tsSubClaims||[])[i];if(c!=null){const el=document.getElementById('claimInput');if(el)el.value=c;}};

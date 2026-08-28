@@ -7,7 +7,7 @@ and inherits that user's plan limits.  Keys are stored hashed
 (sha256) in MongoDB; the plaintext is returned to the user only
 once, at creation time.
 """
-import os, time, hashlib, secrets, logging, string
+import os, time, hashlib, secrets, logging
 from typing import Optional, List
 
 logger = logging.getLogger("truthscore.api_keys")
@@ -87,13 +87,18 @@ async def validate_api_key(api_key: str) -> Optional[dict]:
                 {"key_id": doc["key_id"]},
                 {"$set": {"last_used": int(time.time())}},
             )
-            # Build a pseudo-user dict compatible with the rate-limiter
+            # Build a pseudo-user dict compatible with the rate-limiter.
+            # Use the user's LIVE plan from the users collection — not the plan
+            # frozen into the key at creation time — so an upgrade/downgrade
+            # takes effect immediately for existing keys instead of stranding
+            # the user on their old quota.
             user_doc = await db.users.find_one({"_id": __import__("bson").ObjectId(doc["user_id"])})
+            live_plan = (user_doc.get("plan") if user_doc else None) or doc.get("plan", "free")
             return {
                 "id": str(user_doc["_id"]) if user_doc else doc["user_id"],
                 "email": user_doc.get("email", "") if user_doc else "",
                 "name": user_doc.get("name", "") if user_doc else "",
-                "plan": doc["plan"],
+                "plan": live_plan,
                 "source": "api_key",
                 "key_id": doc["key_id"],
             }
@@ -128,23 +133,3 @@ async def revoke_api_key(key_id: str, user_id: str) -> bool:
         {"$set": {"revoked": True}},
     )
     return result.modified_count > 0
-
-
-async def get_or_create_user_key(user_id: str, plan: str) -> str:
-    """
-    Convenience: for widget embed usage, auto-create a single stable
-    API key per user if they don't already have one.
-    """
-    db = get_db()
-    existing = await db.api_keys.find_one(
-        {"user_id": user_id, "revoked": False},
-        sort=[("created_at", 1)],
-    )
-    if existing:
-        # Return plaintext by reconstructing? No — we can't.
-        # Instead return the key_id; the widget fetches a fresh key
-        # or the user generates one via dashboard.
-        return existing["key_id"]
-    # Auto-create
-    result = await create_api_key(user_id, name="Widget auto-key", plan=plan)
-    return result["api_key"]

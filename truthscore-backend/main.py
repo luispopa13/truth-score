@@ -7,11 +7,11 @@ Run: uvicorn main:app --reload
 from config import *
 from models import *
 from utils.cache import cache, clear_all_caches
-from calibration.ece import compute_ece, get_weak_domains, record_feedback, record_feedback_durable, _feedback_store
+from calibration.ece import record_feedback, record_feedback_durable, calibration_report
 
 # Pipeline
 from pipeline.verify  import verify_claim
-from pipeline.aggregate import aggregate_score
+from pipeline.aggregate import aggregate_score, sub_claim_weight
 from pipeline.helpers import split_claims
 
 # User case study logging (MSc thesis evaluation data collection) -- new, self-contained
@@ -20,7 +20,7 @@ from typing import Optional as _Optional
 from fastapi import Response
 from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel
-from pipeline.case_study import log_interaction, log_feedback, get_stats, export_merged_csv
+from pipeline.case_study import log_interaction
 
 # Auth
 try:
@@ -29,6 +29,7 @@ try:
         check_rate_limit, get_user_out, upgrade_user_plan,
         UserRegister, UserLogin, UserOut, PLANS, create_token,
         google_auth, google_callback, google_exchange, AUTH_AVAILABLE,
+        logout_user, security as _auth_security,
     )
 except ImportError as e:
     print(f"[WARN] Auth not available: {e}")
@@ -44,6 +45,8 @@ except ImportError as e:
     async def google_auth(*a,**k): raise HTTPException(503, "Google auth not configured")
     async def google_callback(*a,**k): raise HTTPException(503, "Google auth not configured")
     async def google_exchange(*a,**k): raise HTTPException(503, "Google auth not configured")
+    async def logout_user(*a,**k): return {"status": "ok"}
+    _auth_security = None
 
 # Payments
 try:
@@ -74,20 +77,23 @@ app = FastAPI(
     version     = "12.0",
 )
 
-# CORS: read allow-list from env (default: localhost dev ports)
+# CORS: read allow-list from env (default: localhost dev ports). Extension
+# origins (chrome-extension://<id>, moz-extension://<id>) can't be enumerated
+# ahead of time and Starlette ignores "*" wildcards inside allow_origins, so
+# they're matched with a regex instead.
 _origins = [o.strip() for o in os.getenv("CORS_ORIGINS","").split(",") if o.strip()]
 if not _origins:
     _origins = [
         "http://localhost:3000", "http://localhost:8000",
-        "chrome-extension://*", "moz-extension://*",
     ]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins     = _origins,
-    allow_methods     = ["*"],
-    allow_headers     = ["*"],
-    allow_credentials = True,
+    allow_origins       = _origins,
+    allow_origin_regex  = r"^(chrome-extension|moz-extension)://.*$",
+    allow_methods       = ["*"],
+    allow_headers       = ["*"],
+    allow_credentials   = True,
     # Extension JS must be able to READ these custom response headers
     expose_headers    = [
         "X-TruthScore-Interaction-Id",
@@ -96,6 +102,44 @@ app.add_middleware(
         "X-TruthScore-Truncated",
     ],
 )
+
+
+# ── Observability: structured logging + correlation-ID middleware ────
+try:
+    from utils.observability import (
+        setup_logging, request_id_ctx, METRICS as _METRICS,
+    )
+    setup_logging()
+    _OBS_AVAILABLE = True
+except Exception as _e:
+    print(f"[WARN] Observability setup skipped: {_e}")
+    _OBS_AVAILABLE = False
+
+# Readiness gate: flipped True once startup warmup finishes. Load balancers hit
+# /ready and hold traffic (503) until the process can actually serve.
+_READY = False
+
+
+@app.middleware("http")
+async def _correlation_and_metrics(request: Request, call_next):
+    """Assign/propagate a correlation id (X-Request-ID), time the request, feed
+    the metrics counters, and echo the id back so clients/logs can join traces."""
+    import time as _t, uuid as _uuid
+    if not _OBS_AVAILABLE:
+        return await call_next(request)
+    rid = request.headers.get("X-Request-ID") or _uuid.uuid4().hex[:16]
+    token = request_id_ctx.set(rid)
+    _METRICS.start()
+    t0 = _t.time()
+    status = 500
+    try:
+        response = await call_next(request)
+        status = response.status_code
+        response.headers["X-Request-ID"] = rid
+        return response
+    finally:
+        _METRICS.finish(status, (_t.time() - t0) * 1000)
+        request_id_ctx.reset(token)
 
 
 @app.on_event("startup")
@@ -117,8 +161,128 @@ async def _warmup_models():
     except Exception as e:
         print(f"[STARTUP] Model warmup skipped (non-fatal): {e}")
 
+    # Verify Redis is actually reachable (from_url is lazy — a down server would
+    # otherwise masquerade as "connected" and cost a connect-timeout per call).
+    try:
+        from utils.redis_client import verify_async_redis
+        ok = await verify_async_redis()
+        print("[STARTUP] Redis reachable." if ok else
+              "[STARTUP] Redis not reachable — single-instance mode.")
+    except Exception as e:
+        print(f"[STARTUP] Redis check skipped (non-fatal): {e}")
+
+    # Capability report — log which optional integrations are configured so a
+    # degraded subsystem is visible at boot, not discovered mid-incident.
+    try:
+        from utils.health import log_startup_health
+        log_startup_health()
+    except Exception as e:
+        print(f"[STARTUP] Health report skipped (non-fatal): {e}")
+
+    # Flip the readiness gate — the process can now serve traffic.
+    global _READY
+    _READY = True
+    print("[STARTUP] Ready to serve.")
+
+
+@app.on_event("shutdown")
+async def _close_pools():
+    """Cleanly close the shared retrieval HTTP connection pool on shutdown."""
+    try:
+        from pipeline.retrieval import close_shared_http_client
+        await close_shared_http_client()
+    except Exception as e:
+        print(f"[SHUTDOWN] HTTP pool close skipped (non-fatal): {e}")
+
 
 # ── Core endpoints ────────────────────────────────────────
+
+# Admin gate for ops/business-intelligence endpoints. An account is admin only
+# if its email is listed in ADMIN_EMAILS (comma-separated). Empty list ⇒ no one
+# is admin, so these endpoints stay locked until the owner opts in explicitly.
+_ADMIN_EMAILS = {e.strip().lower() for e in os.getenv("ADMIN_EMAILS", "").split(",") if e.strip()}
+
+
+async def require_admin(user=Depends(require_user)):
+    email = (user.get("email") or "").lower() if user else ""
+    if not _ADMIN_EMAILS or email not in _ADMIN_EMAILS:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+
+# X-Forwarded-For is set by the client and trivially spoofable, so honoring it
+# blindly lets an attacker rotate the header to dodge the anonymous per-IP quota.
+# Trust it ONLY when TRUST_PROXY says we sit behind a proxy/LB that overwrites
+# it; otherwise fall back to the socket peer, which can't be forged.
+_TRUST_PROXY = os.getenv("TRUST_PROXY", "").lower() in ("1", "true", "yes")
+
+
+def _client_ip(request: Request) -> str:
+    if _TRUST_PROXY:
+        xff = request.headers.get("x-forwarded-for", "")
+        if xff:
+            return xff.split(",")[0].strip()
+    return request.client.host if request.client else ""
+
+
+def _is_paid(user: dict | None) -> bool:
+    """Paid = a signed-in user on any plan other than the free tier."""
+    return bool(user) and user.get("plan", "free") != "free"
+
+
+async def enforce_quota(user: dict | None, text: str, client_ip: str) -> dict | None:
+    """Check the daily quota BEFORE any expensive LLM work, with an asymmetric
+    failure policy:
+
+      • Quota exceeded            → 429 (both free and paid).
+      • Limiter itself errors     → FAIL CLOSED for anonymous/free users
+                                    (503), FAIL OPEN for paid users (return
+                                    None so a Redis hiccup never blocks a
+                                    paying customer).
+
+    The old behaviour was fail-open for everyone (`except Exception: pass`),
+    which let anyone bypass the free/anon limit — and rack up LLM cost — simply
+    by making the limiter throw. Free/anon abuse is the cost risk, so those
+    users are the ones we stop when we can't prove they're within quota.
+    """
+    from http import HTTPStatus
+    try:
+        info = await check_rate_limit(user, text, client_ip=client_ip)
+    except Exception as e:
+        if _is_paid(user):
+            print(f"[RATE-LIMIT] limiter error, failing OPEN for paid user: {e}")
+            return None
+        print(f"[RATE-LIMIT] limiter error, failing CLOSED for free/anon: {e}")
+        raise HTTPException(
+            status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+            detail="Serviciul e temporar indisponibil. Încearcă din nou în câteva momente.",
+        )
+    if info and not info.get("allowed"):
+        if info.get("plan") == "anonymous":
+            detail = ("Ai folosit cele 3 verificari gratuite anonime. "
+                      "Creeaza un cont gratuit pentru 10/zi + bonusuri.")
+        else:
+            detail = (f"Limita zilnica de {info.get('limit')} verificari atinsa. "
+                      "Upgrade la Pro pentru mai mult: /app#pricing")
+        raise HTTPException(status_code=HTTPStatus.TOO_MANY_REQUESTS, detail=detail)
+    return info
+
+def _set_ads_and_quota_headers(response, user, quota_left=None):
+    """
+    Stamp the shared monetization headers on a response.
+      X-TruthScore-Show-Ads : "1" only for free/anonymous users when AdSense
+                              is configured and ADS_ENABLED is on; paid = "0".
+      X-TruthScore-Quota-Left: remaining checks today (omitted when unknown).
+    Used identically by /verify and /analyze-text so the ad + quota contract
+    can never diverge between the two endpoints.
+    """
+    ads_on = (os.getenv("ADS_ENABLED", "true").lower() in ("1", "true", "yes")
+              and bool(os.getenv("ADSENSE_CLIENT", "").strip()))
+    is_free = (not user) or user.get("plan", "free") == "free"
+    response.headers["X-TruthScore-Show-Ads"] = "1" if (ads_on and is_free) else "0"
+    if quota_left is not None:
+        response.headers["X-TruthScore-Quota-Left"] = str(max(0, int(quota_left)))
+
 
 @app.post("/verify", response_model=VerifyResponse)
 async def verify(req: VerifyRequest, response: Response,
@@ -130,27 +294,9 @@ async def verify(req: VerifyRequest, response: Response,
     """
     # ── Rate limiting ──────────────────────────────────────
     # Check quota BEFORE the expensive LLM work.  Redis-backed, atomic.
-    rate_info = None
-    try:
-        # Real client IP (behind proxy/LB too) — feeds the anonymous quota
-        client_ip = (request.headers.get("x-forwarded-for", "")
-                     .split(",")[0].strip()
-                     or (request.client.host if request.client else ""))
-        rate_info = await check_rate_limit(user, req.text, client_ip=client_ip)
-        if not rate_info["allowed"]:
-            from http import HTTPStatus
-            if rate_info.get("plan") == "anonymous":
-                detail = ("Ai folosit cele 3 verificari gratuite anonime. "
-                          "Creeaza un cont gratuit pentru 10/zi + bonusuri.")
-            else:
-                detail = (f"Limita zilnica de {rate_info['limit']} verificari atinsa. "
-                          "Upgrade la Pro pentru mai mult: /app#pricing")
-            raise HTTPException(status_code=HTTPStatus.TOO_MANY_REQUESTS, detail=detail)
-    except HTTPException:
-        raise
-    except Exception:
-        # Rate-limit must never break the service.
-        pass
+    # Fails CLOSED for free/anon and OPEN for paid (see enforce_quota).
+    client_ip = _client_ip(request)
+    rate_info = await enforce_quota(user, req.text, client_ip=client_ip)
 
     start = time.perf_counter()
     # Heavy-day paid users past their eco threshold get cheap-model routing
@@ -189,15 +335,10 @@ async def verify(req: VerifyRequest, response: Response,
     # Extension/dashboard reads this header and renders the sponsor slot.
     # Paid plans never see ads.
     try:
-        ads_on = (os.getenv("ADS_ENABLED", "true").lower() in ("1", "true", "yes")
-                  and bool(os.getenv("ADSENSE_CLIENT", "").strip()))
-        is_free = (not user) or user.get("plan", "free") == "free"
-        response.headers["X-TruthScore-Show-Ads"] = (
-            "1" if (ads_on and is_free) else "0")
+        quota_left = None
         if rate_info:
-            left = max(0, int(rate_info.get("limit", 0)) -
-                          int(rate_info.get("used", 0)))
-            response.headers["X-TruthScore-Quota-Left"] = str(left)
+            quota_left = int(rate_info.get("limit", 0)) - int(rate_info.get("used", 0))
+        _set_ads_and_quota_headers(response, user, quota_left)
     except Exception:
         pass
 
@@ -211,16 +352,14 @@ async def analyze_text(req: VerifyRequest, response: Response,
                        user: dict = Depends(get_current_user)):
     """Extract and independently verify every factual claim in a paragraph."""
     text = req.text.strip()
-    client_ip = (request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-                 or (request.client.host if request.client else ""))
+    client_ip = _client_ip(request)
 
     # Reserve one quota unit before paying for claim extraction.
-    quota = await check_rate_limit(user, text, client_ip=client_ip)
-    if not quota.get("allowed"):
-        raise HTTPException(status_code=429, detail="Daily verification limit reached.")
+    # Fails CLOSED for free/anon, OPEN for paid (see enforce_quota).
+    quota = await enforce_quota(user, text, client_ip=client_ip)
     # Eco state is a per-user daily flag — capture it from the first check
     # before the per-claim loop below reassigns `quota`.
-    eco = bool(quota.get("eco"))
+    eco = bool(quota.get("eco")) if quota else False
 
     claims = await split_claims(text)
     if not claims:
@@ -229,9 +368,15 @@ async def analyze_text(req: VerifyRequest, response: Response,
     # Every extracted claim is a real verification and consumes one quota unit.
     allowed_claims = [claims[0]]
     for claim in claims[1:]:
-        quota = await check_rate_limit(user, claim, client_ip=client_ip)
-        if not quota.get("allowed"):
+        try:
+            q = await check_rate_limit(user, claim, client_ip=client_ip)
+        except Exception:
+            # Limiter hiccup mid-loop: stop granting further claims rather than
+            # silently handing out unmetered verifications.
             break
+        if not q.get("allowed"):
+            break
+        quota = q
         allowed_claims.append(claim)
 
     if len(allowed_claims) < len(claims):
@@ -283,6 +428,8 @@ async def analyze_text(req: VerifyRequest, response: Response,
             contradicting=r.contradicting,
             neutral_sources=r.neutral_sources,
             evidence_count=r.evidence_count,
+            weight=sub_claim_weight(r.supporting, r.contradicting,
+                                    r.neutral_sources, r.verdict, r.score),
         ))
 
     verdicts = [r.verdict for r in results]
@@ -308,10 +455,7 @@ async def analyze_text(req: VerifyRequest, response: Response,
             f"{quota_left} left today.")
 
     response.headers["X-TruthScore-Quota-Left"] = str(quota_left)
-    response.headers["X-TruthScore-Show-Ads"] = (
-        "1" if os.getenv("ADS_ENABLED", "true").lower() in ("1", "true", "yes")
-        and bool(os.getenv("ADSENSE_CLIENT", "").strip())
-        and ((not user) or user.get("plan", "free") == "free") else "0")
+    _set_ads_and_quota_headers(response, user)
 
     return TextAnalysisResponse(
         text=text,
@@ -332,16 +476,8 @@ async def analyze_text(req: VerifyRequest, response: Response,
 async def detect_claims(req: ClaimDetectRequest, request: Request,
                         user: dict = Depends(get_current_user)):
     """Claim-splitting preview. Rate-limited because it invokes an LLM call."""
-    client_ip = (request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-                 or (request.client.host if request.client else ""))
-    try:
-        info = await check_rate_limit(user, req.text, client_ip=client_ip)
-        if info and not info.get("allowed"):
-            raise HTTPException(status_code=429, detail="Daily verification limit reached.")
-    except HTTPException:
-        raise
-    except Exception:
-        pass  # limiter must never break detection
+    client_ip = _client_ip(request)
+    await enforce_quota(user, req.text, client_ip=client_ip)
     claims = await split_claims(req.text)
     return {"claims": claims, "count": len(claims)}
 
@@ -352,7 +488,8 @@ async def feedback(req: FeedbackRequest, user: dict = Depends(get_current_user))
     # verdict/score/correct, the browser extension sends
     # predicted_verdict/predicted_score/user_says_correct.
     verdict = req.verdict or req.predicted_verdict or "UNCERTAIN"
-    score   = req.score if req.score else (req.predicted_score or 50)
+    score   = req.score if req.score is not None else (
+              req.predicted_score if req.predicted_score is not None else 50)
     correct = req.user_says_correct if req.user_says_correct is not None else req.correct
 
     # Update the in-memory calibration state (used by the ECE curve /
@@ -365,6 +502,7 @@ async def feedback(req: FeedbackRequest, user: dict = Depends(get_current_user))
         topic          = req.topic or "general",
         correct        = correct,
         failure_reason = req.failure_reason or "",
+        interaction_id = req.interaction_id or "",
     )
     try:
         await record_feedback_durable(
@@ -374,6 +512,7 @@ async def feedback(req: FeedbackRequest, user: dict = Depends(get_current_user))
             topic          = req.topic or "general",
             correct        = correct,
             failure_reason = req.failure_reason or "",
+            interaction_id = req.interaction_id or "",
         )
     except Exception as e:
         print(f"[FEEDBACK] Durable persistence skipped (non-fatal): {e}")
@@ -398,66 +537,13 @@ async def feedback(req: FeedbackRequest, user: dict = Depends(get_current_user))
     return resp
 
 
-# ── User Case Study (MSc thesis evaluation data collection) ──────
-
-class CaseStudyFeedback(BaseModel):
-    """Self-contained model -- does not depend on models.py."""
-    interaction_id: str
-    correct: bool
-    comment: _Optional[str] = None
-    user_id: _Optional[str] = None
-
-
-@app.post("/case-study/feedback")
-async def case_study_feedback(req: CaseStudyFeedback):
-    """
-    Links user feedback (thumbs up/down) to a specific logged interaction
-    via the interaction_id returned in the X-TruthScore-Interaction-Id
-    header of the original /verify response.
-    """
-    await log_feedback(req.interaction_id, req.correct, req.comment, req.user_id)
-    return {"status": "recorded", "interaction_id": req.interaction_id}
-
-
-@app.get("/case-study/stats")
-async def case_study_stats():
-    """Quick summary of collected case-study data (counts, latency, agreement)."""
-    return await get_stats()
-
-
-@app.get("/case-study/export")
-async def case_study_export():
-    """
-    Downloads a single merged CSV (interactions + linked feedback),
-    ready to open in Excel or load with pandas for the thesis
-    evaluation chapter.
-    """
-    path = await export_merged_csv()
-    return FileResponse(
-        path,
-        media_type="text/csv",
-        filename="truthscore_case_study.csv",
-    )
-
-
-@app.get("/ece")
-async def ece(dataset: str = "results_truthfulqa_mini.csv"):
-    if not os.path.exists(dataset):
-        return {"error": f"File not found: {dataset}"}
-    return compute_ece(dataset)
-
-
-@app.get("/weak-domains")
-async def weak_domains():
-    return {
-        "weak_domains":   get_weak_domains(),
-        "feedback_count": len(_feedback_store),
-    }
-
+# ── Ops (admin-gated) ────────────────────────────────────────
 
 @app.post("/clear-cache")
-async def clear_cache_endpoint():
-    """Clear all cached verify results."""
+async def clear_cache_endpoint(user=Depends(require_admin)):
+    """Flush all cached verify results. Admin-only: a public flush would let
+    anyone wipe the shared semantic cache and force costly LLM recomputation
+    for every user (a cost + latency attack)."""
     result = clear_all_caches()
     print(f"[CACHE] Cleared {result['cleared']} entries from {result['cache_dir']}")
     return {
@@ -467,24 +553,16 @@ async def clear_cache_endpoint():
     }
 
 
-@app.get("/cache-stats")
-async def cache_stats():
-    """Show cache statistics."""
-    return {
-        "entries":   len(cache),
-        "cache_dir": str(cache.directory),
-        "size_mb":   round(sum(
-            os.path.getsize(os.path.join(dp, f))
-            for dp, dn, fn in os.walk(cache.directory)
-            for f in fn
-        ) / 1024 / 1024, 2),
-    }
-
 
 @app.get("/health")
 async def health():
     import config as _cfg
     groq_key = os.getenv("GROQ_API_KEY", "")
+    try:
+        from utils.health import capability_report
+        capabilities = capability_report()
+    except Exception:
+        capabilities = {}
     return {
         "status":  "ok",
         "version": "12.0",
@@ -493,6 +571,7 @@ async def health():
         "tavily":  "set" if TAVILY_API_KEY else "missing",
         "auth":    "available" if AUTH_AVAILABLE else "stub",
         "cache":   f"{len(cache)} entries",
+        "capabilities": capabilities,
         "features": {
             "hyde":             True,
             "cross_encoder":    True,
@@ -507,12 +586,40 @@ async def health():
     }
 
 
+@app.get("/live", include_in_schema=False)
+async def liveness():
+    """Liveness probe — the process is up and the event loop responds.
+    Always 200 unless the worker is wedged (then it won't answer at all)."""
+    return {"status": "alive"}
+
+
+@app.get("/ready", include_in_schema=False)
+async def readiness():
+    """Readiness probe — 200 only after startup warmup finished. Load balancers
+    hold traffic (503) until then so the first real request isn't the one that
+    pays the 30-40s model-load cost."""
+    if not _READY:
+        raise HTTPException(503, "warming up")
+    return {"status": "ready"}
+
+
+@app.get("/metrics")
+async def metrics(user=Depends(require_admin)):
+    """In-process request metrics (admin-only). Uptime, request/error counts,
+    in-flight, average latency, and a per-status-class breakdown."""
+    if not _OBS_AVAILABLE:
+        return {"error": "observability not available"}
+    return _METRICS.snapshot()
+
+
 @app.get("/")
 async def root():
     from fastapi.responses import HTMLResponse
     from pathlib import Path
     try:
-        return HTMLResponse(Path("Dashboard.html").read_text(encoding="utf-8"))
+        # Anchor to this file's directory — not the CWD — so serving works no
+        # matter where uvicorn was launched from (e.g. a systemd unit, Docker).
+        return HTMLResponse((Path(__file__).parent / "Dashboard.html").read_text(encoding="utf-8"))
     except Exception:
         return HTMLResponse("<h1>TruthScore v12</h1><p>API running.</p>")
 
@@ -522,7 +629,7 @@ async def tokens_css():
     """Canonical design tokens shared with the extension (kept in sync).
     Referenced by Dashboard.html via <link rel="stylesheet" href="/tokens.css">."""
     from pathlib import Path
-    path = Path("tokens.css")
+    path = Path(__file__).parent / "tokens.css"
     if path.exists():
         return FileResponse(path, media_type="text/css")
     return PlainTextResponse("", media_type="text/css")
@@ -739,11 +846,7 @@ async def privacy_policy():
 
 @app.post("/auth/register")
 async def register(data: UserRegister, request: Request):
-    client_ip = request.client.host if request.client else ""
-    forwarded = request.headers.get("x-forwarded-for", "")
-    if forwarded:
-        client_ip = forwarded.split(",")[0].strip()   # behind proxy/LB
-    return await register_user(data, client_ip=client_ip)
+    return await register_user(data, client_ip=_client_ip(request))
 
 
 @app.post("/auth/login")
@@ -757,8 +860,11 @@ async def me(user=Depends(require_user)):
 
 
 @app.post("/auth/logout")
-async def logout():
-    return {"status": "ok"}
+async def logout(all_devices: bool = False,
+                 credentials=Depends(_auth_security) if _auth_security else None):
+    """Revoke the current session (default) or every session for the user
+    (all_devices=true → bumps token_version, voiding all outstanding tokens)."""
+    return await logout_user(credentials, all_devices=all_devices)
 
 
 @app.post("/auth/google")
@@ -834,9 +940,19 @@ async def revoke_key(key_id: str, user=Depends(require_user)):
 
 # ── Monitoring / Business intelligence ─────────────────────
 
+@app.get("/metrics/calibration")
+async def calibration_metrics(user=Depends(require_admin)):
+    """Live model-calibration snapshot from real user feedback: Expected
+    Calibration Error, the score→observed-accuracy map, and weakest domains.
+    Admin-only. Drives the calibration loop (previously the ECE code read an
+    offline CSV nothing produced; now it reads the durable feedback log)."""
+    return calibration_report()
+
+
 @app.get("/metrics/cost")
-async def cost_metrics():
-    """Real-time cost tracking (USD spent, per model)."""
+async def cost_metrics(user=Depends(require_admin)):
+    """Real-time cost tracking (USD spent, per model). Admin-only — this is
+    internal margin data and must never be public."""
     from utils.metrics import get_cost_summary
     from utils.metrics import estimate_cost_per_claim
     summary = get_cost_summary()
@@ -852,7 +968,7 @@ async def cost_metrics():
 
 
 @app.get("/metrics/quota")
-async def quota_metrics():
+async def quota_metrics(user=Depends(require_admin)):
     """Daily limits and current spend by plan (admin visibility)."""
     from utils.rate_limiter import PLAN_LIMITS
     from utils.evidence_cache import paid_search_budget_status

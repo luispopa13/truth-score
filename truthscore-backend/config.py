@@ -185,17 +185,13 @@ except Exception as _e:
 # more on output tokens ($3.50 vs $0.60 per 1M).  For fact-checking
 # (verification against evidence, not mathematical reasoning), thinking
 # adds zero quality but 5.8x cost.  We disable it globally.
-import google.genai.types as _genai_types  # noqa: E402
 THINKING_CONFIG = None
 try:
     THINKING_CONFIG = genai_types.ThinkingConfig(thinking_budget=0)
     print("[INFO] Thinking mode DISABLED (saves ~5.8x on output tokens)")
-except Exception:
-    # Fallback: construct manually if the above fails
-    try:
-        THINKING_CONFIG = genai_types.ThinkingConfig(thinking_budget=0)
-    except Exception:
-        THINKING_CONFIG = None
+except Exception as e:
+    print(f"[WARN] Could not build ThinkingConfig: {e}")
+    THINKING_CONFIG = None
 
 
 def make_gemini_config(max_tokens=1000, use_search=False, temperature=0.1,
@@ -229,7 +225,7 @@ try:
     from utils.redis_client import get_async_redis, get_sync_redis, close_redis
     _redis = get_async_redis()
     if _redis:
-        print("[INFO] Redis connected — distributed cache + rate-limit enabled")
+        print("[INFO] Redis client created — reachability verified at startup")
     else:
         print("[WARN] Redis not available — running in single-instance mode")
 except Exception as e:
@@ -238,6 +234,28 @@ except Exception as e:
 
 # Evidence ranking keeps top-K after cross-encoder rerank
 EMBED_TOP_K       = 12
+
+# ── Verdict thresholds (single source of truth) ────────────────
+# A 0-100 score maps to a verdict here and NOWHERE else. Every scoring
+# site (Path B, verify, aggregate, decomposition) imports these so the
+# TRUE/FALSE/UNCERTAIN bands can never drift apart.
+#   score >= VERDICT_TRUE_AT   -> TRUE
+#   score <  VERDICT_FALSE_AT  -> FALSE
+#   otherwise                  -> UNCERTAIN
+VERDICT_TRUE_AT   = 62
+VERDICT_FALSE_AT  = 38
+
+# ── Source authority weights (single source of truth) ──────────
+# Relative trust per source type, used identically by Path B scoring
+# (reasoning.py) and sub-claim aggregation (aggregate.py). Fact-checks
+# outrank academic outranks news outranks general web outranks Wikipedia.
+SOURCE_AUTHORITY_WEIGHTS = {
+    "factcheck": 2.0,   # Snopes, PolitiFact, FullFact -- highest
+    "academic":  1.6,   # PubMed, arXiv, Semantic Scholar
+    "news":      1.1,   # Reuters, BBC, AP
+    "wikipedia": 0.7,   # Wikipedia -- deprioritized
+    "web":       0.8,   # General web
+}
 
 # ── Config ────────────────────────────────────────────────────
 GOOGLE_FC_URL = "https://factchecktools.googleapis.com/v1alpha1/claims:search"

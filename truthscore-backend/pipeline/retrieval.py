@@ -5,69 +5,61 @@ import logging
 logger = logging.getLogger("truthscore.retrieval")
 from config import *
 from models import *
-from pipeline.helpers import extract_keywords, detect_topic, _domain, _reconstruct_abstract, _strip_diacritics, factcheck_rating_to_nli, DistinguishedRating
+from pipeline.helpers import extract_keywords, detect_topic, _domain, _reconstruct_abstract, _strip_diacritics, factcheck_rating_to_nli
 
-async def search_duckduckgo(claim: str) -> list[Source]:
-    """
-    Web search filtered to trusted domains only.
-    Uses ddgs (duckduckgo_search renamed package) with domain filtering.
-    """
-    try:
-        try:
-            from ddgs import DDGS
-        except ImportError:
-            from duckduckgo_search import DDGS
+# Contact e-mail sent to open scholarly APIs (OpenAlex/CrossRef "polite pool",
+# Unpaywall, etc.) for higher rate limits and courteous identification. Was a
+# leftover placeholder (_POLITE_EMAIL); now a configurable real address.
+_POLITE_EMAIL = os.getenv("CONTACT_EMAIL", "hello@truthscore.app")
 
-        loop = asyncio.get_event_loop()
-        kw   = claim[:200]
+# ── Shared pooled HTTP client ────────────────────────────────────
+# Every retrieval function used to open its own httpx.AsyncClient, paying a
+# fresh TCP+TLS handshake on each of the ~30 source calls per verification.
+# At 1000 concurrent users that's a lot of wasted round-trips and sockets.
+# A single process-wide client with a keep-alive connection pool reuses warm
+# connections across calls and users. `_pooled()` hands out that singleton via
+# an async context manager whose __aexit__ does NOT close it (the pool lives
+# for the process lifetime). Call sites keep their `async with ... as client:`
+# shape — only the constructor changes — so the request bodies are untouched.
+import httpx as _httpx_mod
+import asyncio as _asyncio_mod
+from contextlib import asynccontextmanager as _asynccontextmanager
 
-        def _search():
-            with DDGS() as ddgs:
-                return list(ddgs.text(kw, max_results=20, timelimit="y"))
+_SHARED_HTTP_CLIENT = None
+_SHARED_HTTP_LOCK = _asyncio_mod.Lock()
 
-        hits = await asyncio.wait_for(
-            loop.run_in_executor(None, _search), timeout=15.0
-        )
 
-        sources = []
-        # First pass: trusted domains only
-        for h in hits:
-            domain = _domain(h.get("href", ""))
-            if not any(td in domain for td in TRUSTED_DOMAINS):
-                continue
-            sources.append(Source(
-                type="web",
-                title=h.get("title", "")[:120],
-                url=h.get("href", ""),
-                snippet=h.get("body", "")[:400],
-                publisher=domain,
-            ))
-            if len(sources) >= 6:
-                break
+async def get_shared_http_client():
+    """Lazily create the process-wide pooled httpx.AsyncClient."""
+    global _SHARED_HTTP_CLIENT
+    if _SHARED_HTTP_CLIENT is None or _SHARED_HTTP_CLIENT.is_closed:
+        async with _SHARED_HTTP_LOCK:
+            if _SHARED_HTTP_CLIENT is None or _SHARED_HTTP_CLIENT.is_closed:
+                _SHARED_HTTP_CLIENT = _httpx_mod.AsyncClient(
+                    timeout=12.0,
+                    limits=_httpx_mod.Limits(
+                        max_connections=100,
+                        max_keepalive_connections=30,
+                        keepalive_expiry=30.0,
+                    ),
+                    headers={"User-Agent": "TruthScore/1.0 (+https://truthscore.app)"},
+                )
+    return _SHARED_HTTP_CLIENT
 
-        # Second pass: if < 3 trusted results, include other English results
-        if len(sources) < 3:
-            for h in hits:
-                url = h.get("href", "")
-                if any(s.url == url for s in sources):
-                    continue
-                # Skip Chinese, Russian, spam
-                body = h.get("body", "")
-                if _is_low_quality(url, body):
-                    continue
-                sources.append(Source(
-                    type="web",
-                    title=h.get("title", "")[:120],
-                    url=url,
-                    snippet=body[:400],
-                    publisher=_domain(url),
-                ))
-                if len(sources) >= 5:
-                    break
 
-        return sources[:6]
-    except Exception as e:
-        raise RuntimeError(f"Web search: {e}")
+@_asynccontextmanager
+async def _pooled():
+    """Yield the shared pooled client without closing it on block exit."""
+    client = await get_shared_http_client()
+    yield client
+
+
+async def close_shared_http_client():
+    """Close the pool (call on app shutdown)."""
+    global _SHARED_HTTP_CLIENT
+    if _SHARED_HTTP_CLIENT is not None and not _SHARED_HTTP_CLIENT.is_closed:
+        await _SHARED_HTTP_CLIENT.aclose()
+    _SHARED_HTTP_CLIENT = None
 
 
 def _is_low_quality(url: str, body: str) -> bool:
@@ -100,12 +92,12 @@ async def search_pubmed(claim: str) -> list[Source]:
     """
     kw = extract_keywords(claim)
     if not kw: return []
-    async with httpx.AsyncClient(timeout=12.0) as client:
+    async with _pooled() as client:
         # Step 1: search IDs
         r = await client.get("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi", params={
             "db": "pubmed", "term": kw, "retmax": 5,
             "retmode": "json", "sort": "relevance",
-            "tool": "TruthScore", "email": "thesis@example.com",
+            "tool": "TruthScore", "email": _POLITE_EMAIL,
         })
         if r.status_code != 200: return []
         ids = r.json().get("esearchresult", {}).get("idlist", [])
@@ -115,7 +107,7 @@ async def search_pubmed(claim: str) -> list[Source]:
         r2 = await client.get("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi", params={
             "db": "pubmed", "id": ",".join(ids[:4]),
             "rettype": "abstract", "retmode": "text",
-            "tool": "TruthScore", "email": "thesis@example.com",
+            "tool": "TruthScore", "email": _POLITE_EMAIL,
         })
         if r2.status_code != 200: return []
 
@@ -145,7 +137,7 @@ async def search_arxiv(claim: str) -> list[Source]:
     """
     kw = extract_keywords(claim)
     if not kw: return []
-    async with httpx.AsyncClient(timeout=12.0) as client:
+    async with _pooled() as client:
         r = await client.get("http://export.arxiv.org/api/query", params={
             "search_query": f"all:{kw}",
             "start": 0, "max_results": 4,
@@ -178,7 +170,7 @@ async def search_semantic_scholar(claim: str) -> list[Source]:
     """
     kw = extract_keywords(claim)
     if not kw: return []
-    async with httpx.AsyncClient(timeout=12.0) as client:
+    async with _pooled() as client:
         r = await client.get(
             "https://api.semanticscholar.org/graph/v1/paper/search",
             params={
@@ -214,11 +206,11 @@ async def search_crossref(claim: str) -> list[Source]:
     """
     kw = extract_keywords(claim)
     if not kw: return []
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _pooled() as client:
         r = await client.get("https://api.crossref.org/works", params={
             "query": kw, "rows": 4,
             "select": "title,abstract,URL,published,author,container-title",
-            "mailto": "thesis@example.com",
+            "mailto": _POLITE_EMAIL,
         })
         if r.status_code != 200: return []
         sources = []
@@ -254,7 +246,7 @@ async def search_gdelt_news(claim: str) -> list[Source]:
     """
     kw = extract_keywords(claim)
     if not kw: return []
-    async with httpx.AsyncClient(timeout=12.0) as client:
+    async with _pooled() as client:
         r = await client.get("https://api.gdeltproject.org/api/v2/doc/doc", params={
             "query": kw,
             "mode": "artlist", "maxrecords": 8,
@@ -293,7 +285,7 @@ async def search_europa_who(claim: str) -> list[Source]:
     """
     kw = extract_keywords(claim)
     if not kw: return []
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _pooled() as client:
         r = await client.get("https://api.gdeltproject.org/api/v2/doc/doc", params={
             "query": kw,
             "mode": "artlist", "maxrecords": 5,
@@ -327,7 +319,7 @@ async def search_core(claim: str) -> list[Source]:
     """
     kw = extract_keywords(claim)
     if not kw: return []
-    async with httpx.AsyncClient(timeout=12.0) as client:
+    async with _pooled() as client:
         r = await client.get("https://api.core.ac.uk/v3/search/works", params={
             "q": kw, "limit": 5,
             "fields": "title,abstract,yearPublished,authors,sourceFulltextUrls,doi",
@@ -359,7 +351,7 @@ async def search_europe_pmc(claim: str) -> list[Source]:
     """
     kw = extract_keywords(claim)
     if not kw: return []
-    async with httpx.AsyncClient(timeout=12.0) as client:
+    async with _pooled() as client:
         r = await client.get("https://www.ebi.ac.uk/europepmc/webservices/rest/search", params={
             "query": kw, "resultType": "core",
             "pageSize": 5, "format": "json",
@@ -391,7 +383,7 @@ async def search_doaj(claim: str) -> list[Source]:
     """DOAJ -- 20M+ open access articles from peer-reviewed journals."""
     kw = extract_keywords(claim)
     if not kw: return []
-    async with httpx.AsyncClient(timeout=12.0) as client:
+    async with _pooled() as client:
         r = await client.get(
             "https://doaj.org/api/v3/search/articles",
             params={"q": kw, "pageSize": 5, "sort": "score"},
@@ -438,7 +430,7 @@ async def search_ieee(claim: str) -> list[Source]:
         params["apikey"] = ieee_key
     else:
         return []  # IEEE requires API key
-    async with httpx.AsyncClient(timeout=12.0) as client:
+    async with _pooled() as client:
         r = await client.get(
             "https://ieeexploreapi.ieee.org/api/v1/search/articles",
             params=params,
@@ -477,7 +469,7 @@ async def search_scopus(claim: str) -> list[Source]:
     if not scopus_key: return []
     kw = extract_keywords(claim)
     if not kw: return []
-    async with httpx.AsyncClient(timeout=15.0) as client:
+    async with _pooled() as client:
         r = await client.get(
             "https://api.elsevier.com/content/search/scopus",
             params={
@@ -570,7 +562,7 @@ async def search_europeana(claim: str) -> list[Source]:
     """
     kw = extract_keywords(claim)
     if not kw: return []
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _pooled() as client:
         r = await client.get(
             "https://api.europeana.eu/record/v2/search.json",
             params={"query": kw, "rows": 5, "profile": "minimal",
@@ -600,7 +592,7 @@ async def search_openfda(claim: str) -> list[Source]:
     kw = extract_keywords(claim)
     if not kw: return []
     sources = []
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _pooled() as client:
         # Drug labels
         r = await client.get(
             "https://api.fda.gov/drug/label.json",
@@ -639,7 +631,7 @@ async def search_world_bank(claim: str) -> list[Source]:
     """World Bank open data -- GDP, poverty, health, education indicators."""
     kw = extract_keywords(claim)
     if not kw: return []
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _pooled() as client:
         r = await client.get(
             "https://search.worldbank.org/api/v2/wds",
             params={"q": kw, "rows": 4, "os": 0, "format": "json",
@@ -667,7 +659,7 @@ async def search_imf(claim: str) -> list[Source]:
     """IMF official publications and data."""
     kw = extract_keywords(claim)
     if not kw: return []
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _pooled() as client:
         r = await client.get(
             "https://www.imf.org/external/datamapper/api/v1/",
             params={"q": kw},
@@ -694,7 +686,7 @@ async def search_oecd(claim: str) -> list[Source]:
     """OECD stats -- education, health, economy, environment."""
     kw = extract_keywords(claim)
     if not kw: return []
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _pooled() as client:
         r = await client.get(
             "https://stats.oecd.org/SDMX-JSON/data/",
             params={"q": kw, "format": "json"},
@@ -734,7 +726,7 @@ async def search_noaa(claim: str) -> list[Source]:
     """NOAA -- National Oceanic and Atmospheric Administration data."""
     kw = extract_keywords(claim)
     if not kw: return []
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _pooled() as client:
         r = await client.get(
             "https://www.ncei.noaa.gov/cdo-web/api/v2/datasets",
             params={"datatypeid": kw.split()[0], "limit": 3},
@@ -775,7 +767,7 @@ async def search_gdelt_events(claim: str) -> list[Source]:
     """GDELT -- monitors world's news in 100+ languages, real-time."""
     kw = extract_keywords(claim)
     if not kw: return []
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _pooled() as client:
         # GDELT requires specific query format
         r = await client.get(
             "https://api.gdeltproject.org/api/v2/doc/doc",
@@ -829,7 +821,7 @@ async def search_newsapi(claim: str) -> list[Source]:
     if not NEWS_API_KEY: return []
     kw = extract_keywords(claim)
     if not kw: return []
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _pooled() as client:
         r = await client.get(
             "https://newsapi.org/v2/everything",
             params={
@@ -861,7 +853,7 @@ async def search_guardian(claim: str) -> list[Source]:
     if not GUARDIAN_API_KEY: return []
     kw = extract_keywords(claim)
     if not kw: return []
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _pooled() as client:
         # Use named entity as exact phrase for better relevance
         named = re.findall(r"[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+", claim)
         search_q = f'"{named[0]}"' if named else kw
@@ -900,7 +892,7 @@ async def search_nasa(claim: str) -> list[Source]:
     kw = extract_keywords(claim)
     if not kw: return []
     sources = []
-    async with httpx.AsyncClient(timeout=12.0) as client:
+    async with _pooled() as client:
         # NASA Technical Reports Server (no key needed)
         r = await client.get(
             "https://ntrs.nasa.gov/api/citations/search",
@@ -948,7 +940,7 @@ async def search_openfda_v2(claim: str) -> list[Source]:
         params_extra["api_key"] = OPENFDA_API_KEY
 
     sources = []
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _pooled() as client:
         # Drug label search
         r = await client.get(
             "https://api.fda.gov/drug/label.json",
@@ -996,7 +988,7 @@ async def search_noaa_v2(claim: str) -> list[Source]:
     if not kw: return []
     token = NOAA_TOKEN or "anonymous"
     sources = []
-    async with httpx.AsyncClient(timeout=12.0) as client:
+    async with _pooled() as client:
         # NOAA CDO datasets
         r = await client.get(
             "https://www.ncei.noaa.gov/cdo-web/api/v2/datasets",
@@ -1096,7 +1088,7 @@ async def search_ddg_wiki(claim: str) -> list[Source]:
                 return all_results
 
         hits = await asyncio.wait_for(
-            loop.run_in_executor(None, _search), timeout=15.0
+            loop.run_in_executor(None, _search), timeout=11.0
         )
 
         # Sort: priority domains first, then others
@@ -1184,7 +1176,7 @@ async def search_tavily(claim: str) -> list[Source]:
     except Exception:
         pass
 
-    async with httpx.AsyncClient(timeout=15.0) as client:
+    async with _pooled() as client:
         try:
             r = await client.post(
                 "https://api.tavily.com/search",
@@ -1423,7 +1415,7 @@ async def search_pubchem(claim: str) -> list[Source]:
     120M+ compounds, bioactivities, safety data. Completely free."""
     kw = extract_keywords(claim)
     if not kw: return []
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _pooled() as client:
         # PubChem full-text search
         r = await client.get(
             "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/" +
@@ -1476,7 +1468,7 @@ async def search_open_library(claim: str) -> list[Source]:
     """Open Library -- 20M+ books, authors, works. Part of Internet Archive."""
     kw = extract_keywords(claim)
     if not kw: return []
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _pooled() as client:
         r = await client.get(
             "https://openlibrary.org/search.json",
             params={"q": kw, "limit": 5, "fields": "title,author_name,first_publish_year,subject"},
@@ -1515,7 +1507,7 @@ async def search_met_museum(claim: str) -> list[Source]:
     """Metropolitan Museum of Art -- 470k+ open access artworks."""
     kw = extract_keywords(claim)
     if not kw: return []
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _pooled() as client:
         r = await client.get("https://collectionapi.metmuseum.org/public/collection/v1/search",
             params={"q": kw, "hasImages": True, "limit": 5})
         if r.status_code != 200: return []
@@ -1551,7 +1543,7 @@ async def search_smithsonian(claim: str) -> list[Source]:
     # API key is optional - works without it, just lower rate limit
     key = os.getenv("SMITHSONIAN_API_KEY", "e6v9WNQE2vmGVvWm8I1ZOiH8f1BVNcFXbYxpvQpW")  # default demo key
     params = {"q": kw, "rows": 5, "start": 0, "api_key": key}
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _pooled() as client:
         r = await client.get("https://api.si.edu/openaccess/api/v1.0/search", params=params,
             headers={"User-Agent": "TruthScore/4.0"})
         if r.status_code != 200: return []
@@ -1579,7 +1571,7 @@ async def search_nominatim(claim: str) -> list[Source]:
     if not words: return []
     caps = [w for w in words if w[0].isupper()]
     query = " ".join(caps[:4]) if caps else " ".join(words[:3])
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _pooled() as client:
         r = await client.get("https://nominatim.openstreetmap.org/search",
             params={"q": query, "format": "json", "limit": 4,
                     "addressdetails": 1, "extratags": 1},
@@ -1614,7 +1606,7 @@ async def search_unesco(claim: str) -> list[Source]:
     """UNESCO World Heritage Sites database -- 1200+ sites worldwide."""
     kw = extract_keywords(claim)
     if not kw: return []
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _pooled() as client:
         r = await client.get("https://whc.unesco.org/api/sites/",
             params={"search": kw, "fmt": "json", "order": "name",
                     "category": "Mixed,Cultural,Natural", "number": 5},
@@ -1665,7 +1657,7 @@ async def search_harvard_art(claim: str) -> list[Source]:
     if not key: return []  # requires free key from api.harvardartmuseums.org
     kw = extract_keywords(claim)
     if not kw: return []
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _pooled() as client:
         r = await client.get("https://api.harvardartmuseums.org/object",
             params={"apikey": key, "keyword": kw, "size": 4,
                     "fields": "title,dated,description,url,division,technique,artistdisplaydates"})
@@ -1692,7 +1684,7 @@ async def search_nps(claim: str) -> list[Source]:
     if not key: return []
     kw = extract_keywords(claim)
     if not kw: return []
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _pooled() as client:
         r = await client.get("https://developer.nps.gov/api/v1/parks",
             params={"q": kw, "api_key": key, "limit": 5,
                     "fields": "fullName,description,latLong,topics,activities"})
@@ -1713,7 +1705,7 @@ async def search_historic_england(claim: str) -> list[Source]:
     """Historic England -- National Heritage List, 400k+ listed buildings."""
     kw = extract_keywords(claim)
     if not kw: return []
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _pooled() as client:
         r = await client.get("https://historicengland.org.uk/images-books/archive/collections/aerial-photos/results/",
             params={"search": kw, "format": "json"},
             headers={"User-Agent": "TruthScore/4.0"})
@@ -1752,7 +1744,7 @@ async def search_usgs(claim: str) -> list[Source]:
     kw = extract_keywords(claim)
     if not kw: return []
     sources = []
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _pooled() as client:
         # USGS Science Data Catalog
         r = await client.get("https://www.sciencebase.gov/catalog/items",
             params={"q": kw, "max": 4, "format": "json",
@@ -1796,7 +1788,7 @@ async def search_loc(claim: str) -> list[Source]:
     """Library of Congress -- 17M+ items: books, manuscripts, maps, photos."""
     kw = extract_keywords(claim)
     if not kw: return []
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _pooled() as client:
         r = await client.get("https://www.loc.gov/search/",
             params={"q": kw, "fo": "json", "c": 4, "at": "results"},
             headers={"User-Agent": "TruthScore/4.0"})
@@ -1823,7 +1815,7 @@ async def search_epa(claim: str) -> list[Source]:
     """EPA -- US Environmental Protection Agency data."""
     kw = extract_keywords(claim)
     if not kw: return []
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _pooled() as client:
         r = await client.get("https://www.epa.gov/search/",
             params={"query": kw, "collection": "epa_web", "rows": 4},
             headers={"User-Agent": "TruthScore/4.0", "Accept": "application/json"})
@@ -1864,7 +1856,7 @@ async def search_unesco_data(claim: str) -> list[Source]:
     BASE = "https://data.unesco.org/api/explore/v2.1"
     sources = []
 
-    async with httpx.AsyncClient(timeout=12.0) as client:
+    async with _pooled() as client:
 
         # Step 1: Find relevant datasets
         r = await client.get(f"{BASE}/catalog/datasets",
@@ -1962,7 +1954,7 @@ async def search_who(claim: str) -> list[Source]:
     kw = extract_keywords(claim)
     if not kw: return []
     sources = []
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _pooled() as client:
         # WHO GHO ODATA API
         r = await client.get(
             "https://ghoapi.azureedge.net/api/Indicator",
@@ -2008,7 +2000,7 @@ async def search_cdc(claim: str) -> list[Source]:
     """CDC Open Data -- disease statistics, vaccination rates, public health."""
     kw = extract_keywords(claim)
     if not kw: return []
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _pooled() as client:
         # CDC WONDER / Socrata API
         r = await client.get(
             "https://data.cdc.gov/api/views/metadata/v1",
@@ -2052,7 +2044,7 @@ async def search_clinicaltrials(claim: str) -> list[Source]:
     """ClinicalTrials.gov -- 400k+ clinical trials, treatments, outcomes."""
     kw = extract_keywords(claim)
     if not kw: return []
-    async with httpx.AsyncClient(timeout=12.0) as client:
+    async with _pooled() as client:
         r = await client.get(
             "https://clinicaltrials.gov/api/v2/studies",
             params={"query.term": kw, "pageSize": 4,
@@ -2091,7 +2083,7 @@ async def search_ncbi(claim: str) -> list[Source]:
     """NCBI Entrez -- genetics, molecular biology, proteins, disease genes."""
     kw = extract_keywords(claim)
     if not kw: return []
-    async with httpx.AsyncClient(timeout=12.0) as client:
+    async with _pooled() as client:
         # Search Gene database
         r = await client.get("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
             params={"db": "gene", "term": kw, "retmax": 3,
@@ -2145,7 +2137,7 @@ async def search_wolfram(claim: str) -> list[Source]:
     """Wolfram Alpha -- symbolic math, equations, facts, computations."""
     key = os.getenv("WOLFRAM_API_KEY", os.getenv("WOLFRAM", ""))
     if not key: return []
-    async with httpx.AsyncClient(timeout=12.0) as client:
+    async with _pooled() as client:
         r = await client.get("https://api.wolframalpha.com/v2/query",
             params={"input": claim[:200], "appid": key,
                     "output": "json", "format": "plaintext",
@@ -2175,12 +2167,12 @@ async def search_openalex_math(claim: str) -> list[Source]:
     """OpenAlex filtered to mathematics journals."""
     kw = extract_keywords(claim)
     if not kw: return []
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _pooled() as client:
         r = await client.get("https://api.openalex.org/works",
             params={"search": kw, "per-page": 4,
                     "filter": "primary_topic.field.display_name:Mathematics",
                     "select": "title,doi,publication_year,abstract_inverted_index,primary_location",
-                    "mailto": "thesis@example.com"})
+                    "mailto": _POLITE_EMAIL})
         if r.status_code != 200: return []
         sources = []
         for w in r.json().get("results",[])[:4]:
@@ -2211,7 +2203,7 @@ async def search_football_data(claim: str) -> list[Source]:
     if not key: return []
     kw = extract_keywords(claim)
     if not kw: return []
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _pooled() as client:
         # Search competitions
         r = await client.get("https://api.football-data.org/v4/competitions",
             headers={"X-Auth-Token": key, "User-Agent": "TruthScore/4.0"})
@@ -2257,7 +2249,7 @@ async def search_nba_stats(claim: str) -> list[Source]:
     if not any(w in claim.lower() for w in ["nba","basketball","lakers","bulls","celtics",
         "warrior","heat","bucks","player","lebron","jordan","curry","durant","kobe"]):
         return []
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _pooled() as client:
         r = await client.get("https://www.balldontlie.io/api/v1/players",
             params={"search": kw.split()[0], "per_page": 3},
             headers={"User-Agent": "TruthScore/4.0"})
@@ -2283,7 +2275,7 @@ async def search_sportsdb(claim: str) -> list[Source]:
     """TheSportsDB -- teams, players, events across all sports."""
     kw = extract_keywords(claim)
     if not kw: return []
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _pooled() as client:
         # Search teams
         r = await client.get(
             f"https://www.thesportsdb.com/api/v1/json/3/searchteams.php",
@@ -2337,7 +2329,7 @@ async def search_f1(claim: str) -> list[Source]:
         return []
     kw = extract_keywords(claim)
     if not kw: return []
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _pooled() as client:
         # Driver search
         r = await client.get(
             f"https://ergast.com/api/f1/drivers.json",
@@ -2371,7 +2363,7 @@ async def search_eu_data(claim: str) -> list[Source]:
     """EU Open Data Portal -- EU laws, policies, statistics, regulations."""
     kw = extract_keywords(claim)
     if not kw: return []
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _pooled() as client:
         r = await client.get("https://data.europa.eu/api/hub/search/search",
             params={"q": kw, "limit": 4, "filter": "dataset",
                     "facets": "country,theme", "lang": "en"},
@@ -2404,7 +2396,7 @@ async def search_govtrack(claim: str) -> list[Source]:
         return []
     kw = extract_keywords(claim)
     if not kw: return []
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _pooled() as client:
         r = await client.get("https://www.govtrack.us/api/v2/bill",
             params={"q": kw, "limit": 4, "order_by": "-current_status_date"},
             headers={"User-Agent": "TruthScore/4.0"})
@@ -2437,7 +2429,7 @@ async def search_openstates(claim: str) -> list[Source]:
         return []
     kw = extract_keywords(claim)
     if not kw: return []
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _pooled() as client:
         r = await client.get("https://v3.openstates.org/bills",
             params={"q": kw, "per_page": 3, "sort": "updated_desc"},
             headers={"X-API-KEY": key, "User-Agent": "TruthScore/4.0"})
@@ -2469,7 +2461,7 @@ async def search_sep(claim: str) -> list[Source]:
     """Stanford Encyclopedia of Philosophy -- authoritative philosophy & logic."""
     kw = extract_keywords(claim)
     if not kw: return []
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _pooled() as client:
         r = await client.get("https://plato.stanford.edu/cgi-bin/encyclopedia/search",
             params={"query": kw, "search": "Search"},
             headers={"User-Agent": "TruthScore/4.0"})
@@ -2512,7 +2504,7 @@ async def search_nasa_ads(claim: str) -> list[Source]:
     key = os.getenv("NASA_ADS_KEY", "")
     headers = {"User-Agent": "TruthScore/4.0"}
     if key: headers["Authorization"] = f"Bearer {key}"
-    async with httpx.AsyncClient(timeout=12.0) as client:
+    async with _pooled() as client:
         r = await client.get("https://api.adsabs.harvard.edu/v1/search/query",
             params={"q": kw, "fl": "title,abstract,author,year,bibcode",
                     "rows": 4, "sort": "score desc"},
@@ -2541,7 +2533,7 @@ async def search_psychology(claim: str) -> list[Source]:
     """Psychology papers via Semantic Scholar filtered to psych fields."""
     kw = extract_keywords(claim)
     if not kw: return []
-    async with httpx.AsyncClient(timeout=12.0) as client:
+    async with _pooled() as client:
         r = await client.get(
             "https://api.semanticscholar.org/graph/v1/paper/search",
             params={"query": kw, "limit": 5,
@@ -2571,12 +2563,12 @@ async def search_social_sciences(claim: str) -> list[Source]:
     """Sociology and social science papers via OpenAlex."""
     kw = extract_keywords(claim)
     if not kw: return []
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _pooled() as client:
         r = await client.get("https://api.openalex.org/works",
             params={"search": kw, "per-page": 4,
                     "filter": "primary_topic.field.display_name:Social Sciences",
                     "select": "title,doi,publication_year,abstract_inverted_index,primary_location",
-                    "mailto": "thesis@example.com"})
+                    "mailto": _POLITE_EMAIL})
         sources = []
         if r.status_code == 200:
             for w in r.json().get("results",[])[:4]:
@@ -2602,13 +2594,13 @@ async def search_religion(claim: str) -> list[Source]:
     kw = extract_keywords(claim)
     if not kw: return []
     sources = []
-    async with httpx.AsyncClient(timeout=12.0) as client:
+    async with _pooled() as client:
         # CrossRef theology papers
         r = await client.get("https://api.crossref.org/works",
             params={"query": kw, "rows": 3,
                     "query.container-title": "theology religion ethics scripture",
                     "select": "title,abstract,URL,published,author,container-title",
-                    "mailto": "thesis@example.com"})
+                    "mailto": _POLITE_EMAIL})
         if r.status_code == 200:
             for item in r.json().get("message",{}).get("items",[])[:3]:
                 titles  = item.get("title",[])
@@ -2650,7 +2642,7 @@ async def search_nutrition(claim: str) -> list[Source]:
     """USDA FoodData Central -- nutritional composition of 400k+ foods."""
     kw = extract_keywords(claim)
     if not kw: return []
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _pooled() as client:
         # USDA FoodData search
         r = await client.get("https://api.nal.usda.gov/fdc/v1/foods/search",
             params={"query": kw, "pageSize": 4,
@@ -2702,7 +2694,7 @@ async def search_business(claim: str) -> list[Source]:
     kw = extract_keywords(claim)
     if not kw: return []
     sources = []
-    async with httpx.AsyncClient(timeout=12.0) as client:
+    async with _pooled() as client:
         # SEC EDGAR full-text search (US companies)
         r = await client.get("https://efts.sec.gov/LATEST/search-index?q=" +
             kw.replace(" ","+") + "&dateRange=custom&startdt=2020-01-01&forms=10-K,10-Q",
@@ -2750,7 +2742,7 @@ async def search_ethics(claim: str) -> list[Source]:
     kw = extract_keywords(claim)
     if not kw: return []
     sources = []
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _pooled() as client:
         # PhilPapers API
         r = await client.get("https://philpapers.org/api/search.json",
             params={"query": kw, "limit": 4,
@@ -2778,7 +2770,7 @@ async def search_ethics(claim: str) -> list[Source]:
                 params={"query": f"{kw} ethics morality",
                         "rows": 3,
                         "select": "title,abstract,URL,published,author,container-title",
-                        "mailto": "thesis@example.com"})
+                        "mailto": _POLITE_EMAIL})
             if r2.status_code == 200:
                 for item in r2.json().get("message",{}).get("items",[])[:3]:
                     titles = item.get("title",[])
@@ -2808,7 +2800,7 @@ async def search_geonames(claim: str) -> list[Source]:
 
     user = os.getenv("GEONAMES_USER", "demo")
     sources = []
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _pooled() as client:
         for q in candidates:
             r = await client.get(
                 "http://api.geonames.org/searchJSON",
@@ -2861,7 +2853,7 @@ async def search_rest_countries(claim: str) -> list[Source]:
     words = [w for w in kw.split() if len(w) > 3 and w not in stop]
     if not words: return []
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _pooled() as client:
         # Search by name
         for word in words[:3]:
             r = await client.get(
@@ -2916,7 +2908,7 @@ async def search_wikidata_geo(claim: str) -> list[Source]:
     # Use first 1-2 capitalized words as entity (not full query)
     search_term = words[0] if words else claim.split()[0]
 
-    async with httpx.AsyncClient(timeout=12.0) as client:
+    async with _pooled() as client:
         # Step 1: Find entity
         r = await client.get("https://www.wikidata.org/w/api.php", params={
             "action": "wbsearchentities", "search": search_term,
@@ -3013,11 +3005,11 @@ async def search_openalex(claim: str) -> list[Source]:
     """OpenAlex -- 250M academic papers, free."""
     kw = extract_keywords(claim)
     if len(kw) < 8: return []
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _pooled() as client:
         r = await client.get("https://api.openalex.org/works", params={
             "search": kw, "per-page": 5,
             "select": "title,doi,publication_year,abstract_inverted_index,primary_location",
-            "mailto": "thesis@example.com",
+            "mailto": _POLITE_EMAIL,
         })
         if r.status_code != 200: return []
         sources = []
@@ -3084,7 +3076,7 @@ async def search_google_factcheck(claim: str) -> list[Source]:
     lang = "ro" if any(c in RO_CHARS for c in claim) else "en"
     sources, seen = [], set()
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _pooled() as client:
         for lc in ([lang, "en"] if lang == "ro" else ["en"]):
             r = await client.get(GOOGLE_FC_URL, params={
                 "query": claim[:200], "key": GOOGLE_API_KEY,
@@ -3096,7 +3088,7 @@ async def search_google_factcheck(claim: str) -> list[Source]:
                 url  = rev.get("url", "")
                 if url in seen: continue
                 seen.add(url)
-                rating =DistinguishedRating(rev.get("textualRating", "Unknown"))
+                rating = rev.get("textualRating", "Unknown")
                 sources.append(Source(
                     type="factcheck",
                     title=item.get("text", claim)[:120],

@@ -8,6 +8,7 @@ from pipeline.retrieval import *
 from pipeline.helpers import (
     is_temporal_claim, is_nuance_claim, is_strict_domain,
     build_nuance_queries, extract_keywords, detect_topic,
+    classify_source_type, _domain,
 )
 
 
@@ -17,19 +18,19 @@ DOMAIN_SOURCES = {
                     "who", "cdc", "semantic_scholar", "crossref", "factcheck"],
     # Biology: life sciences
     "biology":     ["pubmed", "europe_pmc", "ncbi",
-                    "semantic_scholar", "crossref", "factcheck"],
+                    "semantic_scholar", "crossref", "openalex", "factcheck"],
     # Chemistry: chemical databases
     "chemistry":   ["pubchem", "semantic_scholar", "crossref",
                     "europe_pmc", "arxiv"],
     # Physics / Astronomy / Space
     "physics":     ["tavily", "britannica", "arxiv", "semantic_scholar", "nasa",
-                    "crossref", "factcheck"],
+                    "crossref", "openalex", "factcheck"],
     # Mathematics
     "mathematics": ["wolfram", "arxiv", "openalex_math", "crossref", "semantic_scholar"],
     # CS / AI / Software
-    "cs_tech":     ["tavily", "semantic_scholar", "arxiv", "crossref", "factcheck"],
+    "cs_tech":     ["tavily", "semantic_scholar", "arxiv", "crossref", "openalex", "factcheck"],
     # Engineering
-    "engineering": ["semantic_scholar", "arxiv", "crossref"],
+    "engineering": ["semantic_scholar", "arxiv", "crossref", "openalex"],
     # Geography: structured geo data + encyclopedic + OSM
     "geography":   ["tavily", "britannica", "wikidata_geo", "geonames", "rest_countries",
                     "nominatim"],
@@ -123,7 +124,7 @@ async def search_counter_evidence(claim: str) -> list[Source]:
             return results
 
         hits = await asyncio.wait_for(
-            loop.run_in_executor(None, _search), timeout=12.0
+            loop.run_in_executor(None, _search), timeout=11.0
         )
 
         sources = []
@@ -140,7 +141,7 @@ async def search_counter_evidence(claim: str) -> list[Source]:
                    ["myth", "false", "debunk", "wrong", "no evidence",
                     "not true", "mislead", "fact check", "actually"]):
                 sources.append(Source(
-                    type="factcheck",
+                    type=classify_source_type(url),
                     title=title,
                     url=url,
                     snippet=body,
@@ -244,6 +245,7 @@ def build_source_plan(claim: str, topic: str):
         # Math
         "wolfram":          lambda: search_wolfram(claim),
         "openalex_math":    lambda: search_openalex_math(claim),
+        "openalex":         lambda: search_openalex(claim),
         # Sports
         "football_data":    lambda: search_football_data(claim),
         "nba_stats":        lambda: search_nba_stats(claim),
@@ -266,17 +268,15 @@ def build_source_plan(claim: str, topic: str):
         "factcheck":        lambda: search_google_factcheck(claim),
         "europeana":        lambda: search_europeana(claim),
         # New authoritative sources
-        "openfda":          lambda: search_openfda(claim),
         "world_bank":       lambda: search_world_bank(claim),
         "imf":              lambda: search_imf(claim),
         "oecd":             lambda: search_oecd(claim),
-        "noaa":             lambda: search_noaa(claim),
         "gdelt":            lambda: search_gdelt_events(claim),
         "newsapi":          lambda: search_newsapi(claim),
         "guardian":         lambda: search_guardian(claim),
         "nasa":             lambda: search_nasa(claim),
-        "openfda":          lambda: search_openfda_v2(claim),   # v2 with key
-        "noaa":             lambda: search_noaa_v2(claim),      # v2 with token
+        "openfda":          lambda: search_openfda_v2(claim),   # v2: uses OPENFDA_API_KEY
+        "noaa":             lambda: search_noaa_v2(claim),      # v2: uses NOAA_TOKEN
     }
 
     for src in selected:
@@ -308,154 +308,3 @@ def build_source_plan(claim: str, topic: str):
 
     return tasks, labels
 
-
-def _strip_diacritics(text: str) -> str:
-    """Remove Romanian/accented characters for better search."""
-    replacements = {
-        'ă':'a','â':'a','î':'i','ș':'s','ț':'t','ş':'s','ţ':'t',
-        'Ă':'A','Â':'A','Î':'I','Ș':'S','Ț':'T','Ş':'S','Ţ':'T',
-    }
-    for k, v in replacements.items():
-        text = text.replace(k, v)
-    return text
-
-
-def _build_search_query(claim: str) -> str:
-    """Build English search query: strip diacritics, remove stop/opinion words, keep entities."""
-    STOP = {
-        # English
-        "the","a","an","is","are","was","were","has","have","that","this","it","its",
-        "and","or","but","in","on","at","to","of","for","with","by","from","not","no",
-        "be","been","being","do","did","does","can","could","would","will","shall",
-        "best","worst","greatest","most","least","all","very","just","more","less","ever",
-        "world","global","international","national","first","last","new","old","big","small",
-        # Romanian
-        "nu","ca","si","sau","dar","un","o","cel","cea","lui","este","sunt","care","din",
-        "pentru","prin","despre","după","înainte","între","mai","mult","mult","puțin",
-        "cel","mai","cel mai","din","lume","tara","tarii","acesta","aceasta","această",
-        # Romanian geographic noise words
-        "varful","varf","deal","munte","munti","mare","mic","lung","scurt","inalt","intalt",
-        "adanc","lat","ingust","vechi","nou","principal","secundar","important",
-    }
-    clean = _strip_diacritics(claim)
-    # Named entities: 2+ capitalized words (Lionel Messi, Great Wall)
-    entities = re.findall(r"\b[A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)+\b", clean)
-    # Single capitalized words
-    caps = re.findall(r"\b[A-Z][a-zA-Z]{2,}\b", clean)
-    # Lowercase content words (4+ chars)
-    lowers = re.findall(r"\b[a-z]{4,}\b", clean.lower())
-
-    result = []
-    seen = set()
-
-    for e in entities[:2]:
-        key = e.lower()
-        if not any(w in STOP for w in key.split()):
-            result.append(e)
-            for w in key.split(): seen.add(w)
-
-    for w in caps[:3]:
-        k = w.lower()
-        if k not in STOP and k not in seen:
-            result.append(w); seen.add(k)
-
-    for w in lowers[:4]:
-        if w not in STOP and w not in seen:
-            result.append(w); seen.add(w)
-
-    q = " ".join(result[:6]).strip()
-    if not q:
-        # Last resort: just take non-stop words from original
-        words = [w for w in re.findall(r"[A-Za-z]{3,}", clean)
-                 if w.lower() not in STOP]
-        q = " ".join(words[:4])
-    return q[:150]
-
-
-
-async def split_claims(text: str) -> list[str]:
-    """Split a compound claim into individual verifiable sub-claims using Gemini."""
-    if not gemini_client: return [text]
-    # Only split if text has multiple clauses
-    if len(text.split()) < 8 or not any(c in text for c in [" și ", " and ", ",", ";"]):
-        return [text]
-    try:
-        import asyncio as _asyncio, json as _json
-        prompt = (
-            'Split this into individual verifiable claims (max 6). '
-            'EXACTLY ONE fact per string — never merge two facts, even if both are '
-            'true or both false. If a sentence joins two facts with "și", "iar", "dar", '
-            '"and" or "but", split it into separate strings. '
-            'Return JSON array of strings only: ["claim1","claim2"]\n\n'
-            f'Text: "{text[:300]}"'
-        )
-
-        loop = _asyncio.get_event_loop()
-        resp = await loop.run_in_executor(None,
-            lambda: gemini_client.models.generate_content(
-                model=GEMINI_MODEL, contents=prompt,
-                                config=make_gemini_config(max_tokens=200, use_search=False, thinking_budget=0)))
-        raw = resp.text.strip().replace("```json","").replace("```","").strip()
-        s, e2 = raw.find("["), raw.rfind("]")
-        if s != -1 and e2 > s:
-            claims = _json.loads(raw[s:e2+1])
-            if isinstance(claims, list) and all(isinstance(c,str) for c in claims):
-                claims = [c for c in claims if len(c.strip()) > 5]
-                if len(claims) > 1:
-                    print(f"  [SPLIT] {len(claims)} sub-claims found")
-                    return claims[:4]
-    except Exception as e:
-        print(f"  [SPLIT] Error: {e}")
-    return [text]
-
-
-def compute_word_importance(claim: str, verdict: str, score: int) -> list[dict]:
-    """
-    Compute word importance using linguistic heuristics.
-    Returns list of {word, importance, direction} dicts.
-    """
-    if not claim or not verdict or verdict == "UNCERTAIN":
-        return []
-
-    words = re.findall(r"[a-zA-Zăâîșț]{3,}", claim.lower())
-    stop = {"the","and","for","with","that","this","from","are","was","were",
-            "has","have","been","not","can","but","its","the","este","sunt",
-            "care","care","prin","din","sau","dar","ori","cel","mai","ale"}
-    words = [w for w in words if w not in stop]
-
-    if not words:
-        return []
-
-    # Score words by their factual significance
-    NUMBER_PATTERN = re.compile(r'\d')
-    result = []
-    for word in list(dict.fromkeys(words))[:12]:  # unique, max 12
-        imp = 0.0
-        # Numbers are high-importance (dates, stats, measurements)
-        if NUMBER_PATTERN.search(word): imp += 0.4
-        # Named entities (capitalized in original) are high-importance
-        if any(w == word or w.lower() == word for w in claim.split() if w and w[0].isupper()):
-            imp += 0.35
-        # Domain-specific words
-        if word in ["ph","dna","rna","co2","adn","arn","pib","gdp","nato","ue","eu"]:
-            imp += 0.3
-        # Common factual words
-        if word in ["caused","causes","discovered","invented","founded","born","died",
-                    "won","lost","largest","smallest","highest","lowest","first","last",
-                    "cauzat","descoperit","inventat","fondat","castigat","primul","primul"]:
-            imp += 0.25
-        # Superlatives / comparatives
-        if word in ["most","best","worst","largest","highest","lowest","biggest",
-                    "cel","mai","cel mai","mult","putin","mare","mic","inalt"]:
-            imp += 0.2
-        # Base importance for meaningful words
-        imp += 0.1
-
-        direction = "supporting" if verdict == "TRUE" else "contradicting" if imp > 0.3 else "neutral"
-        result.append({
-            "word": word,
-            "importance": round(min(imp, 1.0), 3),
-            "direction": direction
-        })
-
-    return sorted(result, key=lambda x: x["importance"], reverse=True)

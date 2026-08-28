@@ -279,7 +279,7 @@ function showResult(p, text, d) {
 
   const srcGroup=(group,clr,label)=>group.length
     ?`<div class="tsp-grp" style="color:${clr}">${label} (${group.length})</div>`
-      +group.slice(0,3).map(s=>`<a class="tsp-src" href="${esc(s.url||"#")}" target="_blank" rel="noopener" style="border-left:3px solid ${clr}">
+      +group.slice(0,3).map(s=>`<a class="tsp-src" href="${safeUrl(s.url)}" target="_blank" rel="noopener" style="border-left:3px solid ${clr}">
         <span class="tsp-src-icon">${icons[s.type]||"📄"}</span>
         <div class="tsp-src-body">
           <div class="tsp-src-title">${esc(s.title||"")}</div>
@@ -332,7 +332,7 @@ function showParagraphResult(p, text, d) {
   const icons={web:"🌐",wikipedia:"📖",wikidata:"🗄️",academic:"🎓",news:"📰",factcheck:"🔎"};
 
   const mini=(g,clr,gl,ref)=>{g=g||[];if(!g.length)return"";
-    const rows=g.slice(0,2).map(s=>`<a class="tsp-src" href="${esc(s.url||"#")}" target="_blank" rel="noopener" style="border-left:3px solid ${clr}">
+    const rows=g.slice(0,2).map(s=>`<a class="tsp-src" href="${safeUrl(s.url)}" target="_blank" rel="noopener" style="border-left:3px solid ${clr}">
       <span class="tsp-src-icon">${icons[s.type]||"📄"}</span>
       <div class="tsp-src-body"><div class="tsp-src-title">${esc((s.publisher||s.title||t('sourceFallback')).slice(0,60))}</div></div>
       ${ref?`<span style="flex-shrink:0;font-family:'JetBrains Mono',monospace;font-size:8px;font-weight:700;color:${clr};border:1px solid ${clr};border-radius:3px;padding:0 3px;opacity:.85">${ref}</span>`:""}
@@ -424,10 +424,7 @@ function extractPageText() {
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-function esc(t) {
-  const d = document.createElement("div");
-  d.appendChild(document.createTextNode(String(t || "")));
-  return d.innerHTML;
-}
+function esc(t){return String(t==null?"":t).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
+function safeUrl(u){u=String(u==null?"":u).trim();return /^(https?:|mailto:)/i.test(u)?esc(u):"#";}
 
 } // end guard

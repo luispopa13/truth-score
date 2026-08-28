@@ -503,6 +503,40 @@ def detect_topic(claim: str) -> str:
 
 # ───────────────────────────────────────────────────────
 
+def _safe_eval_arith(expr: str):
+    """
+    Evaluate a plain arithmetic expression WITHOUT eval().
+    Supports + - * / // % ** and parentheses over numbers only. Any name,
+    call, or attribute access raises. Exponents are capped so a claim like
+    "9**9**9" can't hang the worker (the classic eval-DoS).
+    """
+    import ast, operator
+    _OPS = {
+        ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
+        ast.Div: operator.truediv, ast.FloorDiv: operator.floordiv,
+        ast.Mod: operator.mod, ast.Pow: operator.pow,
+        ast.USub: operator.neg, ast.UAdd: operator.pos,
+    }
+
+    def _ev(node):
+        if isinstance(node, ast.Constant):
+            if isinstance(node.value, (int, float)):
+                return node.value
+            raise ValueError("non-numeric constant")
+        if isinstance(node, ast.BinOp) and type(node.op) in _OPS:
+            if isinstance(node.op, ast.Pow):
+                exponent = _ev(node.right)
+                if abs(exponent) > 100:
+                    raise ValueError("exponent too large")
+                return operator.pow(_ev(node.left), exponent)
+            return _OPS[type(node.op)](_ev(node.left), _ev(node.right))
+        if isinstance(node, ast.UnaryOp) and type(node.op) in _OPS:
+            return _OPS[type(node.op)](_ev(node.operand))
+        raise ValueError("unsupported expression")
+
+    return _ev(ast.parse(expr, mode="eval").body)
+
+
 def evaluate_math_claim(claim: str):
     """Detect and evaluate mathematical expressions."""
     c = claim.strip().rstrip(".")
@@ -515,7 +549,7 @@ def evaluate_math_claim(claim: str):
         if m:
             try:
                 expr = m.group(1).strip().replace("x","*").replace("×","*").replace("÷","/")
-                actual = eval(expr, {"__builtins__": {}}, {})
+                actual = _safe_eval_arith(expr)
                 claimed = float(m.group(2))
                 if abs(float(actual) - claimed) < 1e-9:
                     return (95, f"Expresie matematică corectă: {expr} = {actual}")
@@ -598,6 +632,47 @@ def _domain(url: str) -> str:
     return m.group(1) if m else url
 
 
+# Domain buckets for source-type classification. The type drives the authority
+# weight in PATH_B_WEIGHTS / SOURCE_AUTHORITY_WEIGHTS, so labelling a general
+# news or web page as "factcheck" (weight 2.0) silently over-trusts it. These
+# lists keep the label honest.
+_FACTCHECK_DOMAINS = (
+    "snopes.com", "factcheck.org", "politifact.com", "fullfact.org",
+    "truthorfiction.com", "leadstories.com", "checkyourfact.com",
+    "factcheckni.org", "africacheck.org", "poynter.org",
+)
+_ACADEMIC_DOMAINS = (
+    "pubmed.ncbi.nlm.nih.gov", "ncbi.nlm.nih.gov", "sciencedirect.com",
+    "who.int", "cdc.gov", "nih.gov", "nature.com", "arxiv.org", "doi.org",
+    "springer.com", "wiley.com", "jstor.org", "nasa.gov", "noaa.gov",
+    "europepmc.org", "openalex.org", "semanticscholar.org", " scholar.google",
+)
+_NEWS_DOMAINS = (
+    "reuters.com", "apnews.com", "bbc.com", "bbc.co.uk", "nytimes.com",
+    "theguardian.com", "washingtonpost.com", "wsj.com", "npr.org",
+    "aljazeera.com", "bloomberg.com", "cnn.com", "abcnews.go.com",
+)
+
+
+def classify_source_type(url: str) -> str:
+    """Map a URL's domain to a source type used for authority weighting.
+
+    Returns one of: "factcheck" | "academic" | "wikipedia" | "news" | "web".
+    Prefer this over hard-coding a type when the type is inferred from the
+    retrieved domain rather than the API that produced it.
+    """
+    d = _domain(url).lower()
+    if any(fc in d for fc in _FACTCHECK_DOMAINS):
+        return "factcheck"
+    if "wikipedia.org" in d or "wikidata.org" in d:
+        return "wikipedia"
+    if d.endswith(".edu") or d.endswith(".gov") or any(ac in d for ac in _ACADEMIC_DOMAINS):
+        return "academic"
+    if any(nw in d for nw in _NEWS_DOMAINS):
+        return "news"
+    return "web"
+
+
 # ───────────────────────────────────────────────────────
 
 def _reconstruct_abstract(inv_index: dict | None) -> str:
@@ -608,12 +683,6 @@ def _reconstruct_abstract(inv_index: dict | None) -> str:
         for pos in positions:
             words[pos] = word
     return " ".join(words[i] for i in sorted(words))[:600]
-
-
-# ───────────────────────────────────────────────────────
-
-def DistinguishedRating(rating: str) -> str:
-    return rating
 
 
 # ───────────────────────────────────────────────────────

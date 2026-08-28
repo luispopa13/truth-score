@@ -45,6 +45,17 @@ def is_disposable_email(email: str) -> bool:
 # ── 2. Cloudflare Turnstile (free, privacy-friendly CAPTCHA) ─────
 TURNSTILE_SECRET = os.getenv("TURNSTILE_SECRET", "")
 
+# In production (not an explicit dev opt-in) a missing secret means the CAPTCHA
+# layer is silently OFF — surface that loudly at boot so it isn't discovered via
+# a bot-registration wave. The per-IP velocity + disposable-email layers still
+# apply, so we warn rather than brick registration on a fresh deploy.
+_DEV_OPT_IN = (os.getenv("DEV_INSECURE", "").lower() in ("1", "true", "yes")
+               or os.getenv("ENV", "").lower() in ("development", "dev", "local"))
+if not TURNSTILE_SECRET and not _DEV_OPT_IN:
+    logger.warning("[SECURITY] TURNSTILE_SECRET unset in production — CAPTCHA "
+                   "bot-protection is OFF (velocity + disposable-email checks "
+                   "still active). Set TURNSTILE_SECRET to enable it.")
+
 
 async def turnstile_verify(token: str, remoteip: str = "") -> bool:
     """
@@ -52,7 +63,7 @@ async def turnstile_verify(token: str, remoteip: str = "") -> bool:
     Returns True when: secret not configured (dev mode) OR token valid.
     """
     if not TURNSTILE_SECRET:
-        return True   # local/dev — enforcement off
+        return True   # not configured — enforcement off (warned at boot in prod)
     if not token:
         return False
     import httpx

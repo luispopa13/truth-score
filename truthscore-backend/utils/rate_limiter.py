@@ -4,22 +4,18 @@ Provides per-plan daily limits with atomic increment + TTL reset at midnight UTC
 """
 import os, time, logging
 from typing import Tuple
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger("truthscore.rate_limiter")
 
-# Daily limits per plan — these are the REAL production limits.
-# Single source of truth lives in auth.py (_PLAN_DAILY); imported here so
-# the two never drift. auth.py has no top-level import of this module, so
-# importing auth here is cycle-free.
+# Daily limits AND feature matrix per plan — the single source of truth lives
+# in auth.py (_PLAN_DAILY / _PLAN_FEATURES); imported here so the two never
+# drift. auth.py has no top-level import of this module, so importing auth here
+# is cycle-free. Importing the feature matrix (rather than keeping a second
+# copy) guarantees the `features` dict is identical on the Redis and Mongo
+# code paths below.
 from auth import _PLAN_DAILY as PLAN_LIMITS
-
-_PLAN_FEATURES = {
-    "free":       {"api_keys": 1, "batch": False, "pdf": False, "widget": False, "models": ["gemini"]},
-    "pro":        {"api_keys": 5, "batch": True,  "pdf": True,  "widget": True,  "models": ["gemini", "groq"]},
-    "business":   {"api_keys": 20, "batch": True,  "pdf": True,  "widget": True,  "models": ["gemini", "groq", "openai"]},
-    "enterprise": {"api_keys": 100, "batch": True,  "pdf": True,  "widget": True,  "models": ["gemini", "groq", "openai"]},
-}
+from auth import _PLAN_FEATURES
 
 
 def _utc_date_str() -> str:
@@ -120,15 +116,26 @@ async def _check_mongo_usage(user: dict) -> Tuple[bool, dict]:
         return allowed, {"allowed": allowed, "used": used, "limit": limit,
                          "plan": plan, "reset_in_hours": _hours_until_midnight_utc()}
     except Exception:
-        # Last resort: allow but log
-        return True, {"allowed": True, "used": 0, "limit": 999, "plan": "free",
-                      "note": "Rate-limit fallback — Redis and Mongo unavailable"}
+        # Both Redis and Mongo are unreachable. Fail CLOSED for the free tier —
+        # otherwise an outage becomes an unlimited-free-verifications hole and a
+        # direct cost/DoS attack (just knock the stores over). Paid users are
+        # trusted through the blip: they've paid, outages are rare, and we don't
+        # punish customers for our own infra failing.
+        plan = user.get("plan", "free") or "free"
+        if plan == "free":
+            return False, {"allowed": False, "used": 0, "limit": 0, "plan": plan,
+                           "reset_in_hours": 24,
+                           "note": "Rate-limit stores unavailable — free tier paused"}
+        return True, {"allowed": True, "used": 0,
+                      "limit": PLAN_LIMITS.get(plan, PLAN_LIMITS["free"]), "plan": plan,
+                      "note": "Rate-limit fallback — stores unavailable, paid user allowed"}
 
 
 def _hours_until_midnight_utc() -> int:
     now = datetime.now(timezone.utc)
-    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    return int((midnight - now).total_seconds() // 3600)
+    # Next UTC midnight (start of tomorrow); today's midnight is already past.
+    next_midnight = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return max(0, int((next_midnight - now).total_seconds() // 3600))
 
 
 def get_plan_features(plan: str) -> dict:

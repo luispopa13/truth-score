@@ -16,20 +16,16 @@ Why weighted (not a plain mean):
   evidence -- because a compound statement is only as true as its weakest link.
 """
 from models import Source, SubClaimResult
+from config import VERDICT_TRUE_AT, VERDICT_FALSE_AT, SOURCE_AUTHORITY_WEIGHTS
 
-# Authority weight per source type -- mirrors PATH_B_WEIGHTS in reasoning.py.
-# Kept as a local copy so aggregation has no import cycle with reasoning.
-_AUTHORITY = {
-    "factcheck": 2.0,
-    "academic":  1.6,
-    "news":      1.1,
-    "wikipedia": 0.7,
-    "web":       0.8,
-}
+# Authority weight per source type + verdict thresholds are defined once in
+# config.py and shared with Path B (reasoning.py) so aggregation can never
+# drift from the rest of the pipeline.
+_AUTHORITY = SOURCE_AUTHORITY_WEIGHTS
 
 # Verdict thresholds -- identical to the rest of the pipeline (Path B, verify).
-_TRUE_AT  = 62
-_FALSE_AT = 38
+_TRUE_AT  = VERDICT_TRUE_AT
+_FALSE_AT = VERDICT_FALSE_AT
 
 # A sub-claim is "decisively false on authoritative evidence" when it is FALSE,
 # its score is this low, and at least one contradicting source is authoritative.
@@ -93,6 +89,20 @@ def _best_authority(sources: list[Source]) -> float:
     return max(_AUTHORITY.get(s.type or "web", _AUTHORITY["web"]) for s in sources)
 
 
+def sub_claim_weight(supporting: list[Source], contradicting: list[Source],
+                     neutral: list[Source], verdict: str, score: int) -> float:
+    """
+    Weight one sub-claim's contribution to the aggregate: authority of the best
+    source on the deciding side times a confidence multiplier. Shared by
+    build_sub_claim_results (FActScore path) and main.py's /analyze-text loop so
+    the paragraph score is a real authority-weighted aggregate, not a plain mean.
+    """
+    deciding = contradicting if verdict == "FALSE" else supporting
+    authority = _best_authority(deciding or (supporting + contradicting + neutral))
+    conf_mult = 1.3 if abs(score - 50) >= 24 else 1.0
+    return round(authority * conf_mult, 3)
+
+
 def build_sub_claim_results(atom_results: list[dict]) -> list[SubClaimResult]:
     """
     Convert FActScore atom dicts into SubClaimResult objects.
@@ -117,10 +127,7 @@ def build_sub_claim_results(atom_results: list[dict]) -> list[SubClaimResult]:
 
         # Weight = authority of the best source on the deciding side, times a
         # confidence multiplier (decisive verdicts count more than uncertain).
-        deciding = contradicting if verdict == "FALSE" else supporting
-        authority = _best_authority(deciding or sources)
-        conf_mult = 1.3 if abs(score - 50) >= 24 else 1.0
-        weight = round(authority * conf_mult, 3)
+        weight = sub_claim_weight(supporting, contradicting, neutral, verdict, score)
 
         subs.append(SubClaimResult(
             claim_index=i,

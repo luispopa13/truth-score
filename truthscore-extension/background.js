@@ -19,19 +19,19 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (!text || !tab?.id) return;
 
   try {
-    // Always inject content script first — fixes the "nothing happens" bug
-    // This ensures content.js is loaded even on pages opened before extension install
+    // Always inject content script first — fixes the "nothing happens" bug.
+    // Must include i18n.js BEFORE content.js: content.js calls t() everywhere,
+    // and injecting it alone leaves t() undefined (matches the manifest order).
     await chrome.scripting.executeScript({
       target: { tabId: tab.id },
-      files: ["content.js"],
+      files: ["i18n.js", "content.js"],
     });
     await chrome.scripting.insertCSS({
       target: { tabId: tab.id },
       files: ["content.css"],
     });
   } catch (e) {
-    // Already injected or restricted page (chrome://, pdf, etc.) — ignore
-    console.log("[TruthScore] Script injection:", e.message);
+    // Already injected or restricted page (chrome://, pdf, etc.) — safe to ignore.
   }
 
   // Small delay so content script initializes
@@ -113,10 +113,15 @@ async function verifyClaim(text) {
   }
 
   if (!res.ok) {
-    // 429 = rate limit hit
     let detail = "";
     try { const j = await res.json(); detail = j.detail || ""; } catch (_) {}
     const msg = detail || (await res.text().catch(() => "")).slice(0, 150);
+    // 429 = rate/quota limit. The backend already sends a friendly, localized
+    // message ("create a free account…", "upgrade to Pro…") — surface it as-is
+    // without the technical "Backend 429:" prefix.
+    if (res.status === 429) {
+      throw new Error(msg || "Ai atins limita zilnică de verificări.");
+    }
     throw new Error(`Backend ${res.status}: ${msg}`);
   }
 
@@ -150,6 +155,13 @@ async function verifyClaim(text) {
     contradicting:  d.contradicting  || [],
     neutral_sources: d.neutral_sources || [],
     evidence_count:  d.evidence_count  || 0,
+    // Per-sub-claim breakdown + weighted aggregate rationale — the core product
+    // promise. Pass them through so the extension can render the same rich
+    // per-sub-claim view the dashboard does, not just the top-level verdict.
+    sub_claims:         d.sub_claims         || [],
+    sub_claim_results:  d.sub_claim_results  || [],
+    aggregate_reason:   d.aggregate_reason   || "",
+    calibrated_confidence: d.calibrated_confidence || "",
     // Never trust/passthrough provider metadata, even if backend leaks it.
     models_used:     [],
     cached:      d.cached || false,

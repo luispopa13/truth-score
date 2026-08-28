@@ -56,7 +56,8 @@ def _try_init_mongo():
 
 async def record_feedback_durable(claim: str, verdict: str, score: int,
                                   topic: str, correct: bool,
-                                  failure_reason: str = "") -> None:
+                                  failure_reason: str = "",
+                                  interaction_id: str = "") -> None:
     """Durably persist one piece of calibration feedback.
 
     Appends a JSON line to data/feedback/feedback.jsonl (under an async write
@@ -73,6 +74,7 @@ async def record_feedback_durable(claim: str, verdict: str, score: int,
         "topic": topic,
         "correct": correct,
         "failure_reason": failure_reason,
+        "interaction_id": interaction_id or "",
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -94,7 +96,8 @@ async def record_feedback_durable(claim: str, verdict: str, score: int,
 
 def compute_ece(results_path: str, n_bins: int = 10) -> dict:
     import csv
-    rows = list(csv.DictReader(open(results_path, encoding="utf-8")))
+    with open(results_path, encoding="utf-8") as _f:
+        rows = list(csv.DictReader(_f))
     if not rows:
         return {"ece": None, "error": "empty file"}
     bins  = [[] for _ in range(n_bins)]
@@ -134,7 +137,8 @@ def compute_ece(results_path: str, n_bins: int = 10) -> dict:
 def compute_calibration_map(results_path: str) -> dict:
     import csv
     from collections import defaultdict
-    rows = list(csv.DictReader(open(results_path, encoding="utf-8")))
+    with open(results_path, encoding="utf-8") as _f:
+        rows = list(csv.DictReader(_f))
     bins = defaultdict(list)
     for r in rows:
         try:
@@ -152,12 +156,14 @@ def compute_calibration_map(results_path: str) -> dict:
 
 def record_feedback(claim: str, verdict: str, score: int,
                     topic: str, correct: bool,
-                    failure_reason: str = "") -> None:
+                    failure_reason: str = "",
+                    interaction_id: str = "") -> None:
     import time
     entry = {
         "claim": claim[:200], "verdict": verdict,
         "score": score, "topic": topic,
         "correct": correct, "failure_reason": failure_reason,
+        "interaction_id": interaction_id or "",
         "timestamp": time.time(),
     }
     _feedback_store.append(entry)
@@ -178,3 +184,115 @@ def get_weak_domains() -> list:
             acc = s["correct"] / s["total"]
             results.append((topic, round(acc, 3)))
     return sorted(results, key=lambda x: x[1])
+
+
+# ── Live calibration loop (real feedback, not the offline CSV) ──────
+# The compute_ece/compute_calibration_map helpers above were written for an
+# offline CSV eval that nothing in the running service produces. These read the
+# ACTUAL feedback the /feedback endpoint records — the durable JSONL log (source
+# of truth across restarts), falling back to the in-memory store — so the ECE /
+# isotonic curve reflects real user corrections. Exposed via /metrics/calibration.
+
+def _to_bool(v) -> bool:
+    if isinstance(v, bool):
+        return v
+    return str(v).strip().upper() in ("YES", "TRUE", "1")
+
+
+def load_feedback_records() -> list:
+    """Return all feedback records: the durable JSONL log if present, else the
+    in-memory store. Each record has score/correct/topic keys."""
+    records: list = []
+    try:
+        if FEEDBACK_FILE.exists():
+            with open(FEEDBACK_FILE, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        records.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        pass
+    except Exception as e:
+        print(f"[FEEDBACK] read failed, using in-memory store: {e}")
+    if not records:
+        records = list(_feedback_store)
+    return records
+
+
+def compute_ece_from_records(records: list, n_bins: int = 10) -> dict:
+    """Expected Calibration Error over feedback records (score 0-100, correct)."""
+    bins = [[] for _ in range(n_bins)]
+    total = 0
+    for r in records:
+        try:
+            score = int(r.get("score", 50)) / 100.0
+            score = min(max(score, 0.0), 1.0)
+            correct = _to_bool(r.get("correct", False))
+            bin_idx = min(int(score * n_bins), n_bins - 1)
+            bins[bin_idx].append((score, correct))
+            total += 1
+        except (ValueError, TypeError):
+            pass
+    if total == 0:
+        return {"ece": None, "total": 0, "bins": [], "verdict": "no-data"}
+    ece = 0.0
+    bin_stats = []
+    for b in bins:
+        if not b:
+            continue
+        avg_conf = sum(s for s, _ in b) / len(b)
+        avg_acc  = sum(1 for _, c in b if c) / len(b)
+        ece += (len(b) / total) * abs(avg_conf - avg_acc)
+        bin_stats.append({"n": len(b), "conf": round(avg_conf, 3),
+                          "acc": round(avg_acc, 3)})
+    return {
+        "ece": round(ece, 4),
+        "total": total,
+        "bins": bin_stats,
+        "verdict": ("well-calibrated" if ece < 0.05
+                    else "slightly overconfident" if ece < 0.10
+                    else "overconfident"),
+    }
+
+
+def compute_calibration_map_from_records(records: list) -> dict:
+    """Empirical accuracy per 10-point score bucket — the isotonic-style map
+    from predicted score → observed correctness rate."""
+    from collections import defaultdict
+    bins = defaultdict(list)
+    for r in records:
+        try:
+            score = int(r.get("score", 50))
+            bins[(min(max(score, 0), 100) // 10) * 10].append(_to_bool(r.get("correct", False)))
+        except (ValueError, TypeError):
+            pass
+    return {bucket: round(sum(res) / len(res) * 100)
+            for bucket, res in sorted(bins.items()) if res}
+
+
+def calibration_report(min_samples: int = 1) -> dict:
+    """Full calibration snapshot from real feedback for /metrics/calibration."""
+    records = load_feedback_records()
+    n = len(records)
+    ece = compute_ece_from_records(records)
+    cal_map = compute_calibration_map_from_records(records)
+    from collections import defaultdict
+    stats = defaultdict(lambda: {"correct": 0, "total": 0})
+    for r in records:
+        t = r.get("topic", "general") or "general"
+        stats[t]["total"] += 1
+        if _to_bool(r.get("correct", False)):
+            stats[t]["correct"] += 1
+    weak = sorted(
+        [{"topic": t, "accuracy": round(s["correct"] / s["total"], 3), "n": s["total"]}
+         for t, s in stats.items() if s["total"] >= 5],
+        key=lambda x: x["accuracy"])
+    return {
+        "samples": n,
+        "enough_data": n >= max(min_samples, 30),
+        "ece": ece,
+        "calibration_map": cal_map,
+        "weak_domains": weak,
+    }

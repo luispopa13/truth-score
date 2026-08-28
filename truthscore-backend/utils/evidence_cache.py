@@ -11,13 +11,34 @@ Also enforces a GLOBAL DAILY BUDGET on paid searches via Redis, with
 graceful degradation to free-only sources when the budget is exhausted.
 """
 import os, json, logging, hashlib
+from collections import OrderedDict
 from typing import Optional
 
 logger = logging.getLogger("truthscore.evidence_cache")
 
 EVIDENCE_TTL        = int(os.getenv("EVIDENCE_CACHE_TTL", str(86400)))       # 24h default
 PAID_SEARCH_DAILY_CAP = int(os.getenv("PAID_SEARCH_DAILY_CAP", "3000"))     # global cap/day
-_search_cache_local = {}   # in-process fallback {query_hash: results}
+
+# In-process fast-path cache {query_hash: results}. Bounded LRU so a
+# long-running worker can't grow it without limit (one entry per unique
+# query+source, evicted oldest-first past the cap). Redis remains the
+# real cross-instance cache; this only skips the round-trip for hot queries.
+_LOCAL_CACHE_MAX = int(os.getenv("EVIDENCE_LOCAL_CACHE_MAX", "2000"))
+_search_cache_local: "OrderedDict[str, list]" = OrderedDict()
+
+
+def _cache_get_local(key: str):
+    val = _search_cache_local.get(key)
+    if val is not None:
+        _search_cache_local.move_to_end(key)   # mark as recently used
+    return val
+
+
+def _cache_put_local(key: str, value: list):
+    _search_cache_local[key] = value
+    _search_cache_local.move_to_end(key)
+    while len(_search_cache_local) > _LOCAL_CACHE_MAX:
+        _search_cache_local.popitem(last=False)  # evict least-recently-used
 
 
 def _query_key(query: str, source: str) -> str:
@@ -30,8 +51,9 @@ async def get_cached_evidence(query: str, source: str) -> Optional[list]:
     key = _query_key(query, source)
 
     # In-process fast path
-    if key in _search_cache_local:
-        return _search_cache_local[key]
+    cached = _cache_get_local(key)
+    if cached is not None:
+        return cached
 
     try:
         from utils.redis_client import get_async_redis
@@ -40,7 +62,7 @@ async def get_cached_evidence(query: str, source: str) -> Optional[list]:
             raw = await redis.get(key)
             if raw:
                 data = json.loads(raw)
-                _search_cache_local[key] = data
+                _cache_put_local(key, data)
                 logger.debug("Evidence cache HIT (%s): %s", source, query[:50])
                 return data
     except Exception as e:
@@ -51,7 +73,7 @@ async def get_cached_evidence(query: str, source: str) -> Optional[list]:
         from utils.cache import cache as disk
         data = disk.get("ev:" + key)
         if data is not None:
-            _search_cache_local[key] = data
+            _cache_put_local(key, data)
             return data
     except Exception:
         pass
@@ -61,7 +83,7 @@ async def get_cached_evidence(query: str, source: str) -> Optional[list]:
 async def store_cached_evidence(query: str, source: str, sources_as_dicts: list):
     key = _query_key(query, source)
     payload = [s.model_dump() if hasattr(s, "model_dump") else s for s in sources_as_dicts]
-    _search_cache_local[key] = payload
+    _cache_put_local(key, payload)
 
     try:
         from utils.redis_client import get_async_redis

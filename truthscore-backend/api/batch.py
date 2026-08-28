@@ -1,9 +1,12 @@
 """
 TruthScore -- Batch Verify and PDF Export
 """
+import time
 from config import *
 from models import *
-from pipeline.verify import verify_claim
+from pipeline.verify import verify_claim, retrieve_and_rank
+from pipeline.reasoning import reason_with_gpt
+from pipeline.helpers import split_claims, compute_word_importance
 
 
 async def batch_verify(req: BatchVerifyRequest, user=Depends(require_user)):
@@ -15,32 +18,36 @@ async def batch_verify(req: BatchVerifyRequest, user=Depends(require_user)):
     if plan["batch_limit"] == 0:
         raise HTTPException(403, "Batch verify necesită plan Pro sau Enterprise")
     claims = req.claims[:plan["batch_limit"]]
-    results = []
-    success = 0
-    failed  = 0
-    for claim in claims:
-        try:
-            # Use same pipeline as /verify but without caching individual results
-            topic, search_query, claim_en = await smart_detect_topic(claim)
-            evidence_tasks, labels = build_source_plan(search_query, topic)
-            raw_evidence = await asyncio.gather(*[
-                asyncio.wait_for(t, timeout=5.0) for t in evidence_tasks
-            ], return_exceptions=True)
-            all_evidence = []
-            for r in raw_evidence:
-                if isinstance(r, list): all_evidence.extend(r)
-            top_ev = await rank_by_relevance(claim, all_evidence)[:8]
-            score, verdict, confidence, explanation, supporting, contradicting, neutral =                 await reason_with_gpt(claim, top_ev, [])
-            results.append({
-                "claim": claim, "verdict": verdict, "score": score,
-                "confidence": confidence, "explanation": explanation[:200],
-                "topic": topic,
-                "sources_count": len(supporting) + len(contradicting) + len(neutral),
-            })
-            success += 1
-        except Exception as e:
-            results.append({"claim": claim, "verdict": "ERROR", "error": str(e)[:100]})
-            failed += 1
+
+    # Bound concurrency so a large batch can't fan out into hundreds of parallel
+    # provider calls (and 429s); claims within the batch still run in parallel.
+    sem = asyncio.Semaphore(int(os.getenv("BATCH_CONCURRENCY", "4")))
+
+    async def _verify_one(claim: str) -> dict:
+        async with sem:
+            try:
+                # Shared retrieval+rank pipeline (same as /verify): per-source
+                # budgets, dedup, counter-evidence, embedding + cross-encoder.
+                rr = await retrieve_and_rank(claim)
+                score, verdict, confidence, explanation, supporting, contradicting, neutral = \
+                    await reason_with_gpt(claim, rr.top_k, rr.rest)
+                return {
+                    "claim": claim, "verdict": verdict, "score": score,
+                    "confidence": confidence, "explanation": explanation[:200],
+                    "topic": rr.topic,
+                    "sources_count": len(supporting) + len(contradicting) + len(neutral),
+                }
+            except Exception as e:
+                # Must satisfy VerifyResponse's required fields (score/confidence/
+                # explanation) or BatchVerifyResponse validation rejects the whole
+                # batch; surface the error text via explanation.
+                return {"claim": claim, "verdict": "ERROR", "score": 0,
+                        "confidence": "LOW",
+                        "explanation": f"Verification failed: {str(e)[:180]}"}
+
+    results = await asyncio.gather(*[_verify_one(c) for c in claims])
+    success = sum(1 for r in results if r.get("verdict") != "ERROR")
+    failed  = len(results) - success
     return BatchVerifyResponse(results=results, total=len(claims), success=success, failed=failed)
 
 
@@ -61,28 +68,17 @@ async def verify_and_pdf(req: VerifyRequest, user=Depends(require_user)):
     if not plan["pdf"]:
         raise HTTPException(403, "Raportul PDF necesită plan Pro sau Enterprise")
 
-    # Run verification
-    from fastapi.testclient import TestClient
-    # Re-use existing verify logic
-    verify_req = VerifyRequest(text=req.text)
-    # Get result by calling internal logic
+    # Run verification (reuses the shared pipeline helpers below)
     text = req.text.strip()
     if not text:
         raise HTTPException(400, "Text gol")
 
-    # Quick verify
-    topic, search_query, claim_en = await smart_detect_topic(text)
+    # Quick verify — shared retrieval+rank pipeline (same as /verify).
     t0 = time.time()
-    evidence_tasks, labels = build_source_plan(search_query, topic)
-    if "DDG_WIKI" not in labels:
-        evidence_tasks.append(search_ddg_wiki(search_query))
-        labels.append("DDG_WIKI_FALLBACK")
-    raw = await asyncio.gather(*[asyncio.wait_for(t, 5.0) for t in evidence_tasks], return_exceptions=True)
-    all_ev = []
-    for r in raw:
-        if isinstance(r, list): all_ev.extend(r)
-    top_ev = await rank_by_relevance(text, all_ev)
-    score, verdict, confidence, explanation, supporting, contradicting, neutral =         await reason_with_gpt(text, top_ev[:8], [])
+    rr = await retrieve_and_rank(text)
+    topic = rr.topic
+    score, verdict, confidence, explanation, supporting, contradicting, neutral = \
+        await reason_with_gpt(text, rr.top_k, rr.rest)
     sub_claims  = await split_claims(text)
     word_imp    = compute_word_importance(text, verdict, score)
 
@@ -92,7 +88,7 @@ async def verify_and_pdf(req: VerifyRequest, user=Depends(require_user)):
         "topic": topic, "supporting": [s.dict() for s in supporting],
         "contradicting": [s.dict() for s in contradicting],
         "neutral_sources": [s.dict() for s in neutral],
-        "evidence_count": len(all_ev),
+        "evidence_count": len(rr.all_evidence),
         "sub_claims": sub_claims,
         "word_importance": word_imp,
         "calibrated_confidence": (
