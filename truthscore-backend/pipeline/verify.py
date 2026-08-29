@@ -720,11 +720,21 @@ async def _verify_compute(claim: str, key: str, eco: bool, t_total_start: float)
     )
     if _DOMAIN_EXPERTS_AVAILABLE:
         try:
-            _rd = result.model_dump()
-            _rd = annotate_domain(_rd, claim)
-            result = VerifyResponse(**_rd)
+            _rd = annotate_domain({}, claim)
+            if _rd.get("domain"):
+                result.domain = _rd["domain"]
+            if _rd.get("domain_hint"):
+                result.domain_hint = _rd["domain_hint"]
         except Exception:
             pass
+
+    # Stamp manipulation score directly onto result (keeps return type as VerifyResponse)
+    if _manip:
+        result.manipulation_score = _manip.get("manipulation_score", 0)
+        result.manipulation_techniques = _manip.get("techniques", [])
+        result.manipulation_summary = _manip.get("summary", "")
+        result.is_manipulative = _manip.get("is_manipulative", False)
+
     # Always store in local diskcache as last resort
     cache.set(key, result.model_dump(), expire=3600 * 6)
     # Best-effort store in distributed semantic cache (Redis)
@@ -733,17 +743,7 @@ async def _verify_compute(claim: str, key: str, eco: bool, t_total_start: float)
         await semantic_store(claim, result.model_dump())
     except Exception:
         pass
-    # NB: the thundering-herd inflight lock is released by verify_claim's
-    # finally block (which wraps this whole function), so waiting requests pick
-    # up the freshly-cached result on their next poll.
-    # Add manipulation + entity profile data
-    _final = result.model_dump() if hasattr(result, 'model_dump') else dict(result)
-    if _manip:
-        _final["manipulation_score"] = _manip.get("manipulation_score", 0)
-        _final["manipulation_techniques"] = _manip.get("techniques", [])
-        _final["manipulation_summary"] = _manip.get("summary", "")
-        _final["is_manipulative"] = _manip.get("is_manipulative", False)
-    return _final
+    return result
 
 
 # ════════════════════════════════════════════════════════════

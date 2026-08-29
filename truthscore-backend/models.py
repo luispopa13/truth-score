@@ -79,6 +79,25 @@ class VerifyResponse(BaseModel):
     sub_claim_results:     list["SubClaimResult"] = Field(default_factory=list)
     aggregate_reason:      str              = ""
     check_count:           int              = 0
+    # Moat: domain detection
+    domain:                  str              = ""
+    domain_hint:             str              = ""
+    # Moat: multi-model consensus
+    model_results:           list[dict]       = Field(default_factory=list)
+    models_agree:            bool | None      = None
+    disagreement_note:       str              = ""
+    # Moat: mislead detection
+    is_misleading:           bool             = False
+    mislead_type:            str              = ""
+    mislead_note:            str              = ""
+    corrected_context:       str              = ""
+    # Moat: manipulation score
+    manipulation_score:      int              = 0
+    manipulation_techniques: list[str]        = Field(default_factory=list)
+    manipulation_summary:    str              = ""
+    is_manipulative:         bool             = False
+    # Entity memory profiles
+    entity_profiles:         list[dict]       = Field(default_factory=list)
 
 
 
