@@ -1921,6 +1921,223 @@ async def telegram_webhook(request: Request):
     return {"ok": True}
 
 
+# ── Daily Email Digest ─────────────────────────────────────────────
+
+class DigestSubscribeRequest(BaseModel):
+    email: str = ""
+
+@app.post("/digest/subscribe")
+async def digest_subscribe(req: DigestSubscribeRequest):
+    """Subscribe an email to the daily fact-check digest."""
+    email = (req.email or "").strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(400, "Valid email required")
+    try:
+        from auth import _get_db
+        db = _get_db()
+        col = db["digest_subscribers"]
+        existing = await col.find_one({"email": email})
+        if existing:
+            if not existing.get("active"):
+                await col.update_one({"email": email}, {"$set": {"active": True}})
+                return {"status": "resubscribed"}
+            return {"status": "already_subscribed"}
+        await col.insert_one({
+            "email": email,
+            "active": True,
+            "subscribed_at": datetime.now(timezone.utc).isoformat(),
+        })
+        return {"status": "subscribed"}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.post("/digest/unsubscribe")
+async def digest_unsubscribe(req: DigestSubscribeRequest):
+    email = (req.email or "").strip().lower()
+    if not email:
+        raise HTTPException(400, "email required")
+    try:
+        from auth import _get_db
+        db = _get_db()
+        await db["digest_subscribers"].update_one({"email": email}, {"$set": {"active": False}})
+        return {"status": "unsubscribed"}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.post("/digest/send")
+async def digest_send(user=Depends(require_admin)):
+    """Admin: trigger daily digest send."""
+    from email_digest import run_digest
+    from auth import _get_db
+    db = _get_db()
+    result = await run_digest(db)
+    return result
+
+
+# ── News Scanner ───────────────────────────────────────────────────
+
+@app.post("/news-scanner/run")
+async def news_scanner_run(user=Depends(require_admin)):
+    """Admin: run the news scanner to auto-verify today's headlines."""
+    from news_scanner import run_scan
+    from auth import _get_db
+    db = _get_db()
+    import asyncio as _asyncio
+    _asyncio.create_task(run_scan(db))
+    return {"status": "started"}
+
+
+@app.get("/today")
+async def today_checks():
+    """Return today's auto-verified claims from the news scanner."""
+    from auth import _get_db
+    from datetime import datetime, timezone
+    db = _get_db()
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    doc = await db["daily_checks"].find_one({"date": today})
+    if not doc:
+        # Return yesterday as fallback
+        yesterday = (datetime.now(timezone.utc).replace(hour=0, minute=0, second=0) - __import__('datetime').timedelta(days=1)).strftime("%Y-%m-%d")
+        doc = await db["daily_checks"].find_one({"date": yesterday})
+    if not doc:
+        return {"date": today, "items": [], "message": "No checks yet today. Run /news-scanner/run first."}
+    doc.pop("_id", None)
+    return doc
+
+
+# ── Bookmarklet ────────────────────────────────────────────────────
+
+@app.get("/bookmarklet.js")
+async def bookmarklet():
+    """Serve the one-line bookmarklet script."""
+    public_url = os.getenv("PUBLIC_BASE_URL", "https://truthscore.app")
+    js = f"javascript:(function(){{var t=window.getSelection().toString().trim()||document.title;window.open('{public_url}/?claim='+encodeURIComponent(t),'_blank','width=960,height=720,noopener');}})()"
+    return PlainTextResponse(js, media_type="application/javascript")
+
+
+# ── Personal Accuracy Score ────────────────────────────────────────
+
+@app.get("/me/accuracy")
+async def my_accuracy(user=Depends(require_user)):
+    """Return the user's personal accuracy alignment score."""
+    try:
+        from auth import _get_db
+        db = _get_db()
+        col = db["feedback"]
+        fb_docs = await col.find({"user_id": user["id"]}).sort("created_at", -1).to_list(200)
+        if not fb_docs:
+            return {"checks": 0, "score": None, "badges": [], "message": "Verify more claims to see your accuracy score."}
+        # Count how often user's thumbs up/down matched the verdict
+        aligned = 0
+        total = 0
+        for fb in fb_docs:
+            user_positive = fb.get("positive")
+            verdict = (fb.get("verdict") or "").upper()
+            if user_positive is None or not verdict:
+                continue
+            total += 1
+            # Aligned = user said true AND verdict=TRUE, or user said false AND verdict=FALSE
+            if (user_positive and verdict == "TRUE") or (not user_positive and verdict == "FALSE"):
+                aligned += 1
+        score = round(aligned / total * 100) if total > 0 else None
+        # Assign badges
+        badges = []
+        checks = len(fb_docs)
+        if checks >= 10:
+            badges.append({"id": "fact_hunter", "name": "Fact Hunter", "icon": "🔍", "desc": "Verified 10+ claims"})
+        if checks >= 50:
+            badges.append({"id": "truth_seeker", "name": "Truth Seeker", "icon": "🏆", "desc": "Verified 50+ claims"})
+        if checks >= 100:
+            badges.append({"id": "myth_buster", "name": "Myth Buster", "icon": "💥", "desc": "Verified 100+ claims"})
+        if score is not None and score >= 80 and total >= 10:
+            badges.append({"id": "sharp_eye", "name": "Sharp Eye", "icon": "👁️", "desc": "80%+ accuracy alignment"})
+        if score is not None and score >= 95 and total >= 20:
+            badges.append({"id": "oracle", "name": "Oracle", "icon": "🔮", "desc": "95%+ accuracy alignment"})
+        return {"checks": checks, "aligned": aligned, "total_rated": total, "score": score, "badges": badges}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ── Twitter/X Bot ──────────────────────────────────────────────────
+
+@app.get("/twitter/webhook")
+async def twitter_crc(crc_token: str = ""):
+    """Twitter CRC webhook verification."""
+    from twitter_bot import verify_crc
+    response_token = verify_crc(crc_token)
+    return {"response_token": f"sha256={response_token}"}
+
+
+@app.post("/twitter/webhook")
+async def twitter_webhook_handler(request: Request):
+    """Receive Twitter Account Activity API events."""
+    try:
+        body = await request.json()
+        tweet_events = body.get("tweet_create_events", [])
+        backend_url = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
+        from twitter_bot import handle_mention
+        import asyncio as _asyncio
+        bot_username = os.getenv("TWITTER_BOT_USERNAME", "TruthScoreBot")
+        for tweet in tweet_events:
+            if tweet.get("user", {}).get("screen_name", "").lower() == bot_username.lower():
+                continue
+            _asyncio.create_task(handle_mention(tweet, backend_url))
+    except Exception as e:
+        print(f"[twitter-webhook] error: {e}")
+    return {"status": "ok"}
+
+
+@app.post("/twitter/poll-mentions")
+async def twitter_poll(user=Depends(require_admin)):
+    """Admin: poll recent @mentions and reply."""
+    from twitter_bot import poll_and_reply
+    backend_url = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
+    return await poll_and_reply(backend_url)
+
+
+# ── Slack Bot ──────────────────────────────────────────────────────
+
+@app.post("/slack/command")
+async def slack_command(request: Request):
+    """Handle Slack slash command /truthcheck."""
+    from slack_bot import verify_slack_signature, handle_slash_command
+    body_bytes = await request.body()
+    ts = request.headers.get("X-Slack-Request-Timestamp", "0")
+    sig = request.headers.get("X-Slack-Signature", "")
+    if not verify_slack_signature(body_bytes, ts, sig):
+        raise HTTPException(403, "Invalid Slack signature")
+    from urllib.parse import parse_qs
+    params = {k: v[0] for k, v in parse_qs(body_bytes.decode()).items()}
+    claim = params.get("text", "").strip()
+    channel = params.get("channel_id", "")
+    backend_url = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
+    import asyncio as _asyncio
+    _asyncio.create_task(handle_slash_command(claim, channel, backend_url))
+    return {"response_type": "in_channel", "text": f"⏳ Checking: _{claim[:100]}_…"}
+
+
+@app.post("/slack/events")
+async def slack_events(request: Request):
+    """Handle Slack Events API (app_mention, url_verification)."""
+    from slack_bot import verify_slack_signature, handle_app_mention
+    body_bytes = await request.body()
+    ts = request.headers.get("X-Slack-Request-Timestamp", "0")
+    sig = request.headers.get("X-Slack-Signature", "")
+    if not verify_slack_signature(body_bytes, ts, sig):
+        raise HTTPException(403, "Invalid Slack signature")
+    body = await request.json()
+    if body.get("type") == "url_verification":
+        return {"challenge": body.get("challenge")}
+    event = body.get("event", {})
+    if event.get("type") == "app_mention":
+        backend_url = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
+        import asyncio as _asyncio
+        _asyncio.create_task(handle_app_mention(event, backend_url))
+    return {"status": "ok"}
+
+
 # ── Widget ────────────────────────────────────────────────
 
 @app.get("/manifest.json")

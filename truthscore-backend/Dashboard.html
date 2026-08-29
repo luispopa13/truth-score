@@ -370,6 +370,8 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
         <div class="umitem" onclick="document.getElementById('userDropdown').classList.remove('open');openPublisherRanking()">📊 Publisher ranking</div>
         <div class="umitem" onclick="document.getElementById('userDropdown').classList.remove('open');openWatched()">🔔 Watched claims</div>
         <div class="umitem" onclick="document.getElementById('userDropdown').classList.remove('open');openApiKeys()">🔑 API Keys</div>
+        <div class="umitem" onclick="document.getElementById('userDropdown').classList.remove('open');openAccuracyScore()">🎯 My accuracy</div>
+        <div class="umitem" onclick="document.getElementById('userDropdown').classList.remove('open');showTodayChecks()">📰 Today's checks</div>
         <div class="umitem" onclick="document.getElementById('userDropdown').classList.remove('open');showPricing()" data-i18n="upgrade">⭐ Upgrade plan</div>
         <div class="umitem" onclick="document.getElementById('userDropdown').classList.remove('open');openBillingPortal()" data-i18n="billing">💳 Billing</div>
         <div class="umdiv"></div>
@@ -386,6 +388,11 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
     <p class="hero-sub" data-i18n="heroSub">Enter any claim and get an evidence-based verdict from authoritative sources.</p>
   </div>
 
+  <div id="bookmarkletBanner" style="display:none;background:rgba(108,99,255,.08);border:1px solid rgba(108,99,255,.25);border-radius:10px;padding:10px 16px;margin:0 0 14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+    <span style="font-size:13px;color:#e5e7eb;flex:1">📌 <strong>Bookmarklet:</strong> drag this to your bookmarks bar → fact-check anything in one click</span>
+    <a id="bookmarkletLink" href="#" style="padding:6px 14px;background:#6c63ff;color:#fff;border-radius:7px;font-size:12px;font-weight:600;text-decoration:none;white-space:nowrap" onclick="copyBookmarklet(event)">📋 Copy bookmarklet</a>
+    <button onclick="document.getElementById('bookmarkletBanner').style.display='none'" style="background:none;border:none;color:#6b7280;cursor:pointer;font-size:14px">✕</button>
+  </div>
   <div class="limit-banner" id="limitBanner">
     <div class="limit-text"><strong data-i18n="limitReached">You've hit the limit.</strong> <span data-i18n="limitCreate">Create an account for 10 free checks/day.</span></div>
     <button class="limit-cta" onclick="showPricing()" data-i18n="seePlans">See plans →</button>
@@ -571,6 +578,9 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
 const API='';
 // Register PWA service worker
 if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catch(()=>{});}
+// Show bookmarklet banner after 5s if not dismissed before
+setTimeout(()=>{const b=document.getElementById('bookmarkletBanner');if(b&&sessionStorage.getItem('bmDismissed')!=='1'){b.style.display='flex';}},5000);
+document.getElementById('bookmarkletBanner')?.querySelector('button[onclick*=none]')?.addEventListener('click',()=>sessionStorage.setItem('bmDismissed','1'));
 // Handle share_target: ?claim=... pre-fill
 (()=>{const u=new URL(location.href);const c=u.searchParams.get('claim');if(c){const el=document.getElementById('claimInput');if(el){el.value=c;setTimeout(()=>document.getElementById('verifyBtn')?.click(),600);}}})();
 
@@ -1988,6 +1998,96 @@ function showPricing(){renderPlans();document.getElementById('pricingOverlay').c
 function closePricing(){document.getElementById('pricingOverlay').className='overlay';}
 function closeHistory(){document.getElementById('historyOverlay').className='overlay';}
 const _HV_COLORS={TRUE:'#22c55e',FALSE:'#ef4444',UNCERTAIN:'#eab308',MIXED:'#eab308'};
+async function openAccuracyScore(){
+  if(!currentUser){showAuth('login');return;}
+  const overlay=document.createElement('div');
+  overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box';
+  overlay.innerHTML=`
+    <div style="background:#1a1a2e;border-radius:16px;padding:28px;max-width:420px;width:100%;border:1px solid rgba(108,99,255,.3)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+        <div style="font-size:18px;font-weight:700;color:#e5e7eb">🎯 Your Accuracy Score</div>
+        <button onclick="this.closest('div[style]').parentElement.remove()" style="background:none;border:none;color:#6b7280;cursor:pointer;font-size:18px">✕</button>
+      </div>
+      <div id="accBody" style="text-align:center"><div style="color:#6b7280;font-size:14px">Loading…</div></div>
+    </div>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('mousedown', e=>{if(e.target===overlay)overlay.remove();});
+  try{
+    const r=await fetch(`${API}/me/accuracy`,{headers:{'Authorization':'Bearer '+token()}});
+    const d=await r.json();
+    const body=overlay.querySelector('#accBody');
+    if(!d.total_rated){
+      body.innerHTML=`<div style="color:#9ca3af;font-size:14px;padding:10px 0">${esc(d.message||'Rate more verdicts to see your score.')}</div>`;
+      return;
+    }
+    const col=d.score>=80?'#10b981':d.score>=60?'#f59e0b':'#ef4444';
+    body.innerHTML=`
+      <div style="font-size:64px;font-weight:800;color:${col};line-height:1">${d.score??'—'}%</div>
+      <div style="font-size:13px;color:#9ca3af;margin-top:6px">alignment with verified verdicts</div>
+      <div style="font-size:12px;color:#6b7280;margin-top:4px">${d.aligned??0}/${d.total_rated??0} ratings matched · ${d.checks??0} claims checked</div>
+      ${d.badges?.length?`<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:16px">${d.badges.map(b=>`<div style="padding:6px 12px;border-radius:20px;background:rgba(108,99,255,.15);border:1px solid rgba(108,99,255,.3);font-size:12px;color:#a5b4fc">${b.icon} ${esc(b.name)}</div>`).join('')}</div>`:''}`;
+  }catch(e){
+    const body=overlay.querySelector('#accBody');
+    if(body)body.innerHTML=`<div style="color:#ef4444;font-size:13px">${esc(e.message)}</div>`;
+  }
+}
+
+async function showTodayChecks(){
+  const overlay=document.createElement('div');
+  overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box';
+  overlay.innerHTML=`
+    <div style="background:#1a1a2e;border-radius:16px;padding:24px;max-width:600px;width:100%;max-height:80vh;overflow-y:auto;border:1px solid rgba(108,99,255,.3)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <div style="font-size:18px;font-weight:700;color:#e5e7eb">📰 Today's Fact Checks</div>
+        <button onclick="this.closest('div[style]').parentElement.remove()" style="background:none;border:none;color:#6b7280;cursor:pointer;font-size:18px">✕</button>
+      </div>
+      <div id="todayBody"><div style="color:#6b7280;font-size:13px">Loading…</div></div>
+    </div>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('mousedown', e=>{if(e.target===overlay)overlay.remove();});
+  try{
+    const r=await fetch(`${API}/today`);
+    const d=await r.json();
+    const body=overlay.querySelector('#todayBody');
+    const items=d.items||[];
+    if(!items.length){body.innerHTML=`<div style="color:#9ca3af;font-size:13px;padding:10px 0">${esc(d.message||'No checks yet today.')}</div>`;return;}
+    const vColors={'TRUE':'#10b981','FALSE':'#ef4444','UNCERTAIN':'#f59e0b','MIXED':'#6c63ff'};
+    body.innerHTML=`<div style="font-size:11px;color:#6b7280;margin-bottom:12px">Auto-verified from today's top headlines · ${items.length} claims</div>`+
+    items.map(item=>{
+      const v=(item.verdict||'UNCERTAIN').toUpperCase();
+      const col=vColors[v]||'#9ca3af';
+      const emoji={'TRUE':'✅','FALSE':'❌','UNCERTAIN':'⚠️','MIXED':'🔀'}[v]||'⚠️';
+      const vid=item._verdictId||'';
+      return `<div style="padding:12px;border-radius:8px;border:1px solid rgba(255,255,255,.07);margin-bottom:8px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:12px;background:${col}22;color:${col};border:1px solid ${col}44">${emoji} ${v} · ${item.score}/100</span>
+          ${item.source?`<span style="font-size:10px;color:#6b7280">${esc(item.source)}</span>`:''}
+        </div>
+        <div style="font-size:13px;color:#e5e7eb;line-height:1.5;margin-bottom:4px">${esc(item.claim||'')}</div>
+        ${item.explanation?`<div style="font-size:11px;color:#9ca3af">${esc((item.explanation||'').slice(0,120))}</div>`:''}
+        ${vid?`<a href="/v/${vid}" style="font-size:11px;color:#6c63ff;text-decoration:none" target="_blank">Full verdict →</a>`:''}
+      </div>`;
+    }).join('');
+  }catch(e){
+    const body=overlay.querySelector('#todayBody');
+    if(body)body.innerHTML=`<div style="color:#ef4444;font-size:13px">${esc(e.message)}</div>`;
+  }
+}
+
+async function copyBookmarklet(e){
+  e.preventDefault();
+  try{
+    const r=await fetch(`${API}/bookmarklet.js`);
+    const text=await r.text();
+    if(navigator.clipboard){
+      await navigator.clipboard.writeText(text);
+      toast('Bookmarklet copied! Paste it as a new bookmark URL.','ok');
+    } else {
+      prompt('Copy this as a bookmark URL:',text);
+    }
+  }catch(err){toast('Error: '+err.message,'err');}
+}
+
 async function openPublisherRanking(){
   const overlay=document.createElement('div');
   overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box';
