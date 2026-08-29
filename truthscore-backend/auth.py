@@ -561,16 +561,23 @@ async def get_user_out(user):
 
 
 async def upgrade_user_plan(user_id: str, plan: str, stripe_customer_id: str = "", subscription_id: str = ""):
-    """Called from Stripe webhook to upgrade user plan."""
+    """Called from Stripe webhook to upgrade user plan.
+
+    Only writes stripe_customer_id / stripe_subscription_id when a non-empty value
+    is supplied. An event that omits them (or a redelivery with blanks) must NOT
+    blank out ids we already stored — that would orphan the user from their Stripe
+    Customer and break every customer-id-keyed webhook that follows.
+    """
     db = get_db()
     from bson import ObjectId
+    updates = {"plan": plan}
+    if stripe_customer_id:
+        updates["stripe_customer_id"] = stripe_customer_id
+    if subscription_id:
+        updates["stripe_subscription_id"] = subscription_id
     await db.users.update_one(
         {"_id": ObjectId(user_id)},
-        {"$set": {
-            "plan": plan,
-            "stripe_customer_id": stripe_customer_id,
-            "stripe_subscription_id": subscription_id,
-        }}
+        {"$set": updates},
     )
 
 

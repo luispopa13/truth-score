@@ -28,6 +28,20 @@ async def create_checkout(req: CheckoutRequest, user=Depends(require_user)):
     base = get_public_base_url()
     success_url = f"{base}/?payment=success&session_id={{CHECKOUT_SESSION_ID}}"
     cancel_url  = f"{base}/"
+
+    # If the user already holds an active/trialing subscription, a second checkout
+    # would create a DUPLICATE subscription (double-billing). Route them to the
+    # billing portal to change plans instead of minting a new one.
+    if user.get("subscription_status") in ("active", "trialing") and user.get("stripe_customer_id"):
+        raise HTTPException(409, "Ai deja un abonament activ. Folosește portalul de facturare pentru a schimba planul.")
+
+    # Reuse the existing Stripe customer if we have one so a returning subscriber
+    # doesn't spawn a second Customer object (which fragments billing history and
+    # breaks customer-id-keyed webhook matching). Only fall back to customer_email
+    # for a first-time buyer. Passing BOTH is a Stripe error, so it's one or the other.
+    existing_cust = user.get("stripe_customer_id") or ""
+    customer_kwargs = ({"customer": existing_cust} if existing_cust
+                       else {"customer_email": user["email"]})
     try:
         session = stripe.checkout.Session.create(
             mode="subscription",
@@ -35,8 +49,8 @@ async def create_checkout(req: CheckoutRequest, user=Depends(require_user)):
             line_items=[{"price": price_id, "quantity": 1}],
             success_url=success_url,
             cancel_url=cancel_url,
-            customer_email=user["email"],
             metadata={"user_id": user["id"], "plan": req.plan},
+            **customer_kwargs,
         )
         print(f"[STRIPE] Session created: {session.url[:50]}")
         return {"checkout_url": session.url}
@@ -107,13 +121,35 @@ async def _forget_event(event_id: str) -> None:
         print(f"[STRIPE] Could not roll back event marker {event_id}: {e}")
 
 
-async def _set_plan_by_customer(cust_id: str, updates: dict) -> None:
-    """Apply a $set to the user matched by Stripe customer id (idempotent)."""
+async def _set_plan_by_customer(cust_id: str, updates: dict, sub_id: str = "") -> None:
+    """Apply a $set to the user matched by Stripe customer id (idempotent).
+
+    If the customer-id match updates 0 rows, the user doc is missing the id we
+    expect (e.g. checkout.session.completed hasn't landed yet, or the id was
+    blanked by an older code path). Rather than silently drop the update, we log
+    it and fall back to matching by stripe_subscription_id when one is available —
+    and backfill stripe_customer_id so subsequent events match on the fast path.
+    """
     if not (cust_id and AUTH_AVAILABLE):
         return
     from auth import get_db
     db = get_db()
-    await db.users.update_one({"stripe_customer_id": cust_id}, {"$set": updates})
+    res = await db.users.update_one({"stripe_customer_id": cust_id}, {"$set": updates})
+    if res.matched_count:
+        return
+    print(f"[STRIPE] No user matched customer_id={cust_id}; "
+          f"trying subscription_id fallback (sub={sub_id or 'n/a'})")
+    if sub_id:
+        fb = dict(updates)
+        fb["stripe_customer_id"] = cust_id   # backfill so future events match fast
+        res2 = await db.users.update_one(
+            {"stripe_subscription_id": sub_id}, {"$set": fb})
+        if res2.matched_count:
+            print(f"[STRIPE] Recovered via subscription_id={sub_id}, "
+                  f"backfilled customer_id={cust_id}")
+            return
+    print(f"[STRIPE] WARNING: no user matched customer_id={cust_id} or "
+          f"subscription_id={sub_id or 'n/a'} — update dropped: {list(updates.keys())}")
 
 
 async def stripe_webhook(request: Request):
@@ -157,6 +193,7 @@ async def stripe_webhook(request: Request):
 
         elif event_type == "customer.subscription.updated":
             cust_id = obj.get("customer", "")
+            sub_id  = obj.get("id", "")
             # Derive the plan from the subscription's active price. On downgrade,
             # upgrade, or plan switch inside the portal, this keeps us in sync.
             price_id = ""
@@ -173,29 +210,32 @@ async def stripe_webhook(request: Request):
             # past_due/unpaid sub keeps its plan until deletion (Stripe retries).
             if plan and status in ("active", "trialing"):
                 updates["plan"] = plan
-            await _set_plan_by_customer(cust_id, updates)
+            await _set_plan_by_customer(cust_id, updates, sub_id=sub_id)
             print(f"[STRIPE] Subscription updated cust={cust_id} status={status} "
                   f"plan={plan or '(unchanged)'} cancel_at_end={cancel_at_end}")
 
         elif event_type in ("customer.subscription.deleted", "customer.subscription.paused"):
             cust_id = obj.get("customer", "")
+            sub_id  = obj.get("id", "")
             await _set_plan_by_customer(cust_id, {
                 "plan": "free",
                 "subscription_status": "canceled",
                 "cancel_at_period_end": False,
-            })
+            }, sub_id=sub_id)
             print(f"[STRIPE] Subscription ended cust={cust_id} -> downgraded to free")
 
         elif event_type == "invoice.payment_failed":
             cust_id = obj.get("customer", "")
+            sub_id  = obj.get("subscription", "") or ""
             # Don't hard-downgrade — Stripe will retry per the dunning schedule.
             # Flag it so the UI can warn the user; deletion event handles final loss.
-            await _set_plan_by_customer(cust_id, {"subscription_status": "past_due"})
+            await _set_plan_by_customer(cust_id, {"subscription_status": "past_due"}, sub_id=sub_id)
             print(f"[STRIPE] Payment failed cust={cust_id} -> flagged past_due")
 
         elif event_type in ("invoice.paid", "invoice.payment_succeeded"):
             cust_id = obj.get("customer", "")
-            await _set_plan_by_customer(cust_id, {"subscription_status": "active"})
+            sub_id  = obj.get("subscription", "") or ""
+            await _set_plan_by_customer(cust_id, {"subscription_status": "active"}, sub_id=sub_id)
             print(f"[STRIPE] Payment succeeded cust={cust_id} -> active")
     except Exception as e:
         # We already recorded event_id as processed; if the work failed, roll the
