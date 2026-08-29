@@ -16,6 +16,7 @@ from pipeline.helpers import split_claims
 
 # User case study logging (MSc thesis evaluation data collection) -- new, self-contained
 import time
+import json
 from typing import Optional as _Optional
 from fastapi import Response
 from fastapi.responses import FileResponse, PlainTextResponse
@@ -934,6 +935,187 @@ async def verdict_page(vid: str, request: Request):
   <div class="foot">Snapshot generated {created}. Verdicts reflect evidence available at check time.</div>
 </div></body></html>"""
     return HTMLResponse(html, headers={"Cache-Control": "public, max-age=3600"})
+
+
+@app.get("/v/{vid}/embed", include_in_schema=False)
+async def verdict_embed(vid: str, request: Request):
+    """A compact, self-contained badge for a verdict — designed to be dropped
+    into any third-party page via an <iframe> (see /embed.js).
+
+    This is a distribution moat ChatGPT structurally cannot match: a publisher,
+    blogger, or journalist can stamp 'Verified by TruthScore: TRUE (87/100)' on
+    their article, linking back to the frozen permalink. Every embed is both a
+    trust signal for their readers and a backlink for us — the product spreads
+    across the web as an accountability layer, not a chat window.
+    """
+    from fastapi.responses import HTMLResponse
+    rec = await load_verdict(vid)
+    if not rec:
+        return HTMLResponse("<!doctype html><meta charset=utf-8><body style='margin:0'></body>",
+                            status_code=404)
+    claim = (rec.get("claim", "") or "")[:160]
+    verdict = (rec.get("verdict", "UNCERTAIN") or "UNCERTAIN").upper()
+    score = int(rec.get("score", 50))
+    color = _VERDICT_PAGE_COLORS.get(verdict, "#95a5a6")
+    base = str(request.base_url).rstrip("/")
+    page_url = f"{base}/v/{vid}"
+    html = f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  html,body{{margin:0}}
+  a.badge{{display:flex;align-items:center;gap:12px;box-sizing:border-box;
+    width:100%;max-width:520px;text-decoration:none;font:14px/1.4 -apple-system,Segoe UI,Roboto,sans-serif;
+    background:#12131f;color:#eeeef8;border:1px solid #2a2c40;border-left:5px solid {color};
+    border-radius:12px;padding:12px 16px}}
+  .v{{font-weight:800;color:{color};font-size:15px;letter-spacing:.3px;white-space:nowrap}}
+  .sc{{background:#1e2034;border-radius:8px;padding:3px 9px;font-weight:700;font-size:13px;white-space:nowrap}}
+  .cl{{color:#c9c9e0;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
+  .bp{{color:#8a8aa8;font-size:11px;white-space:nowrap}}
+</style></head><body>
+<a class="badge" href="{_esc(page_url)}" target="_blank" rel="noopener">
+  <span class="v">{_esc(verdict)}</span>
+  <span class="sc">{score}/100</span>
+  <span class="cl" title="{_esc(claim)}">{_esc(claim)}</span>
+  <span class="bp">✓ TruthScore</span>
+</a></body></html>"""
+    return HTMLResponse(html, headers={
+        "Cache-Control": "public, max-age=3600",
+        # Explicitly allow framing anywhere — the badge is meant to be embedded.
+        "X-Frame-Options": "ALLOWALL",
+        "Content-Security-Policy": "frame-ancestors *",
+    })
+
+
+@app.get("/embed.js", include_in_schema=False)
+async def embed_js(request: Request):
+    """Publisher embed snippet. A site drops:
+
+        <div data-truthscore="VERDICT_ID"></div>
+        <script async src="https://<host>/embed.js"></script>
+
+    and every matching element is replaced with a responsive iframe rendering
+    that verdict's badge. Self-contained, no dependencies, safe to cache hard."""
+    from fastapi.responses import Response as _Resp
+    base = str(request.base_url).rstrip("/")
+    js = f"""(function(){{
+  var ORIGIN={json.dumps(base)};
+  function mount(el){{
+    if(el.getAttribute('data-ts-mounted'))return;
+    var id=el.getAttribute('data-truthscore');
+    if(!id)return;
+    el.setAttribute('data-ts-mounted','1');
+    var f=document.createElement('iframe');
+    f.src=ORIGIN+'/v/'+encodeURIComponent(id)+'/embed';
+    f.title='TruthScore verdict';
+    f.loading='lazy';
+    f.setAttribute('scrolling','no');
+    f.style.cssText='width:100%;max-width:520px;height:64px;border:0;overflow:hidden';
+    el.innerHTML='';el.appendChild(f);
+  }}
+  function scan(){{
+    var els=document.querySelectorAll('[data-truthscore]');
+    for(var i=0;i<els.length;i++)mount(els[i]);
+  }}
+  if(document.readyState!=='loading')scan();
+  else document.addEventListener('DOMContentLoaded',scan);
+}})();"""
+    return _Resp(content=js, media_type="application/javascript",
+                 headers={"Cache-Control": "public, max-age=86400"})
+
+
+@app.get("/accuracy", include_in_schema=False)
+async def accuracy_page():
+    """Public track-record page — radical transparency ChatGPT never offers.
+
+    A fact-checker that publishes its OWN calibration (how often a claim scored
+    ~80/100 actually turns out true) earns a kind of trust a black-box chatbot
+    can't. We render the live ECE + the predicted→observed calibration curve +
+    per-topic accuracy straight from real user feedback. When the sample is too
+    small we say so honestly rather than fake a number."""
+    from fastapi.responses import HTMLResponse
+    try:
+        rep = calibration_report()
+    except Exception as e:
+        print(f"[ACCURACY] report failed: {e}")
+        rep = {"samples": 0, "enough_data": False, "ece": {}, "calibration_map": {}, "weak_domains": []}
+
+    samples = int(rep.get("samples", 0) or 0)
+    enough = bool(rep.get("enough_data"))
+    ece_obj = rep.get("ece") or {}
+    ece_val = ece_obj.get("ece")
+    ece_verdict = ece_obj.get("verdict", "no-data")
+    cal_map = rep.get("calibration_map") or {}
+    weak = rep.get("weak_domains") or []
+
+    # Calibration bars: predicted score bucket → observed accuracy.
+    bars = ""
+    for bucket in sorted(cal_map.keys(), key=lambda x: int(x)):
+        acc = cal_map[bucket]
+        col = "#2ecc71" if acc >= 62 else "#e74c3c" if acc < 38 else "#f1c40f"
+        bars += (f'<div class="row"><span class="lbl">{_esc(str(bucket))}–{int(bucket)+9}</span>'
+                 f'<span class="track"><span class="fill" style="width:{max(2,int(acc))}%;background:{col}"></span></span>'
+                 f'<span class="val">{int(acc)}%</span></div>')
+    if not bars:
+        bars = '<p class="muted">Not enough feedback yet to plot the curve.</p>'
+
+    weak_html = ""
+    if weak:
+        rows = "".join(
+            f'<li>{_esc(w.get("topic",""))} — <b>{round(float(w.get("accuracy",0))*100)}%</b> '
+            f'<span class="muted">({int(w.get("n",0))} samples)</span></li>'
+            for w in weak[:8])
+        weak_html = f'<h3>Where we\'re weakest (working on it)</h3><ul>{rows}</ul>'
+
+    ece_display = ("—" if ece_val is None else f"{ece_val:.3f}")
+    banner = ("" if enough else
+              '<div class="note">⚠️ Early days — this track record is still being '
+              'built from real user feedback. Numbers below stabilize as more '
+              'verdicts get rated.</div>')
+
+    html = f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TruthScore — Our Accuracy, In The Open</title>
+<meta name="description" content="TruthScore publishes its own calibration and accuracy from real user feedback. Radical transparency.">
+<style>
+  :root{{color-scheme:dark}}
+  body{{margin:0;background:#0f101c;color:#eeeef8;font:16px/1.6 -apple-system,Segoe UI,Roboto,sans-serif}}
+  .wrap{{max-width:760px;margin:0 auto;padding:44px 22px 90px}}
+  .brand{{color:#9898b8;font-weight:700;letter-spacing:.3px}}
+  h1{{font-size:38px;margin:12px 0 4px;letter-spacing:-.5px}}
+  .sub{{color:#c9c9e0;margin-bottom:26px}}
+  .cards{{display:flex;gap:14px;flex-wrap:wrap;margin:20px 0}}
+  .card{{flex:1;min-width:150px;background:#161826;border:1px solid #2a2c40;border-radius:14px;padding:18px}}
+  .big{{font-size:34px;font-weight:800}}
+  .clbl{{color:#9898b8;font-size:13px;margin-top:4px}}
+  h3{{margin:30px 0 10px;font-size:15px;text-transform:uppercase;letter-spacing:.5px;color:#c9c9e0}}
+  .row{{display:flex;align-items:center;gap:12px;margin:7px 0}}
+  .lbl{{width:64px;color:#9898b8;font-size:13px;text-align:right}}
+  .track{{flex:1;height:14px;background:#1e2034;border-radius:7px;overflow:hidden}}
+  .fill{{display:block;height:100%}}
+  .val{{width:44px;font-weight:700;font-size:13px}}
+  .muted{{color:#9898b8}}
+  .note{{background:#1e1a12;border:1px solid #4a3a18;border-radius:10px;padding:12px 16px;color:#e8c98a;margin:8px 0 20px}}
+  ul{{padding-left:20px}} li{{margin:6px 0}}
+  a.cta{{display:inline-block;margin-top:34px;background:#7c6cff;color:#0f101c;font-weight:700;text-decoration:none;padding:12px 22px;border-radius:10px}}
+  .foot{{margin-top:26px;color:#6d6d8a;font-size:13px}}
+</style></head><body><div class="wrap">
+  <div class="brand">TruthScore</div>
+  <h1>Our accuracy, in the open</h1>
+  <div class="sub">Most AI tools ask you to trust them. We show you our receipts — calibration measured from real verdicts users rated.</div>
+  {banner}
+  <div class="cards">
+    <div class="card"><div class="big">{samples}</div><div class="clbl">rated verdicts</div></div>
+    <div class="card"><div class="big">{ece_display}</div><div class="clbl">calibration error (lower = better)</div></div>
+    <div class="card"><div class="big" style="text-transform:capitalize">{_esc(ece_verdict)}</div><div class="clbl">calibration status</div></div>
+  </div>
+  <h3>When we say a score, how often are we right?</h3>
+  <p class="muted" style="font-size:14px">Each bar: for claims we scored in that range, the share that turned out correct. A well-calibrated system tracks the diagonal.</p>
+  {bars}
+  {weak_html}
+  <a class="cta" href="/">Check a claim →</a>
+  <div class="foot">Computed live from user feedback. We publish the bad buckets too — that's the point.</div>
+</div></body></html>"""
+    return HTMLResponse(html, headers={"Cache-Control": "public, max-age=600"})
 
 
 @app.get("/tokens.css", include_in_schema=False)
