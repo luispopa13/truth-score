@@ -275,9 +275,10 @@ textarea::placeholder{color:var(--text3)}
 .google-btn:hover{border-color:var(--border3);background:var(--bg4)}
 .form-switch{text-align:center;font-size:13px;color:var(--text2);margin-top:16px}
 .form-switch a{color:#818cf8;cursor:pointer;font-weight:600}
-.pricing-modal{max-width:820px!important}
-.plans-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:4px}
-@media(max-width:640px){.plans-grid{grid-template-columns:1fr}}
+.pricing-modal{max-width:1060px!important;max-height:92vh;overflow-y:auto}
+.plans-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:10px}
+@media(max-width:900px){.plans-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:560px){.plans-grid{grid-template-columns:1fr}}
 .plan{background:var(--bg3);border:1px solid var(--border2);border-radius:16px;padding:24px 20px;position:relative;transition:all .2s}
 .plan:hover{border-color:rgba(91,78,255,.25)}
 .plan.featured{background:rgba(91,78,255,.05);border-color:rgba(91,78,255,.25)}
@@ -902,6 +903,10 @@ async function runVerify(){
     document.getElementById('vLoad').className='loading';
     if(e&&e.code===429){
       document.getElementById('verifyBtn').disabled=false;
+      // Server is the source of truth: if it blocked an anon user, reflect that
+      // in the badge immediately (client localStorage can drift from the
+      // per-IP server counter — shared IP, cleared storage, etc.).
+      if(!currentUser){localStorage.setItem('ts_anon_used',String(ANON_LIMIT));updateUsageBadge(null);}
       document.getElementById('limitBanner').className='limit-banner show';
       if(currentUser)showPricing();else showAuth('register');
       return;
@@ -952,7 +957,7 @@ async function verifyImage(file){
   }catch(e){
     clearInterval(stepTimer);
     document.getElementById('vLoad').className='loading';
-    if(e&&e.code===429){document.getElementById('limitBanner').className='limit-banner show';if(currentUser)showPricing();else showAuth('register');document.getElementById('verifyBtn').disabled=false;return;}
+    if(e&&e.code===429){if(!currentUser){localStorage.setItem('ts_anon_used',String(ANON_LIMIT));updateUsageBadge(null);}document.getElementById('limitBanner').className='limit-banner show';if(currentUser)showPricing();else showAuth('register');document.getElementById('verifyBtn').disabled=false;return;}
     showErr(e.message&&e.message.includes('fetch')?t('backendOffline'):(e.message||'error'));
   }
   const s1b=document.getElementById('ls1');if(s1b)s1b.textContent=t('ls1');
