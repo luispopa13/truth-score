@@ -347,7 +347,11 @@ async def _verify_compute(claim: str, key: str, eco: bool, t_total_start: float)
     # ── Steps 1+2: shared evidence retrieval + two-stage ranking ──
     # Extracted into retrieve_and_rank() so /verify, batch, and PDF share ONE
     # retrieval+rank implementation (per-source budgets, dedup, cross-encoder).
-    _rr = await retrieve_and_rank(claim, eco=eco)
+    # split_claims is independent of retrieval — run both concurrently.
+    _rr, sub_claims = await asyncio.gather(
+        retrieve_and_rank(claim, eco=eco),
+        split_claims(claim),
+    )
     topic, search_query, claim_en = _rr.topic, _rr.search_query, _rr.claim_en
     top_k, rest, all_evidence = _rr.top_k, _rr.rest, _rr.all_evidence
     models_used = _rr.models_used
@@ -357,10 +361,6 @@ async def _verify_compute(claim: str, key: str, eco: bool, t_total_start: float)
     t3 = _t.time()
     # Per-sub-claim breakdown for compound claims (filled by FActScore below).
     sub_results = []
-    # Split early (cheap) so we can force atomic decomposition on genuinely
-    # compound claims even when Path A is HIGH-confidence — a compound claim
-    # needs its parts scored individually, not just an overall verdict.
-    sub_claims = await split_claims(claim)
     is_compound = len(sub_claims) > 1
     if gemini_client and top_k:
         # Wikidata SPARQL is independent of the LLM verdict chain (it only adds
