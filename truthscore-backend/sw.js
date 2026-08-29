@@ -1,5 +1,5 @@
 // TruthScore Service Worker — offline fallback + PWA shell caching
-const CACHE = 'ts-v1';
+const CACHE = 'ts-v2';
 const OFFLINE_URL = '/';
 
 self.addEventListener('install', e => {
