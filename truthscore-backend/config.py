@@ -145,6 +145,31 @@ TAVILY_API_KEY       = os.getenv("TAVILY_API_KEY", "")
 # cancel). Defaults to localhost for dev; set PUBLIC_BASE_URL in prod.
 PUBLIC_BASE_URL      = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
 
+# Deployment environment. Anything other than a dev/local/test value is treated
+# as production, where certain misconfigurations must fail CLOSED rather than
+# silently fall back to a broken localhost default.
+ENV = os.getenv("ENV", os.getenv("ENVIRONMENT", "dev")).strip().lower()
+_IS_PROD = ENV not in ("dev", "development", "local", "localhost", "test", "")
+
+
+def get_public_base_url() -> str:
+    """Resolve the externally-visible base URL at call time (never frozen at
+    import). In production we REFUSE to fall back to localhost: a Stripe
+    success/cancel/return link pointing at localhost is a broken purchase flow,
+    so we fail closed (503) and force the operator to configure PUBLIC_BASE_URL.
+    In dev, localhost is fine."""
+    url = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
+    looks_local = (not url) or url.startswith("http://localhost") or \
+                  url.startswith("http://127.") or url.startswith("https://localhost")
+    if looks_local:
+        if _IS_PROD:
+            raise HTTPException(
+                status_code=503,
+                detail="PUBLIC_BASE_URL is not configured for production.",
+            )
+        return "http://localhost:8000"
+    return url
+
 # ── OpenAI client ─────────────────────────────────────────────
 # OpenAI removed -- using Gemini
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")

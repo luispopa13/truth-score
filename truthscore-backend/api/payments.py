@@ -23,17 +23,18 @@ async def create_checkout(req: CheckoutRequest, user=Depends(require_user)):
     if not price_id:
         raise HTTPException(400, f"Price ID lipsă pentru planul {req.plan}. Adaugă STRIPE_PRO_PRICE_ID sau STRIPE_ENT_PRICE_ID în .env")
     print(f"[STRIPE] Creating checkout: plan={req.plan}, price_id={price_id}, email={user.get('email')}")
-    # Append the Stripe session-id placeholder with the correct separator:
-    # "?" when success_url has no query string yet, "&" when it already does.
-    _sep = "&" if "?" in req.success_url else "?"
-    success_url = req.success_url + _sep + "session_id={CHECKOUT_SESSION_ID}"
+    # Build the redirect URLs server-side from the trusted base URL — never from
+    # client input (open-redirect protection). Fails closed in prod if unset.
+    base = get_public_base_url()
+    success_url = f"{base}/?payment=success&session_id={{CHECKOUT_SESSION_ID}}"
+    cancel_url  = f"{base}/"
     try:
         session = stripe.checkout.Session.create(
             mode="subscription",
             payment_method_types=["card"],
             line_items=[{"price": price_id, "quantity": 1}],
             success_url=success_url,
-            cancel_url=req.cancel_url,
+            cancel_url=cancel_url,
             customer_email=user["email"],
             metadata={"user_id": user["id"], "plan": req.plan},
         )
@@ -215,6 +216,6 @@ async def customer_portal(user=Depends(require_user)):
         raise HTTPException(400, "No subscription found")
     session = stripe.billing_portal.Session.create(
         customer=cust_id,
-        return_url=f"{PUBLIC_BASE_URL}/app",
+        return_url=f"{get_public_base_url()}/",
     )
     return {"portal_url": session.url}

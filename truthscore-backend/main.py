@@ -120,6 +120,38 @@ except Exception as _e:
 _READY = False
 
 
+# Security headers: applied to every response. X-Frame-Options + frame-ancestors
+# stop clickjacking (the dashboard is never meant to be iframed); nosniff blocks
+# MIME-confusion; Referrer-Policy avoids leaking full URLs cross-origin. The CSP
+# is REPORT-ONLY for now (it won't break anything) because the dashboard/privacy
+# pages use inline <style>/<script> and load AdSense + Google fonts — we ship it
+# observe-only first, then flip to enforcing once violations are clean.
+_CSP_REPORT_ONLY = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline' https://pagead2.googlesyndication.com "
+    "https://www.googletagservices.com https://accounts.google.com; "
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+    "font-src 'self' https://fonts.gstatic.com; "
+    "img-src 'self' data: https:; "
+    "connect-src 'self' https:; "
+    "frame-src https://accounts.google.com https://googleads.g.doubleclick.net; "
+    "frame-ancestors 'none'; base-uri 'self'"
+)
+
+
+@app.middleware("http")
+async def _security_headers(request: Request, call_next):
+    """Stamp defensive headers on every response (clickjacking, MIME-sniffing,
+    referrer leakage). CSP ships report-only until inline usage is cleaned up."""
+    response = await call_next(request)
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("X-Permitted-Cross-Domain-Policies", "none")
+    response.headers.setdefault("Content-Security-Policy-Report-Only", _CSP_REPORT_ONLY)
+    return response
+
+
 @app.middleware("http")
 async def _correlation_and_metrics(request: Request, call_next):
     """Assign/propagate a correlation id (X-Request-ID), time the request, feed
@@ -214,14 +246,27 @@ async def require_admin(user=Depends(require_user)):
 # blindly lets an attacker rotate the header to dodge the anonymous per-IP quota.
 # Trust it ONLY when TRUST_PROXY says we sit behind a proxy/LB that overwrites
 # it; otherwise fall back to the socket peer, which can't be forged.
+#
+# When trusted, take the Nth-from-RIGHT entry, not the leftmost. Each proxy in
+# the chain APPENDS the address it saw, so the rightmost entries are the ones our
+# own infrastructure added and can be trusted; the leftmost are client-supplied
+# and spoofable. TRUSTED_PROXY_HOPS = how many proxies sit in front of us
+# (default 1): with one hop we want the last entry, with two we want the
+# second-to-last, etc. This stops "X-Forwarded-For: <spoofed>, <real>" evasion.
 _TRUST_PROXY = os.getenv("TRUST_PROXY", "").lower() in ("1", "true", "yes")
+_TRUSTED_PROXY_HOPS = max(1, int(os.getenv("TRUSTED_PROXY_HOPS", "1")))
 
 
 def _client_ip(request: Request) -> str:
     if _TRUST_PROXY:
         xff = request.headers.get("x-forwarded-for", "")
         if xff:
-            return xff.split(",")[0].strip()
+            parts = [p.strip() for p in xff.split(",") if p.strip()]
+            if parts:
+                # Nth-from-right; clamp to the leftmost if the chain is shorter
+                # than expected (never index past the start of the list).
+                idx = min(_TRUSTED_PROXY_HOPS, len(parts))
+                return parts[-idx]
     return request.client.host if request.client else ""
 
 
@@ -272,7 +317,7 @@ async def enforce_quota(user: dict | None, text: str, client_ip: str, fp: str = 
                       "Creeaza un cont gratuit pentru 10/zi + bonusuri.")
         else:
             detail = (f"Limita zilnica de {info.get('limit')} verificari atinsa. "
-                      "Upgrade la Pro pentru mai mult: /app#pricing")
+                      "Upgrade la Pro pentru mai mult: /?pricing=1")
         raise HTTPException(status_code=HTTPStatus.TOO_MANY_REQUESTS, detail=detail)
     return info
 
@@ -446,6 +491,9 @@ async def verify_stream(req: VerifyRequest, request: Request,
                              headers={"Cache-Control": "no-cache",
                                       "X-Accel-Buffering": "no",
                                       "Connection": "keep-alive"})
+
+
+@app.post("/analyze-text", response_model=TextAnalysisResponse)
 async def analyze_text(req: VerifyRequest, response: Response,
                        request: Request,
                        user: dict = Depends(get_current_user)):
@@ -887,6 +935,7 @@ pixels inside the extension.</p>
 <li><b>Verification inputs:</b> the claims or paragraphs you submit, stored to improve verdict quality, build calibration statistics and prevent abuse.</li>
 <li><b>Feedback:</b> thumbs up/down signals you optionally send.</li>
 <li><b>Usage counters:</b> daily verification counts and rate-limit identifiers (IP address).</li>
+<li><b>Anti-abuse device signal:</b> a browser fingerprint (a hash derived from characteristics such as your browser, screen and a canvas rendering test) used solely to enforce the free-tier daily limit fairly and prevent quota evasion. It is not used for advertising or cross-site tracking.</li>
 </ul>
 </section>
 

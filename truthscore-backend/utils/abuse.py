@@ -141,13 +141,24 @@ async def anon_ip_check(ip: str, fp: str = ""):
                         "creează un cont gratuit pentru a continua")
         return False, info
     day = _utc_day()
-    # Use IP+fingerprint combined key when fingerprint is available — same device
-    # shares one quota even across incognito sessions on the same browser.
-    key_id = f"{ip}:{fp[:32]}" if fp else ip
-    key = f"ts:anon:{key_id}:{day}"
+    # Anchor the quota on the SERVER-OBSERVED IP, which the client can't forge
+    # (unlike the X-Browser-Fp header). The fingerprint may only NARROW the
+    # allowance, never widen it: we count against both the IP key and, when a
+    # fingerprint is present, an IP-independent fingerprint key, then enforce the
+    # cap on the MAX of the two. This closes two evasion routes at once:
+    #   • rotating the fingerprint header  -> the IP counter still climbs
+    #   • rotating the IP (VPN/mobile)      -> the fingerprint counter still climbs
+    # An attacker must rotate BOTH to gain a single extra check.
+    ip_key = f"ts:anon:{ip}:{day}"
     try:
-        used = await redis.incr(key)
-        await redis.expire(key, 172800)
+        ip_used = await redis.incr(ip_key)
+        await redis.expire(ip_key, 172800)
+        used = ip_used
+        if fp:
+            fp_key = f"ts:anonfp:{fp[:32]}:{day}"
+            fp_used = await redis.incr(fp_key)
+            await redis.expire(fp_key, 172800)
+            used = max(ip_used, fp_used)
         allowed = used <= ANON_DAILY_CAP
         info = dict(base); info.update({"used": used, "allowed": allowed})
         return allowed, info

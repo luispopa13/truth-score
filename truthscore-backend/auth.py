@@ -639,7 +639,8 @@ async def _verify_google_id_token(token: str) -> dict:
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(401, f"Invalid Google ID token: {str(e)[:80]}")
+        print(f"[GOOGLE-OAUTH] ID-token verify error: {type(e).__name__}: {str(e)[:300]}")
+        raise HTTPException(401, "Invalid Google token")
     if claims.get("iss") not in ("accounts.google.com", "https://accounts.google.com"):
         raise HTTPException(401, "Untrusted Google token issuer")
     if claims.get("aud") not in _GOOGLE_CLIENT_IDS:
@@ -672,10 +673,26 @@ async def _google_login_or_register(email: str, name: str) -> dict:
     else:
         user_id = str(user["_id"])
         _tv = user.get("token_version", 0)
+        # ── Account pre-hijack defense ──────────────────────────────
+        # Google has just PROVEN this person controls `email`. If the existing
+        # account still carries a local password (someone registered this email
+        # with a password but never proved they own it), that password could be
+        # an attacker who pre-registered the victim's address to lie in wait.
+        # Since Google verified ownership, the Google user is the legitimate
+        # owner: wipe the password so the pre-set credential can't log in, and
+        # bump token_version to instantly void any session the pre-registrant
+        # opened. A genuine owner simply uses "reset password" or Google going
+        # forward — no legitimate access is lost.
+        updates = {"auth_provider": "google"}
+        if user.get("password"):
+            updates["password"] = ""
+            _tv = int(_tv) + 1
+            updates["token_version"] = _tv
+            print(f"[SECURITY] Google merge cleared pre-existing password for "
+                  f"user {user_id} (pre-hijack defense); sessions voided.")
         if name and user.get("name") != name:
-            await db.users.update_one(
-                {"_id": user["_id"]},
-                {"$set": {"name": name, "auth_provider": "google"}})
+            updates["name"] = name
+        await db.users.update_one({"_id": user["_id"]}, {"$set": updates})
     token = create_token(user_id, _tv)
     await _register_session(user_id, token)
     return {"token": token, "user_id": user_id, "email": email, "name": name}
@@ -688,9 +705,9 @@ async def google_auth(req: GoogleAuthRequest):
     1. ID token (JWT — 3 dot-separated parts): verified offline via Google's
        public keys. Audience check prevents token-substitution takeover.
     2. Access token (opaque string): comes from chrome.identity.getAuthToken()
-       in the Chrome extension. Verified by calling Google's userinfo endpoint.
-       Slightly weaker (no aud check) but acceptable because access tokens from
-       the extension are short-lived and email_verified is enforced.
+       in the Chrome extension. Verified by calling Google's tokeninfo endpoint,
+       which returns the token's audience — we enforce aud/azp ∈ our client IDs
+       (token-substitution defense) plus email_verified, then read identity.
     """
     if not AUTH_AVAILABLE:
         raise HTTPException(503, "Auth not configured")
@@ -701,22 +718,46 @@ async def google_auth(req: GoogleAuthRequest):
         email = (claims.get("email") or "").lower()
         name  = claims.get("name", "") or claims.get("given_name", "")
     else:
-        # Access token path (Chrome extension getAuthToken flow)
+        # Access token path (Chrome extension getAuthToken flow).
+        # An opaque access token carries no audience of its own, so before we
+        # trust it we ask Google's tokeninfo endpoint who it was minted FOR. If
+        # its aud/azp isn't one of OUR client IDs, it's a token issued for some
+        # OTHER app that the user happened to authorize — accepting it would let
+        # that app's operator log into the victim's TruthScore account
+        # (token-substitution / confused-deputy). We reject it. tokeninfo also
+        # returns email + email_verified, so it doubles as the verified identity.
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(
-                "https://www.googleapis.com/oauth2/v3/userinfo",
-                headers={"Authorization": f"Bearer {req.token}"},
+            ti = await client.get(
+                "https://oauth2.googleapis.com/tokeninfo",
+                params={"access_token": req.token},
             )
-            if resp.status_code != 200:
-                raise HTTPException(401, "Invalid Google access token")
-            info = resp.json()
-        _ev = info.get("email_verified", info.get("verified_email", False))
+        if ti.status_code != 200:
+            raise HTTPException(401, "Invalid Google access token")
+        ti_json = ti.json()
+        # Audience gate — only accept tokens minted for one of our client IDs.
+        aud = ti_json.get("aud", "")
+        azp = ti_json.get("azp", "")
+        if _GOOGLE_CLIENT_IDS and not (aud in _GOOGLE_CLIENT_IDS or azp in _GOOGLE_CLIENT_IDS):
+            raise HTTPException(401, "Google token was not issued for this application")
+        _ev = ti_json.get("email_verified", False)
         if not (_ev is True or str(_ev).lower() == "true"):
             raise HTTPException(401, "Google email not verified")
-        email = info.get("email", "").lower()
+        email = (ti_json.get("email") or "").lower()
         if not email:
-            raise HTTPException(400, "No email in Google user info")
-        name  = info.get("name", "") or info.get("given_name", "")
+            raise HTTPException(400, "No email in Google token info")
+        # tokeninfo omits display name; fetch it from userinfo (best-effort).
+        name = ""
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    "https://www.googleapis.com/oauth2/v3/userinfo",
+                    headers={"Authorization": f"Bearer {req.token}"},
+                )
+                if resp.status_code == 200:
+                    info = resp.json()
+                    name = info.get("name", "") or info.get("given_name", "")
+        except Exception:
+            pass
 
     return await _google_login_or_register(email, name)
 
@@ -786,7 +827,9 @@ async def google_exchange(code: str, code_verifier: str, redirect_uri: str):
                 },
             )
             if token_resp.status_code != 200:
-                raise HTTPException(401, f"Google token exchange failed: {token_resp.text[:200]}")
+                print(f"[GOOGLE-OAUTH] token exchange failed "
+                      f"({token_resp.status_code}): {token_resp.text[:300]}")
+                raise HTTPException(401, "Google sign-in failed. Please try again.")
             tok_json = token_resp.json()
             id_tok       = tok_json.get("id_token", "")
             access_token = tok_json.get("access_token", "")
@@ -834,4 +877,5 @@ async def google_exchange(code: str, code_verifier: str, redirect_uri: str):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(500, f"Eroare Google OAuth exchange: {str(e)[:100]}")
+        print(f"[GOOGLE-OAUTH] exchange error: {type(e).__name__}: {str(e)[:300]}")
+        raise HTTPException(500, "Google sign-in failed. Please try again.")

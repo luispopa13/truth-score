@@ -171,9 +171,11 @@ class BatchVerifyResponse(BaseModel):
 
 
 class CheckoutRequest(BaseModel):
+    # success_url / cancel_url are intentionally NOT accepted from the client:
+    # letting the caller choose the post-checkout redirect is an open-redirect /
+    # phishing vector (Stripe would happily bounce the user to any URL). They're
+    # built server-side from the trusted PUBLIC_BASE_URL in create_checkout.
     plan: str = "pro"
-    success_url: str = f"{PUBLIC_BASE_URL}/app?payment=success"
-    cancel_url: str = f"{PUBLIC_BASE_URL}/app"
 
 
 class GoogleAuthRequest(BaseModel):
