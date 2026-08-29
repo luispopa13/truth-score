@@ -391,7 +391,8 @@ async def verify(req: VerifyRequest, response: Response,
     # id. Skip cache hits' re-save is unnecessary — every distinct result gets a
     # stable /v/{id}. Best-effort: a failed save just means no share link.
     try:
-        _vid = await save_verdict(result.model_dump())
+        _uid = (user.get("id") or "") if user else ""
+        _vid = await save_verdict(result.model_dump(), user_id=_uid)
         if _vid:
             response.headers["X-TruthScore-Verdict-Id"] = _vid
     except Exception as e:
@@ -496,7 +497,8 @@ async def verify_stream(req: VerifyRequest, request: Request,
                 payload["_interactionId"] = interaction_id
             # Permanent shareable permalink id (moat) — best-effort.
             try:
-                _vid = await save_verdict(payload)
+                _uid = (user.get("id") or "") if user else ""
+                _vid = await save_verdict(payload, user_id=_uid)
                 if _vid:
                     payload["_verdictId"] = _vid
             except Exception as e:
@@ -1179,6 +1181,22 @@ async def login(data: UserLogin):
 @app.get("/auth/me")
 async def me(user=Depends(require_user)):
     return await get_user_out(user)
+
+
+@app.get("/me/history")
+async def my_history(limit: int = 50, user=Depends(require_user)):
+    """The signed-in user's private fact-check archive — every claim they've
+    checked, newest first, each with its permanent /v/{id} permalink. This is a
+    stickiness lever: your verdict history lives in TruthScore, not in an
+    ephemeral chat. Best-effort; returns an empty list if the store is down."""
+    try:
+        from pipeline.verdict_store import list_user_verdicts
+        uid = user.get("id") or ""
+        items = await list_user_verdicts(uid, limit=limit)
+        return {"count": len(items), "items": items}
+    except Exception as e:
+        print(f"[HISTORY] listing skipped (non-fatal): {e}")
+        return {"count": 0, "items": []}
 
 
 @app.post("/auth/logout")

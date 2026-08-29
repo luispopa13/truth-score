@@ -79,23 +79,26 @@ def _cache_put(vid: str, record: dict) -> None:
         _cache.popitem(last=False)
 
 
-async def save_verdict(payload: dict) -> str | None:
+async def save_verdict(payload: dict, user_id: str = "") -> str | None:
     """Persist a full verdict payload and return its short id (None on failure).
 
     `payload` is the VerifyResponse (or TextAnalysisResponse) as a plain dict —
     the caller passes model.model_dump(). We store it verbatim so /v/{id} can
     re-render the exact snapshot, plus a few denormalized fields for cheap OG
-    metadata without re-parsing the whole blob.
+    metadata without re-parsing the whole blob. `user_id` (when the check was
+    made while signed in) links the verdict to the user's private history.
     """
     _try_init_mongo()
     vid = new_verdict_id()
     record = {
         "id": vid,
         "created_at": datetime.now(timezone.utc).isoformat(),
+        "user_id": user_id or "",
         "claim": (payload.get("claim") or payload.get("text") or "")[:1000],
         "verdict": payload.get("verdict", "UNCERTAIN"),
         "score": payload.get("score", 50),
         "confidence": payload.get("confidence", ""),
+        "topic": payload.get("topic", "general"),
         "payload": payload,
     }
 
@@ -144,6 +147,75 @@ def _scan_jsonl(vid: str) -> dict | None:
     except Exception as e:
         print(f"[VERDICT-STORE] JSONL read failed: {e}")
     return found
+
+
+def _scan_jsonl_user(user_id: str, limit: int) -> list[dict]:
+    """Blocking JSONL scan for a user's verdicts. Newest last-write wins, then
+    we return the most-recent `limit`. Used only when Mongo is unavailable."""
+    if not VERDICTS_FILE.exists() or not user_id:
+        return []
+    by_id: "OrderedDict[str, dict]" = OrderedDict()
+    try:
+        with open(VERDICTS_FILE, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if rec.get("user_id") == user_id:
+                    # Last write wins (re-verify overwrites the same id).
+                    by_id[rec["id"]] = rec
+                    by_id.move_to_end(rec["id"])
+    except Exception as e:
+        print(f"[VERDICT-STORE] JSONL user scan failed: {e}")
+        return []
+    # File is append-order == chronological; take the newest `limit`, newest first.
+    recs = list(by_id.values())
+    recs.reverse()
+    return recs[:limit]
+
+
+def _summarize(rec: dict) -> dict:
+    """Compact history-row projection (no heavy payload)."""
+    return {
+        "id": rec.get("id", ""),
+        "created_at": rec.get("created_at", ""),
+        "claim": rec.get("claim", ""),
+        "verdict": rec.get("verdict", "UNCERTAIN"),
+        "score": rec.get("score", 50),
+        "confidence": rec.get("confidence", ""),
+        "topic": rec.get("topic", "general"),
+        "url": f"/v/{rec.get('id','')}",
+    }
+
+
+async def list_user_verdicts(user_id: str, limit: int = 50) -> list[dict]:
+    """Return a user's most-recent verdicts as compact history rows (newest
+    first). Mongo is primary (indexed-ish query, bounded); JSONL scan is the
+    fallback. Never raises — a failure returns an empty history."""
+    if not user_id:
+        return []
+    limit = max(1, min(int(limit or 50), 200))
+
+    _try_init_mongo()
+    if _mongo_collection is not None:
+        try:
+            cursor = _mongo_collection.find({"user_id": user_id}).sort(
+                "created_at", -1
+            ).limit(limit)
+            docs = await cursor.to_list(length=limit)
+            if docs is not None:
+                return [_summarize(d) for d in docs]
+        except Exception as e:
+            print(f"[VERDICT-STORE] Mongo user query failed, JSONL fallback ({e})")
+
+    recs = await asyncio.get_event_loop().run_in_executor(
+        None, _scan_jsonl_user, user_id, limit
+    )
+    return [_summarize(r) for r in recs]
 
 
 async def load_verdict(vid: str) -> dict | None:
