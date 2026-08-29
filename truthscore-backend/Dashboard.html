@@ -222,6 +222,15 @@ textarea::placeholder{color:var(--text3)}
 .src-pub{font-size:10px;color:var(--text2);font-family:'JetBrains Mono',monospace}
 .src-snip{font-size:11px;color:var(--text2);margin-top:4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.45}
 .src-claim-badge{font-size:10px;color:var(--text2);margin-top:3px;font-style:italic;opacity:.8}
+.claim-overview-item{display:flex;align-items:center;gap:9px;padding:9px 12px;border-radius:9px;border:1px solid var(--border2);margin-bottom:6px;background:rgba(255,255,255,.015);transition:background .15s}
+.claim-overview-item:hover{background:rgba(255,255,255,.032)}
+.claim-num{font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;color:var(--text2);min-width:22px;flex-shrink:0}
+.claim-text{flex:1;font-size:12.5px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.claim-score-pill{font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px;background:rgba(128,128,160,.1);white-space:nowrap;flex-shrink:0}
+.fb-note-area{margin-top:10px;padding:10px 12px;background:rgba(91,78,255,.05);border:1px solid rgba(91,78,255,.15);border-radius:9px}
+.fb-note-submit{padding:5px 14px;background:var(--accent);color:#fff;border:none;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Inter',sans-serif;transition:background .15s}
+.fb-note-submit:hover{background:#4c3fd4}
+.para-sub-card{display:block;border-radius:10px;border:1px solid var(--border2);margin-bottom:10px;overflow:hidden;background:rgba(255,255,255,.012)}
 .cache-badge{display:inline-block;font-size:10px;font-weight:600;padding:2px 7px;border-radius:10px;background:rgba(91,91,255,.15);color:#7c74ff;letter-spacing:.3px;margin-bottom:6px;}
 .src-tag{flex-shrink:0;font-size:9px;font-weight:700;padding:2px 6px;border-radius:5px;align-self:flex-start;margin-top:2px;font-family:'JetBrains Mono',monospace}
 .ts{background:var(--green-bg);color:var(--green)}
@@ -284,8 +293,8 @@ textarea::placeholder{color:var(--text3)}
 .plan.featured{background:rgba(91,78,255,.05);border-color:rgba(91,78,255,.25)}
 .plan-badge{position:absolute;top:-11px;left:50%;transform:translateX(-50%);background:var(--accent);color:#fff;font-size:9px;font-weight:700;padding:3px 12px;border-radius:20px;font-family:'JetBrains Mono',monospace;white-space:nowrap;letter-spacing:.5px}
 .plan-name{font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1.2px;margin-bottom:12px;font-family:'JetBrains Mono',monospace}
-.plan-price{font-family:'Syne',sans-serif;font-size:44px;font-weight:800;line-height:1;margin-bottom:2px}
-.plan-price sup{font-size:20px;vertical-align:super;font-family:'Inter',sans-serif;font-weight:600}
+.plan-price{font-family:'Inter',sans-serif;font-size:38px;font-weight:900;line-height:1;margin-bottom:2px;letter-spacing:-1.5px}
+.plan-price sup{font-size:16px;vertical-align:super;font-family:'Inter',sans-serif;font-weight:700}
 .plan-period{font-size:12px;color:var(--text2);margin-bottom:20px}
 .plan-btn{display:block;width:100%;padding:10px;border-radius:9px;text-align:center;font-size:13px;font-weight:700;cursor:pointer;border:none;font-family:'Inter',sans-serif;margin-bottom:18px;transition:all .18s}
 .pbtn-a{background:var(--accent);color:#fff;box-shadow:0 4px 14px rgba(91,78,255,.3)}
@@ -856,7 +865,7 @@ async function runVerify(){
     if(token())headers['Authorization']='Bearer '+token();
     const fp=await getBrowserFingerprint();
     if(fp)headers['X-Browser-Fp']=fp;
-    const isParagraph=text.length>220||((text.match(/[.!?]+(?:\s|$)/g)||[]).length>1);
+    const isParagraph=text.length>220||((text.match(/[.!?]+(?:\s|$)/g)||[]).length>1)||(text.match(/,\s+[a-zA-ZÀ-ÖÙ-ÿ]/g)||[]).length>=2;
     let d,showAds=false;
     if(isParagraph){
       const r=await fetch(`${API}/analyze-text`,{method:'POST',headers,body:JSON.stringify({text})});
@@ -978,23 +987,67 @@ function renderTextAnalysis(d){
   const DIC={web:'🌐',wikipedia:'📖',wikidata:'🗄️',academic:'🎓',news:'📰',factcheck:'🔎'};
   document.getElementById('tp-sources').innerHTML=`<div class="sec-lbl">${t('sourcesTitle')} (${reg.length})</div><div style="font-size:11px;color:var(--text2);margin:-2px 0 10px">${LANG==='ro'?'Numerotate global pentru tot paragraful · verde = susține, roșu = contrazice (atribuirea în fila Sub-claims)':'Numbered globally for the whole paragraph · green = supports, red = contradicts (attribution in the Sub-claims tab)'}</div>`+
     reg.map((s,n)=>`<a id="src-${n}" class="src-line" href="${safeUrl(s.url)}" target="_blank" rel="noopener"><span class="src-num">${n}</span><span style="color:${s._stance==='ts'?'var(--green)':s._stance==='tc'?'var(--red)':'var(--text2)'};flex-shrink:0">${s._stance==='ts'?'✓':s._stance==='tc'?'✗':'•'}</span><span class="src-pub">${DIC[s.type]||'📄'} ${esc((s.publisher||'sursă').slice(0,42))}</span><span class="src-title" title="${esc(s.title||'')}">${esc(s.title||'')}</span></a>`).join('');
-      const PROC=LANG==='ro'?[['🔍','Despărțire','Paragraful a fost spart în afirmații atomice, independente și verificabile.'],['🔎','Căutare țintită','Pentru fiecare afirmație s-au adus surse din domenii de încredere, adaptate topicului ei.'],['⚖️','Cântărire dovezilor','Cross-encoder + NLI au evaluat fiecare sursă ca susținere sau contrazicere.'],['🧠','Verdict','Modelul de limbaj a sintetizat scorul final doar din dovezile cântărite, cu citări obligatorii.']]:[['🔍','Splitting','The paragraph was broken into atomic, independent, verifiable claims.'],['🔎','Targeted search','For each claim, sources were pulled from trusted domains matched to its topic.'],['⚖️','Weighing evidence','A cross-encoder + NLI scored every source as supporting or contradicting.'],['🧠','Verdict','The language model synthesized the final score only from the weighted evidence, with mandatory citations.']];
-  document.getElementById('tp-explain').innerHTML=`<div class="sec-lbl">${t('verifySteps')}</div>${PROC.map(p=>`<div class="proc-step"><span style="font-size:16px;flex-shrink:0">${p[0]}</span><span><b>${p[1]}</b> — ${p[2]}</span></div>`).join('')}`+
-    d.results.map((r,i)=>{const color=r.verdict==='TRUE'?'var(--green)':r.verdict==='FALSE'?'var(--red)':'var(--yellow)';
-      return `<div id="exp-${i}" class="sub-item" style="border-left:3px solid ${color};margin-top:10px"><div style="display:flex;justify-content:space-between;gap:10px;font-size:11px;font-weight:800;color:${color}"><span>${t('claimN')} #${i+1}</span><span>${TOPIC_ICONS[r.topic]||'🔍'} ${esc(TOPIC_LABELS[r.topic]||r.topic)}${r.confidence?' · '+esc(r.confidence):''}</span></div><div style="font-size:13px;font-weight:650;margin-top:6px">${esc(r.claim||'')}</div><div style="font-size:12px;color:#b8b8d4;margin-top:6px;line-height:1.65">${esc(r.explanation||'—')}</div><div style="display:flex;gap:14px;margin-top:8px;font-size:10px;color:var(--text2)"><span style="color:var(--green)">✓ ${(r.supporting||[]).length} ${t('supportN')}</span><span style="color:var(--red)">✗ ${(r.contradicting||[]).length} ${t('contradictN')}</span><span>• ${(r.neutral_sources||[]).length} ${LANG==='ro'?'neutre':'neutral'}</span></div></div>`;}).join('');
-  document.getElementById('tp-sub').innerHTML=`<div class="sec-lbl">${t('subTitle')} (${d.results.length})</div><div style="font-size:11px;color:var(--text2);margin:-2px 0 10px">${t('subIntro')}</div>`+
+      {
+    const nT=(d.results||[]).filter(r=>r.verdict==='TRUE').length;
+    const nF=(d.results||[]).filter(r=>r.verdict==='FALSE').length;
+    const ro2=LANG==='ro';
+    const introTxt=ro2
+      ?`Am identificat <b>${d.results.length} afirmații distincte</b> în textul tău, fiecare cu un grad diferit de adevăr.${nF>0?` <span style="color:var(--red)">${nF} ${nF===1?'este falsă':'sunt false'}</span>`:''}`
+      :`Found <b>${d.results.length} distinct claims</b> in your text, each with a different degree of truth.${nF>0?` <span style="color:var(--red)">${nF} ${nF===1?'is false':'are false'}</span>`:''}`;
+    const overviewHtml=d.results.map((r,i)=>{
+      const co=r.verdict==='TRUE'?'var(--green)':r.verdict==='FALSE'?'var(--red)':'var(--yellow)';
+      const ic=r.verdict==='TRUE'?'✅':r.verdict==='FALSE'?'❌':'⚠️';
+      const bg=r.verdict==='TRUE'?'rgba(16,185,129,.07)':r.verdict==='FALSE'?'rgba(239,68,68,.07)':'rgba(245,158,11,.07)';
+      return `<div class="claim-overview-item" onclick="jumpClaim(${i})" style="cursor:pointer;border-left:3px solid ${co};background:${bg}">
+        <span class="claim-num">#${i+1}</span>
+        <span style="font-size:13px;flex-shrink:0">${ic}</span>
+        <span class="claim-text" title="${esc(r.claim||'')}">${esc((r.claim||'').slice(0,90))}${(r.claim||'').length>90?'…':''}</span>
+        <span class="claim-score-pill" style="color:${co}">${r.score}%</span>
+      </div>`;
+    }).join('');
+    const PROC2=ro2?[['🔍','Despărțire','Paragraful a fost spart în afirmații atomice, independente și verificabile.'],['🔎','Căutare țintită','Pentru fiecare afirmație s-au adus surse din domenii de încredere, adaptate topicului ei.'],['⚖️','Cântărire dovezilor','Cross-encoder + NLI au evaluat fiecare sursă ca susținere sau contrazicere.'],['🧠','Verdict','Modelul de limbaj a sintetizat scorul final doar din dovezile cântărite, cu citări obligatorii.']]:[['🔍','Splitting','The paragraph was broken into atomic, independent, verifiable claims.'],['🔎','Targeted search','For each claim, sources were pulled from trusted domains matched to its topic.'],['⚖️','Weighing evidence','A cross-encoder + NLI scored every source as supporting or contradicting.'],['🧠','Verdict','The language model synthesized the final score only from the weighted evidence, with mandatory citations.']];
+    const latLine=d.latency&&d.latency.total_ms?`<div style="margin-top:10px;font-size:10.5px;color:var(--text2);opacity:.7">⏱ ${d.latency.total_ms.toFixed(0)}ms${d.latency.retrieval_ms?' · retrieval '+d.latency.retrieval_ms.toFixed(0)+'ms':''}${d.latency.nli_ms?' · NLI '+d.latency.nli_ms.toFixed(0)+'ms':''}</div>`:'';
+    document.getElementById('tp-explain').innerHTML=
+      `<div style="font-size:13.5px;color:var(--text);line-height:1.65;margin-bottom:12px">${introTxt}</div>`+
+      `<div style="margin-bottom:16px">${overviewHtml}</div>`+
+      `<div style="font-size:13px;line-height:1.75;padding:12px 14px;border-radius:10px;background:rgba(91,78,255,.06);border:1px solid rgba(91,78,255,.14);margin-bottom:16px">${explRomanian(d)}</div>`+
+      `<div class="sec-lbl">${t('verifySteps')}</div>`+
+      PROC2.map(p=>`<div class="proc-step"><span style="font-size:16px;flex-shrink:0">${p[0]}</span><span><b>${p[1]}</b> — ${p[2]}</span></div>`).join('')+
+      latLine;
+  }
+  document.getElementById('tp-sub').innerHTML=`<div class="sec-lbl">${t('subTitle')} (${d.results.length})</div>`+
     d.results.map((r,i)=>{const color=r.verdict==='TRUE'?'var(--green)':r.verdict==='FALSE'?'var(--red)':'var(--yellow)';
       const label=r.verdict==='TRUE'?t('TRUE'):r.verdict==='FALSE'?t('FALSE'):t('UNCERTAIN');
-      const lrow=(g,c,ic)=>{let seen=new Set(),out='';(g||[]).forEach(s=>{if(!s||!s._ref||seen.has(s._ref))return;seen.add(s._ref);
-        out+=`<a class="src-line" href="${safeUrl(s.url)}" target="_blank" rel="noopener" style="padding:5px 9px"><span class="src-num">${s._ref}</span><span style="color:${c};flex-shrink:0;font-size:11px">${ic}</span><span class="src-pub">${DIC[s.type]||'📄'} ${esc((s.publisher||'source').slice(0,38))}</span><span class="src-title">${esc((s.title||'').slice(0,64))}</span></a>`;});return out;};
-      const refBlock=lrow(r.supporting,'var(--green)','✓')+lrow(r.contradicting,'var(--red)','✗')+lrow(r.neutral_sources,'var(--text2)','•')||`<div style="font-size:10px;color:var(--text2);opacity:.7">${t('noDirect')}</div>`;
-      return `<div class="sub-item" onclick="jumpClaim(${i})" style="display:block;border-left:3px solid ${color};margin-bottom:8px;cursor:pointer">
-        <div style="display:flex;justify-content:space-between;gap:12px;color:${color};font-size:11px;font-weight:800"><span>${t('claimN')} #${i+1}</span><span>${label} · ${TOPIC_ICONS[r.topic]||'🔍'} ${esc(TOPIC_LABELS[r.topic]||r.topic)}</span></div>
-        <div style="font-size:13px;font-weight:650;margin-top:7px">${esc(r.claim||'')}</div>
-        <div style="font-size:11px;color:var(--text2);margin-top:5px">${esc((r.explanation||'').slice(0,140))}${(r.explanation||'').length>140?'…':''}</div>
-        <div style="display:flex;align-items:center;gap:8px;margin-top:8px"><div style="flex:1;height:5px;border-radius:99px;background:rgba(128,128,160,.22);overflow:hidden"><div style="height:100%;width:${Math.max(3,r.score)}%;background:${color};border-radius:99px"></div></div><span style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:${color};min-width:38px;text-align:right">${r.score}%</span></div>
-        <div style="margin-top:8px;font-size:9px;font-weight:800;color:var(--text2);opacity:.85;letter-spacing:.4px">${t('subSources')}</div>
-        <div style="margin-top:4px">${refBlock}</div></div>`;
+      const icon=r.verdict==='TRUE'?'✅':r.verdict==='FALSE'?'❌':'⚠️';
+      const miniSrc=(s,cls)=>s?`<a class="src" href="${safeUrl(s.url)}" target="_blank" rel="noopener" style="margin-bottom:4px">
+        <span class="src-ico">${SRC_ICONS[s.type]||'📄'}</span>
+        <div class="src-body"><div class="src-title">${esc((s.title||'').slice(0,72))}</div><div class="src-pub">${DIC[s.type]||'📄'} ${esc((s.publisher||'').slice(0,40))}</div>${s.snippet?`<div class="src-snip">${esc(s.snippet.slice(0,110))}</div>`:''}</div>
+        <span class="src-tag ${cls}">${cls==='ts'?'✓':cls==='tc'?'✗':'—'}</span></a>`:'';
+      const srcBlock=(()=>{
+        const sup=(r.supporting||[]).slice(0,5);
+        const con=(r.contradicting||[]).slice(0,4);
+        let h='';
+        if(sup.length)h+=`<div style="font-size:9.5px;font-weight:800;color:var(--green);margin:10px 0 5px;letter-spacing:.5px">✓ ${LANG==='ro'?'SURSE CARE CONFIRMĂ':'SUPPORTING SOURCES'} (${(r.supporting||[]).length})</div><div class="src-list" style="gap:4px">${sup.map(s=>miniSrc(s,'ts')).join('')}</div>`;
+        if(con.length)h+=`<div style="font-size:9.5px;font-weight:800;color:var(--red);margin:10px 0 5px;letter-spacing:.5px">✗ ${LANG==='ro'?'SURSE CARE CONTRAZIC':'CONTRADICTING SOURCES'} (${(r.contradicting||[]).length})</div><div class="src-list" style="gap:4px">${con.map(s=>miniSrc(s,'tc')).join('')}</div>`;
+        if(!h)h=`<div style="font-size:11px;color:var(--text2);opacity:.65;padding:8px 0">${t('noDirect')}</div>`;
+        return h;
+      })();
+      return `<div class="para-sub-card">
+        <div style="padding:12px 14px;border-bottom:1px solid var(--border);background:${r.verdict==='TRUE'?'rgba(16,185,129,.05)':r.verdict==='FALSE'?'rgba(239,68,68,.05)':'rgba(245,158,11,.05)'}">
+          <div style="display:flex;align-items:center;gap:10px">
+            <span style="font-size:20px">${icon}</span>
+            <div style="flex:1;min-width:0">
+              <div style="font-size:13.5px;font-weight:700;line-height:1.45">${esc(r.claim||'')}</div>
+              <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
+                <div style="flex:1;height:5px;border-radius:99px;background:rgba(128,128,160,.2);overflow:hidden"><div style="height:100%;width:${Math.max(3,r.score)}%;background:${color};border-radius:99px;transition:width 1s"></div></div>
+                <span style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:800;color:${color}">${r.score}% ${label}</span>
+              </div>
+            </div>
+          </div>
+          ${r.explanation?`<div style="font-size:12px;color:#b8b8d4;margin-top:8px;line-height:1.6;padding-left:30px">${esc(r.explanation)}</div>`:''}
+        </div>
+        <div style="padding:10px 14px">${srcBlock}</div>
+      </div>`;
     }).join('');
   document.getElementById('resultWrap').className='result-wrap active';
   document.querySelectorAll('.tabs .tab').forEach((t,i)=>t.classList.toggle('active',i===0));
@@ -1093,6 +1146,14 @@ function renderScore(d){
       <button class="fbbtn" id="fbN">👎</button>
       <button class="fbbtn" id="shareBtn" title="${LANG==='ro'?'Copiază linkul':'Copy share link'}">🔗 ${LANG==='ro'?'Distribuie':'Share'}</button>
       ${pdfBtn}
+    </div>
+    <div class="fb-note-area" id="fbNote" style="display:none">
+      <div style="font-size:11px;color:var(--text2);margin-bottom:5px">💬 ${LANG==='ro'?'Ce a fost greșit? — revizuit de oameni, niciodată aplicat automat:':'What was wrong? — reviewed by humans, never auto-applied:'}</div>
+      <textarea class="finput" id="fbNoteText" rows="2" placeholder="${LANG==='ro'?'ex: sursa era depășită, afirmația a fost greșit interpretată...':'e.g. source was outdated, claim was misread...'}" style="padding:7px 10px;font-size:12px;min-height:52px;resize:vertical;width:100%;box-sizing:border-box;margin-top:2px"></textarea>
+      <div style="display:flex;gap:8px;margin-top:7px;align-items:center">
+        <button class="fb-note-submit" onclick="submitFbNote()">→ ${LANG==='ro'?'Trimite':'Send'}</button>
+        <span style="font-size:10px;color:var(--text2);opacity:.65">ℹ️ ${LANG==='ro'?'Feedback-ul ajută la îmbunătățirea verdictelor viitoare.':'Feedback helps improve future verdicts.'}</span>
+      </div>
     </div>`;
   setTimeout(()=>{const c=document.getElementById('rc');if(c)c.style.strokeDashoffset=offset;},80);
   document.getElementById('fbY').onclick=()=>sendFb(true,d);
@@ -1213,71 +1274,56 @@ function perClaimExplanation(r){
 }
 
 function renderExplain(d){
+  const ro=LANG==='ro';
   let body='';
-  // Aggregate reason block \u2014 most important context, shown first
-  if(d.aggregate_reason){
-    const ar=LANG==='ro'?'Motiv agregat':'Aggregate verdict';
-    body+=`<div style="font-size:12px;line-height:1.6;padding:10px 13px;border-radius:10px;background:rgba(91,78,255,.08);border:1px solid rgba(91,78,255,.18);margin:14px 0 18px;color:#d0d0f0">\u2696\ufe0f <b>${ar}:</b> ${esc(d.aggregate_reason)}</div>`;
-  }
-  body += `<h3 style="margin:20px 0 14px">${t('overallVerdict')}</h3>`;
-  body += `<div class="expl-text">${explRomanian(d)}</div>`;
-  // Per-sub-claim mini cards for single /verify with decomposition
+  // \u2500\u2500 Verdict narrative \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+  body+=`<div style="font-size:13.5px;line-height:1.75;padding:12px 14px;border-radius:10px;background:rgba(91,78,255,.06);border:1px solid rgba(91,78,255,.14);margin-bottom:16px">${explRomanian(d)}</div>`;
+  // \u2500\u2500 Sub-claims list \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   const scrs=d.sub_claim_results||[];
+  const scStr=d.sub_claims||[];
   if(scrs.length>0){
-    const hdr=LANG==='ro'?'Detaliu per sub-afirma\u021bie':'Per-sub-claim breakdown';
-    body+=`<h3 style="margin:22px 0 12px">${hdr}</h3>`;
+    const hdr=ro?`Am identificat <b>${scrs.length} afirma\u021bii distincte</b> \u00een afirma\u021bia ta compus\u0103:`:
+                 `Detected <b>${scrs.length} distinct claims</b> in this compound statement:`;
+    body+=`<div style="font-size:13px;line-height:1.5;margin-bottom:10px">${hdr}</div>`;
     body+=scrs.map((r,i)=>{
-      const color=r.verdict==='TRUE'?'var(--green)':r.verdict==='FALSE'?'var(--red)':'var(--yellow)';
-      const label=r.verdict==='TRUE'?t('TRUE'):r.verdict==='FALSE'?t('FALSE'):t('UNCERTAIN');
-      const sup=(r.supporting||[]).length,con=(r.contradicting||[]).length;
-      return `<div style="border-left:3px solid ${color};padding:8px 12px;margin-bottom:8px;background:rgba(255,255,255,.02);border-radius:0 8px 8px 0">
-        <div style="color:${color};font-size:10px;font-weight:800;margin-bottom:4px">SUB-CLAIM #${i+1} \xb7 ${label}${r.confidence?' \xb7 '+r.confidence:''}</div>
-        <div style="font-size:12.5px;font-weight:650;margin-bottom:5px">${esc(r.claim||'')}</div>
-        <div style="height:4px;border-radius:99px;background:rgba(128,128,160,.22);overflow:hidden;margin-bottom:5px"><div style="height:100%;width:${Math.max(3,r.score)}%;background:${color};border-radius:99px"></div></div>
-        <div style="font-size:11.5px;color:#b8b8d4;line-height:1.55">${esc(r.explanation||'')}</div>
-        <div style="font-size:10px;color:var(--text2);margin-top:4px">${sup} supporting \xb7 ${con} contradicting</div>
+      const co=r.verdict==='TRUE'?'var(--green)':r.verdict==='FALSE'?'var(--red)':'var(--yellow)';
+      const lb=r.verdict==='TRUE'?t('TRUE'):r.verdict==='FALSE'?t('FALSE'):t('UNCERTAIN');
+      return `<div class="claim-overview-item" style="border-left:3px solid ${co};flex-direction:column;align-items:flex-start;gap:5px;margin-bottom:8px;cursor:default">
+        <div style="display:flex;width:100%;align-items:center;gap:8px">
+          <span class="claim-num">#${i+1}</span>
+          <span style="flex:1;font-size:12.5px;font-weight:650">${esc(r.claim||'')}</span>
+          <span class="claim-score-pill" style="color:${co}">${lb} \u00b7 ${r.score}%</span>
+        </div>
+        <div style="height:4px;width:100%;border-radius:99px;background:rgba(128,128,160,.2);overflow:hidden"><div style="height:100%;width:${Math.max(3,r.score)}%;background:${co};border-radius:99px"></div></div>
+        <div style="font-size:11.5px;color:#b8b8d4;line-height:1.5">${esc(r.explanation||'')}</div>
       </div>`;
     }).join('');
+  } else if(scStr.length>1){
+    const hdr=ro?`Am identificat <b>${scStr.length} afirma\u021bii distincte</b> \u00een aceast\u0103 propozi\u021bie:`:
+                 `Detected <b>${scStr.length} distinct claims</b> in this compound statement:`;
+    body+=`<div style="font-size:13px;line-height:1.5;margin-bottom:10px">${hdr}</div>`;
+    body+=scStr.map((c,i)=>`<div class="claim-overview-item" style="cursor:default"><span class="claim-num">#${i+1}</span><span class="claim-text">${esc(c)}</span></div>`).join('');
+    body+=`<div style="font-size:11px;color:var(--text2);margin:8px 0 14px;padding:8px 11px;border-radius:8px;background:rgba(255,255,255,.02);line-height:1.6">\ud83d\udca1 ${ro?'Verdictul de mai sus reflect\u0103 toate aceste afirma\u021bii \u00eempreun\u0103. Fila Sub-claims permite verificarea individual\u0103.':'The verdict above reflects all these claims together. The Sub-claims tab allows individual verification.'}</div>`;
   }
-  if(d.results && d.results.length>0){
-    body += `<h3 style="margin:22px 0 12px">${t('verifySteps')}</h3>`;
-    const PROC=[
-      ['\ud83d\udd0d',t('stepSplit'),t('stepSplitD')],
-      ['\ud83d\udd0e',t('stepSearch'),t('stepSearchD')],
-      ['\u2696\ufe0f',t('stepWeigh'),t('stepWeighD')],
-      ['\ud83d\udcca',t('stepVerdict'),t('stepVerdictD')],
-    ];
-    body += PROC.map(p=>`<div class="proc-step"><b>${p[0]} ${p[1]}</b><div>${p[2]}</div></div>`).join('');
-    body += `<h3 style="margin:22px 0 12px">${t('eachClaim')}</h3>`;
-    body += (d.results||[]).map((r,i)=>`
-      <div id="exp-${i}" class="claim-mini ${i===0?'hl':''}">
-        <div style="font-weight:650;margin-bottom:6px;cursor:pointer" onclick="jumpClaim(${i})">\u2192 ${esc(r.claim||'')}</div>
-        <div>${perClaimExplanation(r)}</div>
-      </div>`).join('');
-  } else {
-    // Single-claim: process steps + models + latency + evidence summary
-    body += `<h3 style="margin:22px 0 12px">${t('verifySteps')}</h3>`;
-    const PROC2=[
-      ['\ud83d\udd0d',t('stepSplit'),t('stepSplitD')],
-      ['\ud83d\udd0e',t('stepSearch'),t('stepSearchD')],
-      ['\u2696\ufe0f',t('stepWeigh'),t('stepWeighD')],
-      ['\ud83d\udcca',t('stepVerdict'),t('stepVerdictD')],
-    ];
-    body += PROC2.map(p=>`<div class="proc-step"><b>${p[0]} ${p[1]}</b><div>${p[2]}</div></div>`).join('');
-    if((d.models_used||[]).length||(d.latency&&d.latency.total_ms)){
-      body+=`<div style="margin-top:14px;font-size:11px;color:var(--text2);line-height:1.8">`;
-      if((d.models_used||[]).length) body+=`\ud83e\udd16 <b>Models:</b> ${esc(d.models_used.join(', '))}<br>`;
-      if(d.latency&&d.latency.total_ms) body+=`\u23f1 <b>Total:</b> ${d.latency.total_ms.toFixed(0)}ms${d.latency.retrieval_ms?' \xb7 retrieval '+d.latency.retrieval_ms.toFixed(0)+'ms':''}${d.latency.nli_ms?' \xb7 NLI '+d.latency.nli_ms.toFixed(0)+'ms':''}`;
-      body+=`</div>`;
-    }
-    const sup2=(d.supporting||[]).length,con2=(d.contradicting||[]).length,neu2=(d.neutral_sources||[]).length;
-    if(sup2+con2+neu2>0){
-      const ev=LANG==='ro'?'Dovezi':'Evidence';
-      const sl=LANG==='ro'?'surs\u0103 confirm\u0103':'supporting',cl=LANG==='ro'?'surs\u0103 contrazice':'contradicting',nl=LANG==='ro'?'neutre':'neutral';
-      body+=`<div style="margin-top:10px;font-size:11px;color:var(--text2)">\ud83d\udcca <b>${ev}:</b> <span style="color:var(--green)">${sup2} ${sl}</span> \xb7 <span style="color:var(--red)">${con2} ${cl}</span> \xb7 <span>${neu2} ${nl}</span></div>`;
-    }
+  // \u2500\u2500 Process steps \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+  body+=`<div class="sec-lbl" style="margin-top:6px">${t('verifySteps')}</div>`;
+  const PROC=[
+    ['\ud83d\udd0d',t('stepSplit'),t('stepSplitD')],
+    ['\ud83d\udd0e',t('stepSearch'),t('stepSearchD')],
+    ['\u2696\ufe0f',t('stepWeigh'),t('stepWeighD')],
+    ['\ud83e\udde0',t('stepVerdict'),t('stepVerdictD')],
+  ];
+  body+=PROC.map(p=>`<div class="proc-step"><span style="font-size:16px;flex-shrink:0">${p[0]}</span><span><b>${p[1]}</b> \u2014 ${p[2]}</span></div>`).join('');
+  // \u2500\u2500 Technical details \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+  const details=[];
+  if((d.models_used||[]).length) details.push(`\ud83e\udd16 ${esc(d.models_used.join(', '))}`);
+  if(d.latency&&d.latency.total_ms) details.push(`\u23f1 ${d.latency.total_ms.toFixed(0)}ms${d.latency.retrieval_ms?' \u00b7 retrieval '+d.latency.retrieval_ms.toFixed(0)+'ms':''}${d.latency.nli_ms?' \u00b7 NLI '+d.latency.nli_ms.toFixed(0)+'ms':''}`);
+  const s2=(d.supporting||[]).length,c2=(d.contradicting||[]).length,n2=(d.neutral_sources||[]).length;
+  if(s2+c2+n2>0) details.push(`\ud83d\udcca <span style="color:var(--green)">${s2} ${ro?'confirm\u0103':'supporting'}</span> \u00b7 <span style="color:var(--red)">${c2} ${ro?'contrazic':'contradicting'}</span> \u00b7 ${n2} ${ro?'neutre':'neutral'}`);
+  if(details.length){
+    body+=`<div style="margin-top:14px;padding:10px 12px;border-radius:9px;border:1px solid var(--border);background:rgba(255,255,255,.015);font-size:11px;color:var(--text2);line-height:2">${details.join('<br>')}</div>`;
   }
-  document.getElementById('tp-explain').innerHTML = body;
+  document.getElementById('tp-explain').innerHTML=body;
 }
 
 
@@ -1352,8 +1398,19 @@ async function sendFb(correct,d){
   document.getElementById('fbY').disabled=true;document.getElementById('fbN').disabled=true;
   document.getElementById('fbY').textContent=correct?'✅':'👍';
   document.getElementById('fbN').textContent=correct?'👎':'❌';
+  const note=document.getElementById('fbNoteText')?.value.trim()||'';
   await fetch(`${API}/feedback`,{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({claim:(d.claim||'').slice(0,300),predicted_verdict:d.verdict||'UNCERTAIN',predicted_score:d.score||50,user_says_correct:correct,source_page:location.href,interaction_id:(d._interactionId||lastResult?._interactionId||'')})}).catch(()=>{});
+    body:JSON.stringify({claim:(d.claim||'').slice(0,300),predicted_verdict:d.verdict||'UNCERTAIN',predicted_score:d.score||50,user_says_correct:correct,source_page:location.href,interaction_id:(d._interactionId||lastResult?._interactionId||''),user_note:note})}).catch(()=>{});
+  const na=document.getElementById('fbNote');if(na)na.style.display='block';
+}
+async function submitFbNote(){
+  const note=document.getElementById('fbNoteText')?.value.trim();
+  if(!note){toast(LANG==='ro'?'Scrie ceva mai întâi.':'Write something first.','err');return;}
+  await fetch(`${API}/feedback`,{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({claim:(lastResult?.claim||document.getElementById('claimInput')?.value||'').slice(0,300),predicted_verdict:lastResult?.verdict||'UNCERTAIN',predicted_score:lastResult?.score||50,user_says_correct:null,source_page:location.href,interaction_id:lastResult?._interactionId||'',user_note:note})}).catch(()=>{});
+  document.getElementById('fbNoteText').value='';
+  const na=document.getElementById('fbNote');if(na)na.style.display='none';
+  toast(LANG==='ro'?'Feedback trimis, mulțumim!':'Feedback sent, thanks!','ok');
 }
 async function downloadPDF(){
   if(!lastResult)return;
@@ -1405,6 +1462,8 @@ async function doGoogleAuth(){
   const cfg=window._siteConfig||(window._siteConfig=await fetch('/site-config').then(r=>r.json()).catch(()=>{}));
   const clientId=(cfg&&cfg.google_client_id)||'';
   if(!clientId){toast(t('googleFail')+': OAuth not configured on server','err');return;}
+  // Show spinner on all Google buttons before page navigates away
+  document.querySelectorAll('.google-btn').forEach(b=>{b.disabled=true;b.innerHTML=`<span style="display:inline-block;width:14px;height:14px;border:2px solid rgba(91,78,255,.25);border-top-color:#5b4eff;border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:8px"></span>${LANG==='ro'?'Se redirecționează…':'Redirecting…'}`;});
   const redirectUri=window.location.origin+'/auth/google/callback';
   // PKCE: generate code_verifier + code_challenge
   const array=new Uint8Array(32);

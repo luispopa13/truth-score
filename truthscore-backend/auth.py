@@ -772,16 +772,26 @@ async def google_auth(req: GoogleAuthRequest):
 async def google_callback():
     """Handle Google OAuth callback for web dashboard (authorization code + PKCE flow)."""
     return HTMLResponse(content="""<!DOCTYPE html>
-<html><head><meta charset="UTF-8"/><title>TruthScore -- Autentificare</title></head>
-<body style="background:#06060e;color:#eeeef8;font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh">
+<html><head><meta charset="UTF-8"/><title>TruthScore</title>
+<style>
+  body{background:#06060e;color:#eeeef8;font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .spinner{width:36px;height:36px;border:3px solid rgba(91,78,255,.2);border-top-color:#5b4eff;border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 20px}
+  #msg{font-size:15px;color:#b8b8d4;line-height:1.6;text-align:center;max-width:320px}
+  .err{color:#fca5a5}
+</style>
+</head>
+<body>
 <script>
-// Authorization code flow: code arrives as query param, code_verifier stored in sessionStorage
 const params = new URLSearchParams(window.location.search);
 const code = params.get('code');
 const error = params.get('error');
-
+function setMsg(txt,isErr){
+  document.getElementById('msg').innerHTML=txt;
+  if(isErr){document.getElementById('spinner').style.display='none';document.getElementById('msg').className='err';}
+}
 if (error) {
-  document.getElementById('msg').textContent = 'Eroare Google: ' + error;
+  setMsg('Google sign-in error: ' + error, true);
 } else if (code) {
   const codeVerifier = sessionStorage.getItem('ts_pkce_verifier');
   const redirectUri = window.location.origin + '/auth/google/callback';
@@ -797,17 +807,20 @@ if (error) {
       localStorage.setItem('ts_token', d.token);
       window.location.href = '/';
     } else {
-      document.getElementById('msg').textContent = 'Eroare: ' + (d.detail || 'necunoscută');
+      setMsg('Sign-in failed: ' + (d.detail || 'unknown error'), true);
     }
   })
   .catch(e => {
-    document.getElementById('msg').textContent = 'Eroare conexiune: ' + e.message;
+    setMsg('Connection error: ' + e.message, true);
   });
 } else {
-  document.getElementById('msg').textContent = 'Cod Google negăsit. Încearcă din nou.';
+  setMsg('No authorization code received. <a href="/" style="color:#5b4eff">Try again</a>', true);
 }
 </script>
-<div id="msg" style="font-size:16px">[loading] Se autentifică cu Google...</div>
+<div style="text-align:center">
+  <div class="spinner" id="spinner"></div>
+  <div id="msg">Signing in with Google…</div>
+</div>
 </body></html>""")
 
 
