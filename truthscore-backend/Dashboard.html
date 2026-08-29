@@ -1140,8 +1140,12 @@ function renderLogin(){
     <div class="form-switch">${t('noAccount')} <a onclick="renderRegister()">${t('registerLink')}</a></div>`;
 }
 async function doGoogleAuth(){
-  const clientId='809996736507-hatvv1gfev0b2sgnaqjq2vlqvfqateav.apps.googleusercontent.com';
-  const redirectUri=window.location.origin+'/';
+  // Read client ID from server config so a production deployment with a different
+  // GCP project just works â€” no hardcoded value to keep in sync.
+  const cfg=window._siteConfig||(window._siteConfig=await fetch('/site-config').then(r=>r.json()).catch(()=>{}));
+  const clientId=(cfg&&cfg.google_client_id)||'';
+  if(!clientId){toast(t('googleFail')+': OAuth not configured on server','err');return;}
+  const redirectUri=window.location.origin+'/auth/google/callback';
   // PKCE: generate code_verifier + code_challenge
   const array=new Uint8Array(32);
   crypto.getRandomValues(array);
@@ -1151,6 +1155,11 @@ async function doGoogleAuth(){
   const digest=await crypto.subtle.digest('SHA-256',data);
   const challenge=btoa(String.fromCharCode(...new Uint8Array(digest))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
   sessionStorage.setItem('ts_pkce_verifier',verifier);
+  // CSRF state: generated with CSPRNG, verified on return
+  const stateArr=new Uint8Array(16);
+  crypto.getRandomValues(stateArr);
+  const state=Array.from(stateArr).map(b=>b.toString(16).padStart(2,'0')).join('');
+  sessionStorage.setItem('ts_oauth_state',state);
   const url=new URL('https://accounts.google.com/o/oauth2/v2/auth');
   url.searchParams.set('client_id',clientId);
   url.searchParams.set('redirect_uri',redirectUri);
@@ -1158,7 +1167,7 @@ async function doGoogleAuth(){
   url.searchParams.set('scope','openid email profile');
   url.searchParams.set('code_challenge',challenge);
   url.searchParams.set('code_challenge_method','S256');
-  url.searchParams.set('state',Math.random().toString(36).substring(2));
+  url.searchParams.set('state',state);
   window.location.href=url.toString();
 }
 async function doRegister(){
@@ -1277,15 +1286,24 @@ function showErr(msg){const e=document.getElementById('errBox');e.textContent='â
 function hideErr(){document.getElementById('errBox').className='err-box';}
 
 renderGuest();
-// Google OAuth: Google redirects back to "/" with ?code=. Exchange it, then clean the URL.
+// Google OAuth fallback: handles ?code= if Google redirects to this page instead of /auth/google/callback.
 (async function handleGoogleReturn(){
   const p=new URLSearchParams(location.search);
   const code=p.get('code'); const gerr=p.get('error');
   if(gerr){history.replaceState({},'',location.pathname);setTimeout(()=>initAuth(),50);return;}
   if(!code){setTimeout(()=>initAuth(),50);return;}
+  // Verify CSRF state before exchanging the code
+  const returnedState=p.get('state');
+  const expectedState=sessionStorage.getItem('ts_oauth_state');
+  sessionStorage.removeItem('ts_oauth_state');
+  if(!returnedState||returnedState!==expectedState){
+    toast(t('googleFail')+': state mismatch','err');
+    history.replaceState({},'',location.pathname);
+    setTimeout(()=>initAuth(),50);return;
+  }
   const verifier=sessionStorage.getItem('ts_pkce_verifier');
   sessionStorage.removeItem('ts_pkce_verifier');
-  const redirectUri=window.location.origin+'/';
+  const redirectUri=window.location.origin+'/auth/google/callback';
   try{
     const r=await fetch(`${API}/auth/google/exchange`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code,code_verifier:verifier||'',redirect_uri:redirectUri})});
     const d=await r.json();

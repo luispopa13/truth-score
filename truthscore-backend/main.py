@@ -646,6 +646,7 @@ async def site_config():
         # Ads are only truly enabled when a publisher id is configured;
         # without one there is nothing to serve, so report False in dev.
         "ads_enabled": bool(ads_flag and adsense_client),
+        "google_client_id": os.getenv("GOOGLE_CLIENT_ID", ""),
     }
 
 

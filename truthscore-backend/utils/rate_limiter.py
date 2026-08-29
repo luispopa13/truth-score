@@ -97,7 +97,9 @@ async def _check_mongo_usage(user: dict) -> Tuple[bool, dict]:
     try:
         from auth import get_db
         db = get_db()
-        user_id = str(user.get("id"))
+        user_id = str(user.get("id") or user.get("_id") or "")
+        if not user_id:
+            raise ValueError("Cannot resolve user_id for rate check")
         today = _utc_date_str()
         usage = await db.users.find_one(
             {"_id": __import__("bson").ObjectId(user_id)},
@@ -106,14 +108,15 @@ async def _check_mongo_usage(user: dict) -> Tuple[bool, dict]:
         used = (usage or {}).get("usage", {}).get(today, 0)
         plan = user.get("plan", "free")
         limit = PLAN_LIMITS.get(plan, PLAN_LIMITS["free"])
-        # `used` is PRE-increment here (read before the $inc below), so `used < limit`
-        # allows exactly `limit` requests/day — same rule as the post-increment `<=` sites.
+        # `used` is PRE-increment: `used < limit` allows exactly `limit` requests/day.
         allowed = used < limit
-        await db.users.update_one(
-            {"_id": __import__("bson").ObjectId(user_id)},
-            {"$inc": {f"usage.{today}": 1}},
-        )
-        return allowed, {"allowed": allowed, "used": used, "limit": limit,
+        if allowed:
+            await db.users.update_one(
+                {"_id": __import__("bson").ObjectId(user_id)},
+                {"$inc": {f"usage.{today}": 1}},
+            )
+        new_used = used + 1 if allowed else used
+        return allowed, {"allowed": allowed, "used": new_used, "limit": limit,
                          "plan": plan, "reset_in_hours": _hours_until_midnight_utc()}
     except Exception:
         # Both Redis and Mongo are unreachable. Fail CLOSED for the free tier —

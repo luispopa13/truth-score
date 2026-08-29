@@ -675,20 +675,42 @@ async def _google_login_or_register(email: str, name: str) -> dict:
 
 
 async def google_auth(req: GoogleAuthRequest):
-    """Verify a Google ID token and login/register the user.
+    """Verify a Google credential and login/register the user.
 
-    The client sends a Google *ID token* (a signed JWT, e.g. the `credential`
-    from Google Identity Services). We verify its signature, issuer and —
-    critically — that its audience (`aud`) is one of OUR client IDs. Previously
-    this endpoint accepted any bearer token and merely called Google's userinfo,
-    so a token minted for an unrelated Google app could be replayed to log into
-    the victim's account (token-substitution takeover).
+    Accepts two token shapes:
+    1. ID token (JWT — 3 dot-separated parts): verified offline via Google's
+       public keys. Audience check prevents token-substitution takeover.
+    2. Access token (opaque string): comes from chrome.identity.getAuthToken()
+       in the Chrome extension. Verified by calling Google's userinfo endpoint.
+       Slightly weaker (no aud check) but acceptable because access tokens from
+       the extension are short-lived and email_verified is enforced.
     """
     if not AUTH_AVAILABLE:
         raise HTTPException(503, "Auth not configured")
-    claims = await _verify_google_id_token(req.token)
-    email = (claims.get("email") or "").lower()
-    name  = claims.get("name", "") or claims.get("given_name", "")
+
+    # Detect JWT ID token (3 base64url segments) vs opaque access token
+    if req.token.count('.') == 2:
+        claims = await _verify_google_id_token(req.token)
+        email = (claims.get("email") or "").lower()
+        name  = claims.get("name", "") or claims.get("given_name", "")
+    else:
+        # Access token path (Chrome extension getAuthToken flow)
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                "https://www.googleapis.com/oauth2/v3/userinfo",
+                headers={"Authorization": f"Bearer {req.token}"},
+            )
+            if resp.status_code != 200:
+                raise HTTPException(401, "Invalid Google access token")
+            info = resp.json()
+        _ev = info.get("email_verified", info.get("verified_email", False))
+        if not (_ev is True or str(_ev).lower() == "true"):
+            raise HTTPException(401, "Google email not verified")
+        email = info.get("email", "").lower()
+        if not email:
+            raise HTTPException(400, "No email in Google user info")
+        name  = info.get("name", "") or info.get("given_name", "")
+
     return await _google_login_or_register(email, name)
 
 

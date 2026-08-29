@@ -224,12 +224,4 @@ class ExplainResponse(BaseModel):
     word_importance: list[WordImportance]
 
 
-class UserRegister(BaseModel):
-    email:    str
-    password: str
-    name:     str = ""
 
-
-class UserLogin(BaseModel):
-    email:    str
-    password: str

@@ -256,8 +256,10 @@ async def factscore_verify(claim: str, top_evidence: list) -> tuple:
     for r in results:
         if isinstance(r, dict):
             atom_results.append(r)
-        else:
+        elif isinstance(r, Exception):
             print(f"  [FACTSCORE] Atom error: {r}")
+            atom_results.append({"fact": "", "verdict": "UNCERTAIN",
+                                  "score": 50, "explanation": "Verification failed", "sources": []})
 
     if not atom_results:
         return None, None, None, None, []
