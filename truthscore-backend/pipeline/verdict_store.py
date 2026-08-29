@@ -368,6 +368,24 @@ async def find_similar_verdicts(claim: str, limit: int = 3,
     return out
 
 
+
+# ── Check-frequency counter (in-memory, resets on restart) ──────────────────
+# Used to surface "🔥 Trending" when a claim is being checked repeatedly.
+_CHECK_COUNTS: dict = {}
+
+
+def _norm_hash(text: str) -> str:
+    normalized = re.sub(r'\s+', ' ', (text or '').strip().lower())[:400]
+    return hashlib.sha256(normalized.encode()).hexdigest()[:16]
+
+
+def increment_and_get_check_count(text: str) -> int:
+    """Increment + return how many times this claim has been verified (in-memory)."""
+    key = _norm_hash(text)
+    _CHECK_COUNTS[key] = _CHECK_COUNTS.get(key, 0) + 1
+    return _CHECK_COUNTS[key]
+
+
 async def load_verdict(vid: str) -> dict | None:
     """Return the stored record for `vid`, or None. Cache -> Mongo -> JSONL."""
     if not vid:

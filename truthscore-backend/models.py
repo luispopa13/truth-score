@@ -78,6 +78,7 @@ class VerifyResponse(BaseModel):
     # `aggregate_reason` explains how the aggregate was reached.
     sub_claim_results:     list["SubClaimResult"] = Field(default_factory=list)
     aggregate_reason:      str              = ""
+    check_count:           int              = 0
 
 
 
@@ -118,6 +119,7 @@ class TextAnalysisResponse(BaseModel):
     # (one per verified claim) and how many remain today.
     quota_consumed: int = 0
     quota_left:     int = -1
+    check_count:    int = 0
 
 
 class ClaimDetectRequest(BaseModel):

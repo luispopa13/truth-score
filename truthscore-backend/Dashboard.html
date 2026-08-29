@@ -322,6 +322,16 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
   .btn-row{flex-wrap:wrap}
   .btn-primary{order:-1;width:100%}
 }
+/* ── Feature: Live claim preview ── */
+.claim-preview{margin:8px 0 0;display:flex;flex-wrap:wrap;gap:6px;align-items:flex-start;min-height:0}
+.cp-label{width:100%;font-size:10.5px;color:var(--text2);margin-bottom:2px;font-family:'JetBrains Mono',monospace;letter-spacing:.3px}
+.cp-chip{font-size:11.5px;padding:4px 10px;border-radius:20px;background:rgba(91,78,255,.1);border:1px solid rgba(91,78,255,.22);color:var(--text2);cursor:default;transition:border-color .15s;line-height:1.4}
+.cp-chip:hover{border-color:rgba(91,78,255,.5);color:var(--text)}
+/* ── Feature: Trending badge ── */
+.trend-badge{display:inline-block;font-size:10px;font-weight:600;padding:2px 8px;border-radius:10px;background:rgba(251,146,60,.15);color:#fb923c;letter-spacing:.3px;margin-bottom:6px}
+/* ── Feature: Debate mode ── */
+.debate-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:620px){.debate-grid{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -377,6 +387,7 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
       data-i18n-ph="inputPlaceholder"
       placeholder="Enter a claim or a paragraph — or paste a screenshot (Ctrl+V). Each fact is verified separately…"
       oninput="onInput()"></textarea>
+    <div id="claimPreview" class="claim-preview"></div>
     <div class="input-meta">
       <span class="hint" data-i18n="ctrlEnter">💡 Ctrl+Enter to verify · paste an image to check a screenshot</span>
       <span class="char-count" id="charCount">0/4000</span>
@@ -385,6 +396,7 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
       <button class="btn btn-secondary" onclick="nextExample()" data-i18n="example">💡 Example</button>
       <button class="btn btn-secondary" onclick="document.getElementById('imgInput').click()" data-i18n="checkImage" title="Verify the claims inside a screenshot">🖼️ Check a screenshot</button>
       <input type="file" id="imgInput" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp" style="display:none" onchange="if(this.files&&this.files[0]){verifyImage(this.files[0]);this.value='';}">
+      <button class="btn btn-secondary" onclick="openDebate()" title="Verify two opposing claims side by side">⚔️ Debate</button>
       <button class="btn btn-primary" id="verifyBtn" onclick="runVerify()" data-i18n="verifyNow">🔍 Verify now</button>
     </div>
     <div class="loading" id="vLoad">
@@ -474,6 +486,26 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
     <div class="modal-title" data-i18n="myChecksTitle">Your fact-check history</div>
     <div class="modal-sub" data-i18n="myChecksSub">Every claim you've checked — permanent, shareable links.</div>
     <div id="historyBody" style="max-height:60vh;overflow:auto;margin-top:6px"></div>
+  </div>
+</div>
+
+<div class="overlay" id="debateOverlay" onmousedown="if(event.target===this)closeDebate()">
+  <div class="modal" style="max-width:700px;width:100%">
+    <button class="modal-x" onclick="closeDebate()">✕</button>
+    <div class="modal-title">⚔️ Debate Mode</div>
+    <div class="modal-sub" style="margin-bottom:18px">Enter two opposing claims and see which is better supported by evidence.</div>
+    <div class="debate-grid" style="margin-bottom:14px">
+      <div>
+        <label style="display:block;font-size:10px;font-weight:700;color:var(--text2);letter-spacing:1px;font-family:'JetBrains Mono',monospace;margin-bottom:5px">CLAIM A</label>
+        <textarea id="debateA" class="finput" rows="3" placeholder="Enter first claim…" style="resize:vertical;min-height:72px"></textarea>
+      </div>
+      <div>
+        <label style="display:block;font-size:10px;font-weight:700;color:var(--text2);letter-spacing:1px;font-family:'JetBrains Mono',monospace;margin-bottom:5px">CLAIM B</label>
+        <textarea id="debateB" class="finput" rows="3" placeholder="Enter opposing claim…" style="resize:vertical;min-height:72px"></textarea>
+      </div>
+    </div>
+    <button id="debateRunBtn" class="form-btn" style="margin-bottom:0" onclick="runDebate()">⚔️ Start Debate</button>
+    <div id="debateResults" style="margin-top:16px"></div>
   </div>
 </div>
 
@@ -778,9 +810,26 @@ function toggleUserMenu(e){
     setTimeout(()=>document.addEventListener('click',close),10);
   }
 }
+let _previewTimer;
 function onInput(){
   const v=document.getElementById('claimInput').value;
   document.getElementById('charCount').textContent=`${v.length}/4000`;
+  const prev=document.getElementById('claimPreview');
+  if(!prev)return;
+  clearTimeout(_previewTimer);
+  if(v.trim().length<60){prev.innerHTML='';return;}
+  _previewTimer=setTimeout(async()=>{
+    try{
+      const hdr={'Content-Type':'application/json'};
+      if(token())hdr['Authorization']='Bearer '+token();
+      const r=await fetch(`${API}/detect-claims`,{method:'POST',headers:hdr,body:JSON.stringify({text:v.trim()})});
+      if(!r.ok){prev.innerHTML='';return;}
+      const {claims=[]}=await r.json();
+      if(claims.length<2){prev.innerHTML='';return;}
+      prev.innerHTML=`<div class="cp-label">🔍 ${claims.length} ${LANG==='ro'?'afirmații detectate — vor fi verificate separat:':'claims detected — will each be verified separately:'}</div>`+
+        claims.map((c,i)=>`<span class="cp-chip">#${i+1} ${esc(c.slice(0,72))}${c.length>72?'…':''}</span>`).join('');
+    }catch(e){if(prev)prev.innerHTML='';}
+  },700);
 }
 function nextExample(){document.getElementById('claimInput').value=EXAMPLES[exIdx%EXAMPLES.length];onInput();exIdx++;}
 async function getBrowserFingerprint(){
@@ -1051,6 +1100,8 @@ function renderTextAnalysis(d){
   document.getElementById('resultWrap').className='result-wrap active';
   document.querySelectorAll('.tabs .tab').forEach((t,i)=>t.classList.toggle('active',i===0));
   document.querySelectorAll('.tab-panel').forEach((p,i)=>p.classList.toggle('active',i===0));
+  renderRelated(d);
+  _stampTrendBadge(d);
 }
 function showParagraphClaim(index){
   const r=lastResult?.results?.[index];if(!r)return;
@@ -1074,12 +1125,13 @@ function renderAll(d){
   document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',i===0));
   document.querySelectorAll('.tab-panel').forEach((p,i)=>p.classList.toggle('active',i===0));
   renderRelated(d);
+  _stampTrendBadge(d);
 }
 async function renderRelated(d){
   const box=document.getElementById('relatedStrip');
   if(!box)return;
   box.style.display='none';box.innerHTML='';
-  const claim=(d&&d.claim)||'';
+  const claim=(d&&(d.claim||d.text))||'';
   if(!claim)return;
   try{
     const ex=(d&&d._verdictId)||'';
@@ -1102,6 +1154,70 @@ async function renderRelated(d){
       <div style="display:flex;flex-direction:column;gap:8px">${rows}</div>`;
     box.style.display='block';
   }catch(e){}
+}
+function _stampTrendBadge(d){
+  if(!d||!(d.check_count>=5))return;
+  const sc=document.getElementById('scoreCard');
+  if(!sc||sc.querySelector('.trend-badge'))return;
+  const b=document.createElement('span');b.className='trend-badge';
+  b.title=LANG==='ro'?'Această afirmație a fost verificată de mai multe ori recent':'Multiple people are checking this claim right now';
+  b.textContent=`🔥 ${d.check_count} ${LANG==='ro'?'verificări recente':'recent checks'}`;
+  sc.insertAdjacentElement('afterbegin',b);
+}
+function openDebate(){
+  const inp=document.getElementById('claimInput').value.trim();
+  if(inp)document.getElementById('debateA').value=inp;
+  document.getElementById('debateResults').innerHTML='';
+  document.getElementById('debateOverlay').className='overlay show';
+}
+function closeDebate(){document.getElementById('debateOverlay').className='overlay';}
+async function runDebate(){
+  const tA=document.getElementById('debateA').value.trim();
+  const tB=document.getElementById('debateB').value.trim();
+  if(!tA||!tB){alert(LANG==='ro'?'Introdu ambele afirmații.':'Enter both claims.');return;}
+  const btn=document.getElementById('debateRunBtn');
+  btn.disabled=true;
+  document.getElementById('debateResults').innerHTML=`<div style="text-align:center;padding:24px;color:var(--text2)"><div class="spinner" style="margin:0 auto 10px"></div>${LANG==='ro'?'Verific ambele afirmații în paralel…':'Verifying both claims in parallel…'}</div>`;
+  const hdrs={'Content-Type':'application/json'};
+  if(token())hdrs['Authorization']='Bearer '+token();
+  try{
+    const [rA,rB]=await Promise.all([
+      fetch(`${API}/verify`,{method:'POST',headers:hdrs,body:JSON.stringify({text:tA})}),
+      fetch(`${API}/verify`,{method:'POST',headers:hdrs,body:JSON.stringify({text:tB})})
+    ]);
+    const [dA,dB]=await Promise.all([rA.json(),rB.json()]);
+    document.getElementById('debateResults').innerHTML=_renderDebate(tA,dA,tB,dB);
+  }catch(e){
+    document.getElementById('debateResults').innerHTML=`<div style="color:var(--red);padding:10px">⚠️ ${esc(e.message||'error')}</div>`;
+  }finally{btn.disabled=false;}
+}
+function _renderDebate(tA,dA,tB,dB){
+  const card=(text,d,side)=>{
+    const v=d.verdict||'UNCERTAIN';
+    const col=v==='TRUE'?'var(--green)':v==='FALSE'?'var(--red)':v==='MIXED'?'#8b5cf6':'var(--yellow)';
+    const icon=v==='TRUE'?'✅':v==='FALSE'?'❌':v==='MIXED'?'🔀':'⚠️';
+    const lbl=v==='TRUE'?t('TRUE'):v==='FALSE'?t('FALSE'):v==='MIXED'?t('MIXED'):t('UNCERTAIN');
+    const sup=(d.supporting||[]).slice(0,3);
+    const con=(d.contradicting||[]).slice(0,3);
+    const srcRow=(s,clr,sym)=>`<div style="font-size:11px;color:var(--text2);display:flex;gap:5px;align-items:flex-start;margin-bottom:2px"><span style="color:${clr};flex-shrink:0">${sym}</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc((s.publisher||s.title||'').slice(0,55))}</span></div>`;
+    return `<div style="border:2px solid ${col};border-radius:14px;padding:16px;flex:1;min-width:0;background:rgba(0,0,0,.12)">
+      <div style="font-size:10px;font-weight:800;color:var(--text2);letter-spacing:1px;font-family:'JetBrains Mono',monospace;margin-bottom:8px">${LANG==='ro'?'AFIRMAȚIA':'CLAIM'} ${side}</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:10px;line-height:1.5;font-style:italic">"${esc(text.slice(0,100))}${text.length>100?'…':''}"</div>
+      <div style="font-size:22px;font-weight:900;color:${col};margin-bottom:2px">${icon} ${lbl}</div>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:900;color:${col};margin-bottom:8px">${d.score}/100</div>
+      <div style="height:4px;border-radius:99px;background:rgba(255,255,255,.06);overflow:hidden;margin-bottom:10px"><div style="height:100%;width:${d.score}%;background:${col};border-radius:99px;transition:width 1s"></div></div>
+      <div style="font-size:11.5px;color:var(--text2);line-height:1.5;margin-bottom:10px">${esc((d.explanation||'').slice(0,140))}</div>
+      ${sup.length?`<div style="font-size:9px;font-weight:700;color:var(--green);margin-bottom:3px;letter-spacing:.5px">✓ SUPPORTING</div>${sup.map(s=>srcRow(s,'var(--green)','✓')).join('')}`:''}
+      ${con.length?`<div style="font-size:9px;font-weight:700;color:var(--red);margin:5px 0 3px;letter-spacing:.5px">✗ CONTRADICTING</div>${con.map(s=>srcRow(s,'var(--red)','✗')).join('')}`:''}
+    </div>`;
+  };
+  const diff=dA.score-dB.score;
+  const winHtml=Math.abs(diff)<5
+    ?`🤝 ${LANG==='ro'?'Ambele afirmații au suport similar':'Both claims have similar support'}`
+    :diff>0?`🏆 ${LANG==='ro'?'Afirmația A este mai bine susținută':'Claim A is better supported'} (+${Math.abs(diff)} pts)`
+           :`🏆 ${LANG==='ro'?'Afirmația B este mai bine susținută':'Claim B is better supported'} (+${Math.abs(diff)} pts)`;
+  return `<div class="debate-grid">${card(tA,dA,'A')}${card(tB,dB,'B')}</div>
+    <div style="margin-top:12px;padding:12px 16px;background:rgba(91,78,255,.08);border:1px solid rgba(91,78,255,.22);border-radius:10px;text-align:center;font-size:13px;font-weight:700;color:var(--text)">${winHtml}</div>`;
 }
 function renderScore(d){
   const score=d.score??50,verdict=d.verdict||'UNCERTAIN';

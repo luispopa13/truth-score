@@ -504,6 +504,11 @@ async def verify_stream(req: VerifyRequest, request: Request,
                     payload["_verdictId"] = _vid
             except Exception as e:
                 print(f"[VERDICT-STORE] save skipped (non-fatal): {e}")
+            try:
+                from pipeline.verdict_store import increment_and_get_check_count
+                payload["check_count"] = increment_and_get_check_count(req.text)
+            except Exception:
+                pass
             payload["show_ads"] = show_ads
             if quota_left is not None:
                 payload["quota_left"] = quota_left
@@ -641,6 +646,12 @@ async def _analyze_text_core(text: str, response: Response, request: Request,
     response.headers["X-TruthScore-Quota-Left"] = str(quota_left)
     _set_ads_and_quota_headers(response, user)
 
+    try:
+        from pipeline.verdict_store import increment_and_get_check_count
+        check_count = increment_and_get_check_count(text)
+    except Exception:
+        check_count = 0
+
     return TextAnalysisResponse(
         text=text,
         verdict=verdict,
@@ -653,6 +664,7 @@ async def _analyze_text_core(text: str, response: Response, request: Request,
         mixed=mixed,
         quota_consumed=quota_consumed,
         quota_left=quota_left,
+        check_count=check_count,
     )
 
 

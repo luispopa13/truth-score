@@ -424,6 +424,24 @@ function extractPageText() {
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+// ── Auto-scan on page load ────────────────────────────────────
+// When the user enables "Auto-scan pages" in extension settings,
+// content.js runs the full scan 2.5s after DOM is ready.
+if (document.readyState === 'complete' || document.readyState === 'interactive') {
+  _maybeAutoScan();
+} else {
+  document.addEventListener('DOMContentLoaded', _maybeAutoScan);
+}
+function _maybeAutoScan() {
+  try {
+    chrome.storage.sync.get(['autoScan'], (res) => {
+      if (res && res.autoScan && !scanActive) {
+        setTimeout(runFullScan, 2500);
+      }
+    });
+  } catch(e) {}
+}
+
 function esc(t){return String(t==null?"":t).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
 function safeUrl(u){u=String(u==null?"":u).trim();return /^(https?:|mailto:)/i.test(u)?esc(u):"#";}
 
