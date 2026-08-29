@@ -10,6 +10,7 @@ logger = logging.getLogger("truthscore.redis")
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 REDIS_ENABLED = os.getenv("REDIS_ENABLED", "true").lower() in ("1", "true", "yes")
+_redis_permanently_disabled = False
 
 # Async redis client (used inside FastAPI coroutines)
 _aredis_client = None
@@ -37,8 +38,8 @@ def get_redis_url(db: int = 0) -> str:
 
 
 def get_async_redis():
-    global _aredis_client
-    if not REDIS_ENABLED or not _redis_available:
+    global _aredis_client, _redis_permanently_disabled
+    if not REDIS_ENABLED or not _redis_available or _redis_permanently_disabled:
         return None
     if _aredis_client is not None:
         return _aredis_client
@@ -91,7 +92,7 @@ async def verify_async_redis():
     async client is nulled so `redis_available()` and every `if redis:` guard
     correctly fall back to local-only mode.
     """
-    global _aredis_client
+    global _aredis_client, _redis_permanently_disabled
     client = get_async_redis()
     if client is None:
         return False
@@ -106,6 +107,7 @@ async def verify_async_redis():
         except Exception:
             pass
         _aredis_client = None
+        _redis_permanently_disabled = True
         return False
 
 
