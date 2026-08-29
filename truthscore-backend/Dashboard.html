@@ -1606,7 +1606,7 @@ function renderScore(d){
       <button class="fbbtn" id="shareBtn" title="${LANG==='ro'?'Copiază linkul':'Copy share link'}">🔗 ${LANG==='ro'?'Distribuie':'Share'}</button>
       <button class="fbbtn" id="steelManBtn" title="${LANG==='ro'?'Contraargument puternic':'Strongest counter-argument'}" onclick="openSteelMan()">🛡️</button>
       <button class="fbbtn" id="watchBtn" title="${LANG==='ro'?'Urmărește afirmația':'Watch this claim'}" onclick="toggleWatch(d)">🔔</button>
-      <button onclick="openLiveDebate()" style="padding:6px 14px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--text2);font-size:12px;cursor:pointer;display:flex;align-items:center;gap:5px">⚔️ ${LANG==='ro'?'Dezbatere live':'Live Debate'}</button>
+      <button class="fbbtn" title="${LANG==='ro'?'Dezbatere live — PRO vs CON':'Live Debate — PRO vs CON'}" onclick="openLiveDebate()">⚔️</button>
       ${pdfBtn}
     </div>
     <div class="fb-note-area" id="fbNote" style="display:none">
