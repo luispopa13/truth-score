@@ -222,6 +222,7 @@ textarea::placeholder{color:var(--text3)}
 .src-pub{font-size:10px;color:var(--text2);font-family:'JetBrains Mono',monospace}
 .src-snip{font-size:11px;color:var(--text2);margin-top:4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.45}
 .src-claim-badge{font-size:10px;color:var(--text2);margin-top:3px;font-style:italic;opacity:.8}
+.cache-badge{display:inline-block;font-size:10px;font-weight:600;padding:2px 7px;border-radius:10px;background:rgba(91,91,255,.15);color:#7c74ff;letter-spacing:.3px;margin-bottom:6px;}
 .src-tag{flex-shrink:0;font-size:9px;font-weight:700;padding:2px 6px;border-radius:5px;align-self:flex-start;margin-top:2px;font-family:'JetBrains Mono',monospace}
 .ts{background:var(--green-bg);color:var(--green)}
 .tc{background:var(--red-bg);color:var(--red)}
@@ -716,6 +717,32 @@ function onInput(){
   document.getElementById('charCount').textContent=`${v.length}/4000`;
 }
 function nextExample(){document.getElementById('claimInput').value=EXAMPLES[exIdx%EXAMPLES.length];onInput();exIdx++;}
+async function getBrowserFingerprint(){
+  // Stable signals that survive incognito — same device = same fingerprint
+  // across multiple private sessions, so the anonymous quota is per-device.
+  const parts=[
+    navigator.userAgent,
+    navigator.language,
+    `${screen.width}x${screen.height}x${screen.colorDepth}`,
+    Intl.DateTimeFormat().resolvedOptions().timeZone||'',
+    navigator.hardwareConcurrency||'',
+    navigator.deviceMemory||'',
+    navigator.platform||'',
+  ];
+  try{
+    const c=document.createElement('canvas');
+    const ctx=c.getContext('2d');
+    ctx.textBaseline='top';ctx.font='14px Arial';
+    ctx.fillStyle='#5b5bff';ctx.fillRect(0,0,60,14);
+    ctx.fillStyle='#fff';ctx.fillText('TS🔍',2,2);
+    parts.push(c.toDataURL().slice(-24));
+  }catch(e){}
+  try{
+    const raw=parts.join('||');
+    const buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(raw));
+    return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('').slice(0,32);
+  }catch(e){return '';}
+}
 async function runVerify(){
   const text=document.getElementById('claimInput').value.trim();
   if(!text){showErr(t('enterClaim'));return;}
@@ -735,9 +762,19 @@ async function runVerify(){
   try{
     const headers={'Content-Type':'application/json'};
     if(token())headers['Authorization']='Bearer '+token();
+    const fp=await getBrowserFingerprint();
+    if(fp)headers['X-Browser-Fp']=fp;
     const isParagraph=text.length>220||((text.match(/[.!?]+(?:\s|$)/g)||[]).length>1);
     const endpoint=isParagraph?'/analyze-text':'/verify';
     const r=await fetch(`${API}${endpoint}`,{method:'POST',headers,body:JSON.stringify({text})});
+    if(r.status===429){
+      clearInterval(stepTimer);
+      document.getElementById('vLoad').className='loading';
+      document.getElementById('verifyBtn').disabled=false;
+      document.getElementById('limitBanner').className='limit-banner show';
+      if(currentUser)showPricing();else showAuth('register');
+      return;
+    }
     if(!r.ok)throw new Error(`HTTP ${r.status}: ${await r.text()}`);
     const d=await r.json();
     d._interactionId=r.headers.get('X-TruthScore-Interaction-Id')||'';
@@ -749,6 +786,14 @@ async function runVerify(){
     updateUsageBadge(currentUser);
     lastResult=d;
     if(Array.isArray(d.results))renderTextAnalysis(d);else renderAll(d);
+    if(d.cached){
+      const sc=document.getElementById('scoreCard');
+      if(sc&&!sc.querySelector('.cache-badge')){
+        const b=document.createElement('span');b.className='cache-badge';
+        b.title='This result was served from cache — no LLM call was needed';
+        b.textContent='⚡ cached';sc.insertAdjacentElement('afterbegin',b);
+      }
+    }
   }catch(e){
     clearInterval(stepTimer);
     document.getElementById('vLoad').className='loading';
@@ -1320,6 +1365,8 @@ if(new URLSearchParams(location.search).get('pricing')==='1')setTimeout(showPric
 // the verify flow), never on a cold page load — a visitor who hasn't used the
 // product yet shouldn't be greeted by an ad slot.
 if(new URLSearchParams(location.search).get('payment')==='success')setTimeout(()=>{toast(t('paymentOk'),'ok');initAuth();},500);
+// Prefetch site-config on load so doGoogleAuth() starts immediately without a round-trip on click
+fetch('/site-config').then(r=>r.json()).then(cfg=>{window._siteConfig=cfg;}).catch(()=>{});
 </script>
 </body>
 </html>

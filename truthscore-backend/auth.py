@@ -463,12 +463,12 @@ async def require_user(credentials: HTTPAuthorizationCredentials = Security(secu
         raise HTTPException(status_code=401, detail="Autentificare necesara")
     return user
 
-async def check_rate_limit(user, claim, client_ip: str = "") -> dict:
-    """Check rate limit. Anonymous visitors get ANON_DAILY_CAP checks/day/IP."""
+async def check_rate_limit(user, claim, client_ip: str = "", fp: str = "") -> dict:
+    """Check rate limit. Anonymous visitors get ANON_DAILY_CAP checks/day/IP+fingerprint."""
     if user is None:
-        # Anonymous: small try-before-signup allowance per IP
+        # Anonymous: small try-before-signup allowance per IP (+ browser fingerprint)
         from utils.abuse import anon_ip_check
-        _, info = await anon_ip_check(client_ip)
+        _, info = await anon_ip_check(client_ip, fp)
         return info
 
     plan_name = user.get("plan", "free")
@@ -496,7 +496,7 @@ async def check_rate_limit(user, claim, client_ip: str = "") -> dict:
     from bson import ObjectId
     from pymongo import ReturnDocument
     result = await db.users.find_one_and_update(
-        {"_id": ObjectId(user["id"]),
+        {"_id": ObjectId(str(user.get("id") or user.get("_id", ""))),
          "$or": [
              {f"usage.{today}": {"$exists": False}},
              {f"usage.{today}": {"$lt": limit}},

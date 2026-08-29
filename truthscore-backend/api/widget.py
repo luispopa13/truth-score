@@ -6,10 +6,17 @@ from config import *
 async def widget_script(user_key: str = ""):
     """Serve embeddable widget JavaScript."""
     from fastapi.responses import Response as FResponse
+    api_url = os.getenv("WIDGET_API_URL", os.getenv("PUBLIC_BASE_URL", "")).rstrip("/")
+    if not api_url:
+        # Widget can't function without knowing the API URL. Return a stub that
+        # logs the error in the browser console so operators notice immediately.
+        stub = "console.error('[TruthScore widget] WIDGET_API_URL not configured on server — widget disabled.');"
+        return FResponse(content=stub, media_type="application/javascript",
+                         headers={"Access-Control-Allow-Origin": "*"})
     js = f"""
 (function() {{
   'use strict';
-  var API = '{os.getenv("WIDGET_API_URL", "http://localhost:8000")}';
+  var API = '{api_url}';
   var KEY = '{user_key}';
 
   function injectStyles() {{

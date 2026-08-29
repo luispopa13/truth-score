@@ -225,12 +225,20 @@ def _client_ip(request: Request) -> str:
     return request.client.host if request.client else ""
 
 
+def _client_fp(request: Request) -> str:
+    """Browser fingerprint sent by the frontend (X-Browser-Fp header).
+    Used to track anonymous quota by device across incognito sessions.
+    Truncated to 64 chars — it's a hex digest, only first 32 chars matter.
+    """
+    return (request.headers.get("x-browser-fp") or "")[:64]
+
+
 def _is_paid(user: dict | None) -> bool:
     """Paid = a signed-in user on any plan other than the free tier."""
     return bool(user) and user.get("plan", "free") != "free"
 
 
-async def enforce_quota(user: dict | None, text: str, client_ip: str) -> dict | None:
+async def enforce_quota(user: dict | None, text: str, client_ip: str, fp: str = "") -> dict | None:
     """Check the daily quota BEFORE any expensive LLM work, with an asymmetric
     failure policy:
 
@@ -247,7 +255,7 @@ async def enforce_quota(user: dict | None, text: str, client_ip: str) -> dict | 
     """
     from http import HTTPStatus
     try:
-        info = await check_rate_limit(user, text, client_ip=client_ip)
+        info = await check_rate_limit(user, text, client_ip=client_ip, fp=fp)
     except Exception as e:
         if _is_paid(user):
             print(f"[RATE-LIMIT] limiter error, failing OPEN for paid user: {e}")
@@ -297,7 +305,7 @@ async def verify(req: VerifyRequest, response: Response,
     # Check quota BEFORE the expensive LLM work.  Redis-backed, atomic.
     # Fails CLOSED for free/anon and OPEN for paid (see enforce_quota).
     client_ip = _client_ip(request)
-    rate_info = await enforce_quota(user, req.text, client_ip=client_ip)
+    rate_info = await enforce_quota(user, req.text, client_ip=client_ip, fp=_client_fp(request))
 
     start = time.perf_counter()
     # Heavy-day paid users past their eco threshold get cheap-model routing
@@ -354,10 +362,11 @@ async def analyze_text(req: VerifyRequest, response: Response,
     """Extract and independently verify every factual claim in a paragraph."""
     text = req.text.strip()
     client_ip = _client_ip(request)
+    fp = _client_fp(request)
 
     # Reserve one quota unit before paying for claim extraction.
     # Fails CLOSED for free/anon, OPEN for paid (see enforce_quota).
-    quota = await enforce_quota(user, text, client_ip=client_ip)
+    quota = await enforce_quota(user, text, client_ip=client_ip, fp=fp)
     # Eco state is a per-user daily flag — capture it from the first check
     # before the per-claim loop below reassigns `quota`.
     eco = bool(quota.get("eco")) if quota else False
@@ -370,7 +379,7 @@ async def analyze_text(req: VerifyRequest, response: Response,
     allowed_claims = [claims[0]]
     for claim in claims[1:]:
         try:
-            q = await check_rate_limit(user, claim, client_ip=client_ip)
+            q = await check_rate_limit(user, claim, client_ip=client_ip, fp=fp)
         except Exception:
             # Limiter hiccup mid-loop: stop granting further claims rather than
             # silently handing out unmetered verifications.
@@ -478,7 +487,7 @@ async def detect_claims(req: ClaimDetectRequest, request: Request,
                         user: dict = Depends(get_current_user)):
     """Claim-splitting preview. Rate-limited because it invokes an LLM call."""
     client_ip = _client_ip(request)
-    await enforce_quota(user, req.text, client_ip=client_ip)
+    await enforce_quota(user, req.text, client_ip=client_ip, fp=_client_fp(request))
     claims = await split_claims(req.text)
     return {"claims": claims, "count": len(claims)}
 

@@ -147,7 +147,7 @@ PUBLIC_BASE_URL      = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
 
 # ── OpenAI client ─────────────────────────────────────────────
 # OpenAI removed -- using Gemini
-GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 # ── LLM CASCADE (config-driven) ───────────────────────────────
 # The verification vision: try the best FREE model first, fall back to the

@@ -267,6 +267,36 @@ async def verify_claim(req: VerifyRequest, eco: bool = False):
             hit["cached"] = True
             return VerifyResponse(**hit)
 
+    # ── Thundering-herd guard ─────────────────────────────────
+    # SETNX claims this computation. If N concurrent requests arrive for the
+    # same claim before the first finishes, only the first computes; the rest
+    # poll the semantic cache and return the result when it appears — paying
+    # zero extra LLM cost. The 30s TTL is the safety-net for compute failures.
+    _inflight_key = f"ts:inflight:{key}"
+    _got_lock = True    # default: no Redis, every worker computes freely
+    _lock_redis = None
+    try:
+        from utils.redis_client import get_async_redis as _get_redis
+        _lock_redis = _get_redis()
+        if _lock_redis:
+            _got_lock = bool(await _lock_redis.set(_inflight_key, "1", nx=True, ex=30))
+            if not _got_lock:
+                # Another worker is computing — poll semantic cache up to 25 s
+                for _ in range(50):
+                    await asyncio.sleep(0.5)
+                    try:
+                        from utils.semantic_cache import semantic_lookup as _sl
+                        _hit = await _sl(claim)
+                        if _hit:
+                            _hit["cached"] = True
+                            return VerifyResponse(**_hit)
+                    except Exception:
+                        pass
+                # Timed out (compute node may have died) — fall through and compute
+                _got_lock = True
+    except Exception:
+        _got_lock = True  # Redis unavailable — compute normally
+
     # ── Math shortcut ─────────────────────────────────────────
     math_result = evaluate_math_claim(claim)
     if math_result:
@@ -546,6 +576,12 @@ async def verify_claim(req: VerifyRequest, eco: bool = False):
     try:
         from utils.semantic_cache import semantic_store
         await semantic_store(claim, result.model_dump())
+    except Exception:
+        pass
+    # Release inflight lock so waiting requests pick up the cached result
+    try:
+        if _got_lock and _lock_redis:
+            await _lock_redis.delete(_inflight_key)
     except Exception:
         pass
     return result

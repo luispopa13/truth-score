@@ -117,8 +117,11 @@ async def ip_can_register(ip: str) -> bool:
 ANON_DAILY_CAP = int(os.getenv("ANON_DAILY_CAP", "5"))
 
 
-async def anon_ip_check(ip: str):
-    """Returns (allowed, info_dict) for an anonymous visitor."""
+async def anon_ip_check(ip: str, fp: str = ""):
+    """Returns (allowed, info_dict) for an anonymous visitor.
+    When a browser fingerprint is provided, quota is tracked by IP+fingerprint
+    so the same device shares one quota across multiple incognito sessions.
+    """
     from utils.redis_client import get_async_redis
     redis = get_async_redis()
     base = {"plan": "anonymous", "used": 0, "limit": ANON_DAILY_CAP}
@@ -138,7 +141,10 @@ async def anon_ip_check(ip: str):
                         "creează un cont gratuit pentru a continua")
         return False, info
     day = _utc_day()
-    key = f"ts:anon:{ip}:{day}"
+    # Use IP+fingerprint combined key when fingerprint is available — same device
+    # shares one quota even across incognito sessions on the same browser.
+    key_id = f"{ip}:{fp[:32]}" if fp else ip
+    key = f"ts:anon:{key_id}:{day}"
     try:
         used = await redis.incr(key)
         await redis.expire(key, 172800)
