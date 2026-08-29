@@ -625,6 +625,23 @@ async def _verify_compute(claim: str, key: str, eco: bool, t_total_start: float)
     else:
         cal_conf = "calLow"
 
+    # ── Gossip / celebrity honest-rumor gate ─────────────────────
+    # For gossip claims, refuse to call a rumor TRUE when only tabloids report
+    # it, and surface a gossip-native label (CONFIRMED / DEBUNKED / UNCONFIRMED
+    # RUMOR) in the explanation. Canonical verdict stays TRUE/FALSE/UNCERTAIN so
+    # the UI chip coloring is unaffected.
+    if topic == "gossip":
+        try:
+            from pipeline.gossip import apply_gossip_gate
+            verdict, score, explanation, _glabel = apply_gossip_gate(
+                verdict, score, supporting, contradicting, explanation,
+                VERDICT_TRUE_AT, VERDICT_FALSE_AT)
+            # Re-derive confidence downgrade if the gate demoted a TRUE.
+            if _glabel == "UNCONFIRMED RUMOR" and confidence == "HIGH":
+                confidence = "MEDIUM"
+        except Exception as _ge:
+            print(f"  [GOSSIP] gate skipped ({_ge})")
+
     result = VerifyResponse(
         claim=claim, score=score, verdict=verdict,
         confidence=confidence, explanation=explanation,

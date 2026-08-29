@@ -57,6 +57,11 @@ DOMAIN_SOURCES = {
     # Current News
     "news":        ["tavily", "newsapi", "guardian", "gdelt",
                     "news_rss", "factcheck"],
+    # Gossip / Celebrity / Tabloid: live web FIRST for recency, then reliable
+    # entertainment/wire coverage + fact-check. Tabloids surface via web search
+    # but are down-weighted at scoring time (type="tabloid", weight 0.25).
+    "gossip":      ["tavily", "newsapi", "guardian", "gdelt",
+                    "news_rss", "factcheck"],
     # Logic / Formal logic
     "logic":       ["sep", "arxiv", "crossref", "semantic_scholar"],
     # Astronomy / Astrophysics
@@ -181,6 +186,10 @@ def build_source_plan(claim: str, topic: str):
         "diet":            "nutrition",
         "finance":         "economics",
         "company":         "business",
+        "celebrity":       "gossip",
+        "entertainment":   "gossip",
+        "showbiz":         "gossip",
+        "tabloid":         "gossip",
     })
     domain = topic_map.get(topic, "general")
 

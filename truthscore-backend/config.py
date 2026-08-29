@@ -278,8 +278,9 @@ SOURCE_AUTHORITY_WEIGHTS = {
     "factcheck": 2.0,   # Snopes, PolitiFact, FullFact -- highest
     "academic":  1.6,   # PubMed, arXiv, Semantic Scholar
     "news":      1.1,   # Reuters, BBC, AP
-    "wikipedia": 0.7,   # Wikipedia -- deprioritized
     "web":       0.8,   # General web
+    "wikipedia": 0.7,   # Wikipedia -- deprioritized
+    "tabloid":   0.25,  # cancan.ro / TMZ / The Sun -- rumor-grade, barely trusted
 }
 
 # ── Config ────────────────────────────────────────────────────

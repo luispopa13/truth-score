@@ -523,6 +523,16 @@ def detect_topic(claim: str) -> str:
            "messi","ronaldo","lebron","federer","djokovic","verstappen"):
         return "sports"
 
+    # ── Gossip / Celebrity / Tabloid ──────────────────────────
+    # Checked before the broad "news" catch: celebrity rumor needs the gossip
+    # vertical (live-web recency + honest-rumor gate), not the general news path.
+    try:
+        from pipeline.gossip import is_gossip_claim
+        if is_gossip_claim(claim):
+            return "gossip"
+    except Exception:
+        pass
+
     # ── Current Events ────────────────────────────────────────
     if kw("breaking","today","latest","yesterday","this week","announced",
            "said","according to","reported","news","current events"):
@@ -691,6 +701,16 @@ def classify_source_type(url: str) -> str:
     Prefer this over hard-coding a type when the type is inferred from the
     retrieved domain rather than the API that produced it.
     """
+    # Gossip/tabloid catalog wins first: a cancan.ro / TMZ URL must be typed
+    # "tabloid" (weight 0.25) no matter what other heuristics would say, and a
+    # reliable entertainment/wire outlet gets "news".
+    try:
+        from pipeline.gossip import classify_gossip_domain
+        g = classify_gossip_domain(url)
+        if g:
+            return g
+    except Exception:
+        pass
     d = _domain(url).lower()
     if any(fc in d for fc in _FACTCHECK_DOMAINS):
         return "factcheck"
