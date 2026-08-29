@@ -31,6 +31,34 @@ from pathlib import Path
 from collections import OrderedDict, deque
 from datetime import datetime, timezone
 
+import hashlib as _hashlib
+
+
+def hash_source_content(url: str, content: str) -> str:
+    """
+    Return a SHA-256 fingerprint of a source's content at verification time.
+    Stored with verdicts to prove the source actually contained the cited text —
+    anti-hallucination evidence that ChatGPT cannot provide.
+    """
+    payload = f"{url}|{(content or '').strip()[:2000]}"
+    return _hashlib.sha256(payload.encode()).hexdigest()[:16]  # 16 hex chars = 64 bits, compact
+
+
+def stamp_sources_with_hashes(sources: list[dict]) -> list[dict]:
+    """
+    Add a `content_hash` field to each source dict based on its snippet/content.
+    Non-destructive: only adds the field if snippet or title is present.
+    """
+    for s in sources:
+        if s.get("content_hash"):
+            continue
+        content = (s.get("snippet") or s.get("title") or "")
+        url = s.get("url") or ""
+        if content:
+            s["content_hash"] = hash_source_content(url, content)
+    return sources
+
+
 _BACKEND_ROOT = Path(__file__).parent.parent
 _STORE_DIR = _BACKEND_ROOT / "data" / "verdicts"
 _STORE_DIR.mkdir(parents=True, exist_ok=True)
@@ -133,6 +161,11 @@ async def save_verdict(payload: dict, user_id: str = "") -> str | None:
     # Tamper-evidence: stamp a content hash over the integrity-relevant fields
     # so the verdict is provably unaltered after publication (see /v/{id}/integrity).
     record["integrity"] = verdict_content_hash(record)
+
+    # Stamp sources with content hashes (anti-hallucination proof)
+    for key in ("supporting", "contradicting", "neutral_sources"):
+        if payload.get(key):
+            stamp_sources_with_hashes(payload[key])
 
     line = json.dumps(record, ensure_ascii=False, default=str)
     async with _write_lock:

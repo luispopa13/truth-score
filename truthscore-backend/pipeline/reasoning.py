@@ -759,3 +759,175 @@ Hard claims requiring extra care:
         neutral = real_neutral
 
     return score, verdict, confidence, explanation, supporting, contradicting, neutral
+
+
+# ── Multi-model consensus ─────────────────────────────────────────────────────
+
+async def multi_model_consensus(
+    claim: str,
+    evidence_summary: str,
+    models: list[str] | None = None,
+) -> dict:
+    """
+    Run the same reasoning prompt on multiple LLMs in parallel.
+    Returns a consensus result and a disagreement flag.
+
+    Returns:
+      {
+        "verdict": "TRUE"|"FALSE"|"UNCERTAIN",
+        "score": int (0-100),
+        "models_agree": bool,
+        "disagreement_note": str,
+        "model_results": [{"model": str, "verdict": str, "score": int}],
+      }
+    """
+    import asyncio as _asyncio
+    import json as _json
+
+    if models is None:
+        models = ["groq", "gemini", "openai"]
+
+    prompt = (
+        f"Evaluate this claim based on the evidence provided.\n\n"
+        f"CLAIM: {claim[:500]}\n\n"
+        f"EVIDENCE SUMMARY:\n{evidence_summary[:1500]}\n\n"
+        f"Respond in JSON only:\n"
+        f'{{\"verdict\": \"TRUE\"|\"FALSE\"|\"UNCERTAIN\", \"score\": <0-100>, '
+        f'\"confidence\": \"HIGH\"|\"MEDIUM\"|\"LOW\", \"reason\": \"<1 sentence>\"}}'
+    )
+
+    async def _run_one(model: str) -> dict:
+        try:
+            raw = await call_llm_raw(prompt, max_tokens=200, model=model)
+            # Parse JSON
+            import re
+            m = re.search(r"\{.*\}", raw, re.DOTALL)
+            if m:
+                d = _json.loads(m.group(0))
+                return {
+                    "model": model,
+                    "verdict": (d.get("verdict") or "UNCERTAIN").upper(),
+                    "score": int(d.get("score", 50)),
+                    "confidence": d.get("confidence", "MEDIUM"),
+                    "reason": d.get("reason", ""),
+                }
+        except Exception as e:
+            pass
+        return {"model": model, "verdict": "UNCERTAIN", "score": 50, "confidence": "LOW", "reason": ""}
+
+    results = await _asyncio.gather(*[_run_one(m) for m in models], return_exceptions=False)
+    results = [r for r in results if isinstance(r, dict)]
+
+    if not results:
+        return {
+            "verdict": "UNCERTAIN", "score": 50, "models_agree": False,
+            "disagreement_note": "All models failed to respond.",
+            "model_results": [],
+        }
+
+    # Consensus: majority vote on verdict
+    from collections import Counter
+    verdict_counts = Counter(r["verdict"] for r in results)
+    majority_verdict = verdict_counts.most_common(1)[0][0]
+    majority_count = verdict_counts.most_common(1)[0][1]
+    models_agree = majority_count == len(results)
+
+    # Average score (weighted by confidence)
+    conf_weights = {"HIGH": 1.5, "MEDIUM": 1.0, "LOW": 0.5}
+    weighted_sum = sum(r["score"] * conf_weights.get(r.get("confidence", "MEDIUM"), 1.0) for r in results)
+    weight_total = sum(conf_weights.get(r.get("confidence", "MEDIUM"), 1.0) for r in results)
+    consensus_score = int(weighted_sum / weight_total) if weight_total > 0 else 50
+
+    # Disagreement note
+    disagreement_note = ""
+    if not models_agree:
+        verdicts_str = ", ".join(f"{r['model'].split('/')[-1]}: {r['verdict']}" for r in results)
+        disagreement_note = f"Models disagree: {verdicts_str}. Treating as UNCERTAIN."
+        majority_verdict = "UNCERTAIN"
+        consensus_score = 50
+
+    return {
+        "verdict": majority_verdict,
+        "score": consensus_score,
+        "models_agree": models_agree,
+        "disagreement_note": disagreement_note,
+        "model_results": [{"model": r["model"], "verdict": r["verdict"], "score": r["score"]} for r in results],
+    }
+
+
+# ── Adversarial mislead detection ────────────────────────────────────────────
+
+async def detect_misleading(
+    claim: str,
+    verdict: str,
+    score: int,
+    explanation: str,
+    supporting_sources: list[dict] | None = None,
+) -> dict:
+    """
+    Check if a claim is "technically true but misleading" — true facts presented
+    to imply a false conclusion through omission, framing, or context stripping.
+
+    Returns:
+      {
+        "is_misleading": bool,
+        "mislead_type": "omission"|"framing"|"cherry_picking"|"false_implication"|"none",
+        "mislead_note": str,  # explanation of why it's misleading
+        "corrected_context": str,  # what the full picture looks like
+      }
+    """
+    import json as _json
+    import re
+
+    # Only check verdicts that are TRUE or MIXED (misleading claims are often technically true)
+    if (verdict or "").upper() not in ("TRUE", "MIXED", "UNCERTAIN"):
+        return {
+            "is_misleading": False,
+            "mislead_type": "none",
+            "mislead_note": "",
+            "corrected_context": "",
+        }
+
+    src_context = ""
+    if supporting_sources:
+        publishers = [s.get("publisher") or s.get("title", "") for s in supporting_sources[:3]]
+        src_context = f"\nSupporting sources: {', '.join(p for p in publishers if p)}"
+
+    prompt = (
+        f"A fact-checking system rated this claim as {verdict} ({score}/100).\n\n"
+        f"CLAIM: {claim[:400]}\n"
+        f"CURRENT EXPLANATION: {explanation[:300]}{src_context}\n\n"
+        f"Your task: Determine if this claim is TECHNICALLY TRUE but MISLEADING.\n"
+        f"A claim is misleading if it:\n"
+        f"- Uses true facts to imply a false conclusion (false implication)\n"
+        f"- Omits crucial context that would change the interpretation (omission)\n"
+        f"- Cherry-picks data while ignoring contradicting evidence\n"
+        f"- Uses loaded framing to spin a neutral fact\n\n"
+        f"Be strict: only flag if there is a clear, specific misleading element.\n"
+        f"Respond in JSON only:\n"
+        f'{{"is_misleading": true|false, '
+        f'"mislead_type": "omission"|"framing"|"cherry_picking"|"false_implication"|"none", '
+        f'"mislead_note": "<specific explanation if misleading, else empty string>", '
+        f'"corrected_context": "<full picture in 1-2 sentences, else empty string>"}}'
+    )
+
+    try:
+        raw = await call_llm_raw(prompt, max_tokens=300, model="groq")
+        m = re.search(r"\{.*\}", raw, re.DOTALL)
+        if m:
+            d = _json.loads(m.group(0))
+            return {
+                "is_misleading": bool(d.get("is_misleading", False)),
+                "mislead_type": d.get("mislead_type", "none"),
+                "mislead_note": (d.get("mislead_note") or "")[:400],
+                "corrected_context": (d.get("corrected_context") or "")[:400],
+            }
+    except Exception as e:
+        print(f"[reasoning] detect_misleading error: {e}")
+
+    return {
+        "is_misleading": False,
+        "mislead_type": "none",
+        "mislead_note": "",
+        "corrected_context": "",
+    }

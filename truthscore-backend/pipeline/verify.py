@@ -26,6 +26,23 @@ from pipeline.helpers import (
     _domain, factcheck_rating_to_nli,
 )
 
+try:
+    from pipeline.domain_experts import get_system_hint, get_search_suffix, boost_domain_sources, annotate_domain
+    _DOMAIN_EXPERTS_AVAILABLE = True
+except ImportError:
+    _DOMAIN_EXPERTS_AVAILABLE = False
+    def get_system_hint(c): return ""
+    def get_search_suffix(c): return ""
+    def boost_domain_sources(s, c): return s
+    def annotate_domain(r, c): return r
+
+try:
+    from pipeline.live_data import fetch_live_evidence
+    _LIVE_DATA_AVAILABLE = True
+except ImportError:
+    _LIVE_DATA_AVAILABLE = False
+    async def fetch_live_evidence(c, **k): return []
+
 @dataclass
 class RetrievalResult:
     """Everything /verify, batch, and PDF need out of the shared retrieval+rank stage."""
@@ -642,6 +659,28 @@ async def _verify_compute(claim: str, key: str, eco: bool, t_total_start: float)
         except Exception as _ge:
             print(f"  [GOSSIP] gate skipped ({_ge})")
 
+    # Augment with live authoritative data
+    if _LIVE_DATA_AVAILABLE:
+        try:
+            live_sources = await fetch_live_evidence(claim)
+            if live_sources:
+                # Add as neutral sources (they confirm the domain, not a stance yet)
+                neutral = (neutral + live_sources)[:15]
+        except Exception as _e:
+            pass
+
+    # Re-rank sources to prioritize domain-authoritative publishers
+    if _DOMAIN_EXPERTS_AVAILABLE:
+        try:
+            if supporting:
+                supporting = boost_domain_sources(supporting, claim)
+            if contradicting:
+                contradicting = boost_domain_sources(contradicting, claim)
+            if neutral:
+                neutral = boost_domain_sources(neutral, claim)
+        except Exception as _e:
+            pass
+
     result = VerifyResponse(
         claim=claim, score=score, verdict=verdict,
         confidence=confidence, explanation=explanation,
@@ -657,6 +696,13 @@ async def _verify_compute(claim: str, key: str, eco: bool, t_total_start: float)
         sub_claim_results=sub_results,
         aggregate_reason=aggregate_reason,
     )
+    if _DOMAIN_EXPERTS_AVAILABLE:
+        try:
+            _rd = result.model_dump()
+            _rd = annotate_domain(_rd, claim)
+            result = VerifyResponse(**_rd)
+        except Exception:
+            pass
     # Always store in local diskcache as last resort
     cache.set(key, result.model_dump(), expire=3600 * 6)
     # Best-effort store in distributed semantic cache (Redis)
