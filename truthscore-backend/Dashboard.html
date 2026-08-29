@@ -865,7 +865,7 @@ async function runVerify(){
     if(token())headers['Authorization']='Bearer '+token();
     const fp=await getBrowserFingerprint();
     if(fp)headers['X-Browser-Fp']=fp;
-    const isParagraph=text.length>220||((text.match(/[.!?]+(?:\s|$)/g)||[]).length>1)||(text.match(/,\s+[a-zA-ZÀ-ÖÙ-ÿ]/g)||[]).length>=2;
+    const isParagraph=text.length>220||((text.match(/[.!?]+(?:\s|$)/g)||[]).length>1)||(text.match(/,\s+[a-zA-ZÀ-ÖÙ-ÿ]/g)||[]).length>=2||(text.match(/[.!?][A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ]/g)||[]).length>=1;
     let d,showAds=false;
     if(isParagraph){
       const r=await fetch(`${API}/analyze-text`,{method:'POST',headers,body:JSON.stringify({text})});
@@ -1244,11 +1244,13 @@ function explRomanian(d){
       var icon=q==='TRUE'?'\u2705':q==='FALSE'?'\u274c':'\u26a0\ufe0f';
       var head=(c.claim||'').slice(0,90);
       var src=srcTxt(c);
+      var corrFix='';
+      if(q==='FALSE'&&c.explanation){var fe=(c.explanation.split(/[.!?]/)[0]||'').trim().slice(0,140);if(fe)corrFix=' <span style="color:#b8b8d4;font-style:italic">'+esc(fe)+'.</span>';}
       var tail;
-      if(ro){tail=(q==='TRUE')?'este <b>adev\u0103rat\u0103</b> \u2014 conform surselor':(q==='FALSE')?'este <b>fals\u0103</b> \u2014 sursele contrazic afirma\u0163ia':'nu se poate stabili cu siguran\u021b\u0103';}
-      else{tail=(q==='TRUE')?'is <b>true</b> \u2014 according to sources':(q==='FALSE')?'is <b>false</b> \u2014 the sources contradict it':'cannot be determined with confidence';}
+      if(ro){tail=(q==='TRUE')?'este <b>adev\u0103rat\u0103</b> \u2014 conform surselor':(q==='FALSE')?'este <b>fals\u0103</b>.'+corrFix:'nu se poate stabili cu siguran\u021b\u0103';}
+      else{tail=(q==='TRUE')?'is <b>true</b> \u2014 according to sources':(q==='FALSE')?'is <b>false</b>.'+corrFix:'cannot be determined with confidence';}
       var srcPart=src?' <span style="color:var(--text2)">(\u201e'+esc(src)+'\u201d)</span>':'';
-      return '<li>'+icon+' \u201c'+esc(head)+'\u201d '+tail+srcPart+'.</li>';
+      return '<li>'+icon+' \u201c'+esc(head)+'\u201d '+tail+srcPart+'</li>';
     }).join('');
     return intro2+'<ul style="margin:10px 0 0;padding-left:18px">'+itemsHtml+'</ul>';
   }
