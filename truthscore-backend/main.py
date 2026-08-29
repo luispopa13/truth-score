@@ -2168,11 +2168,11 @@ async def debate_claim(request: Request, current_user=Depends(get_current_user))
 
 @app.get("/manifest.json")
 async def pwa_manifest():
-    return FileResponse("manifest.json", media_type="application/manifest+json")
+    return FileResponse(str(Path(__file__).parent / "manifest.json"), media_type="application/manifest+json")
 
 @app.get("/sw.js")
 async def service_worker():
-    return FileResponse("sw.js", media_type="application/javascript")
+    return FileResponse(str(Path(__file__).parent / "sw.js"), media_type="application/javascript")
 
 @app.get("/widget.js")
 async def widget(user_key: str = ""):
