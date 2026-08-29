@@ -221,6 +221,7 @@ textarea::placeholder{color:var(--text3)}
 .src-title{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:2px}
 .src-pub{font-size:10px;color:var(--text2);font-family:'JetBrains Mono',monospace}
 .src-snip{font-size:11px;color:var(--text2);margin-top:4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.45}
+.src-claim-badge{font-size:10px;color:var(--text2);margin-top:3px;font-style:italic;opacity:.8}
 .src-tag{flex-shrink:0;font-size:9px;font-weight:700;padding:2px 6px;border-radius:5px;align-self:flex-start;margin-top:2px;font-family:'JetBrains Mono',monospace}
 .ts{background:var(--green-bg);color:var(--green)}
 .tc{background:var(--red-bg);color:var(--red)}
@@ -853,24 +854,26 @@ function renderScore(d){
 }
 function renderSources(d){
   const sup=d.supporting||[],con=d.contradicting||[],neu=d.neutral_sources||[];
-  const grp=(arr,cls,lbl)=>arr.length?`
+  const claimBadge=(s)=>s.claim_index>=0?`<div class="src-claim-badge">${LANG==='ro'?'sub-afirmație':'sub-claim'} #${s.claim_index+1}</div>`:'';
+  const grp=(arr,cls,lbl,cap)=>arr.length?`
     <div class="grp-lbl" style="color:${cls==='ts'?'var(--green)':cls==='tc'?'var(--red)':'var(--text2)'}">${lbl} (${arr.length})</div>
-    ${arr.slice(0,10).map(s=>`
+    ${arr.slice(0,cap).map(s=>`
       <a class="src" href="${safeUrl(s.url)}" target="_blank" rel="noopener">
         <span class="src-ico">${SRC_ICONS[s.type]||'📄'}</span>
         <div class="src-body">
           <div class="src-title">${esc(s.title||'')}</div>
           <div class="src-pub">${esc(s.publisher||'')}</div>
           ${s.snippet?`<div class="src-snip">${esc(s.snippet.slice(0,160))}</div>`:''}
+          ${claimBadge(s)}
         </div>
         <span class="src-tag ${cls}">${cls==='ts'?'✓':cls==='tc'?'✗':'—'}</span>
       </a>`).join('')}`:'';
   document.getElementById('tp-sources').innerHTML=`
     <div class="sec-lbl">${t('sourcesTitle')}</div>
     <div class="src-list">
-      ${grp(sup,'ts',t('grpSupport'))}
-      ${grp(con,'tc',t('grpContradict'))}
-      ${grp(neu.slice(0,8),'tn',t('grpRelevant'))}
+      ${grp(sup,'ts',t('grpSupport'),20)}
+      ${grp(con,'tc',t('grpContradict'),20)}
+      ${grp(neu,'tn',t('grpRelevant'),12)}
     </div>`;
 }
 // ── UI-facing, human-readable explanation in the active UI language ─────────
@@ -878,37 +881,64 @@ function renderSources(d){
 // follows the interface language (LANG), not the claim's own language.
 function explRomanian(d){
   var v=(d.verdict||'').toUpperCase();
+  var ro=LANG==='ro';
+  var srcTxt=function(c){var g=(c.supporting||[]).concat(c.contradicting||[]).concat(c.neutral_sources||[]);var out=[];for(var z=0;z<g.length&&out.length<3;z++){var p=(g[z].publisher||g[z].title||'').replace(/\u2026+/g,'').slice(0,30);if(p)out.push(p);}return out.join(' | ');};
+  // Case 1: sub_claim_results (compound /verify with decomposition)
+  var scrs=d.sub_claim_results||[];
+  if(scrs.length>0){
+    var pubs=function(arr,max){var out=[];for(var z=0;z<arr.length&&out.length<(max||3);z++){var p=(arr[z].publisher||arr[z].title||'').replace(/\u2026+/g,'').trim().slice(0,36);if(p&&out.indexOf(p)<0)out.push(p);}return out;};
+    var corr=function(expl){var s=(expl||'').split(/[.!?]/)[0].trim();return s.slice(0,130)+(s.length>130?'\u2026':'');};
+    var items=scrs.map(function(r){
+      var q=(r.verdict||'').toUpperCase();
+      var claim=esc((r.claim||'').slice(0,100));
+      if(q==='TRUE'){
+        var sp=pubs(r.supporting||[]);
+        var spt=sp.length?' <span style="color:var(--text2);font-size:11px">['+esc(sp.join(', '))+']</span>':'';
+        return ro?('<li>\u2705 Afirma\u021bia c\u0103 <em>\u00ab'+claim+'\u00bb</em> este <b>adev\u0103rat\u0103</b>.'+spt+'</li>'):('<li>\u2705 The claim that <em>\u00ab'+claim+'\u00bb</em> is <b>true</b>.'+spt+'</li>');
+      }else if(q==='FALSE'){
+        var cp=pubs(r.contradicting||[]);
+        var fix=corr(r.explanation);
+        var fixp=fix?' '+esc(fix)+'.':'';
+        var cpt=cp.length?' <span style="color:var(--text2);font-size:11px">['+esc(cp.join(', '))+']</span>':'';
+        return ro?('<li>\u274c Afirma\u021bia c\u0103 <em>\u00ab'+claim+'\u00bb</em> este <b>fals\u0103</b>.'+fixp+cpt+'</li>'):('<li>\u274c The claim that <em>\u00ab'+claim+'\u00bb</em> is <b>false</b>.'+fixp+cpt+'</li>');
+      }else{
+        return ro?('<li>\u26a0\ufe0f Afirma\u021bia c\u0103 <em>\u00ab'+claim+'\u00bb</em> este <b>incert\u0103</b> \u2014 dovezi insuficiente.</li>'):('<li>\u26a0\ufe0f The claim that <em>\u00ab'+claim+'\u00bb</em> is <b>uncertain</b> \u2014 insufficient evidence.</li>');
+      }
+    }).join('');
+    var aggNote='';
+    if(d.aggregate_reason){var first=(d.aggregate_reason.split(/[.!?]/)[0]||'').trim();if(first)aggNote='<div style="margin-top:10px;font-size:11.5px;color:var(--text2)">\u2696\ufe0f '+esc(first)+'.</div>';}
+    var intro=ro?'Detaliu pe fiecare afirma\u021bie:':'Each claim, verdict, and sources:';
+    return '<div style="font-size:12.5px;color:var(--text2);margin-bottom:6px">'+intro+'</div><ul style="margin:0;padding-left:16px;line-height:2">'+items+'</ul>'+aggNote;
+  }
+  // Case 2: paragraph / analyze-text mode (d.results)
   var claims=d.results||[];
-  var srcTxt=function(c,k){var g=(c.supporting||[]).concat(c.contradicting||[]).concat(c.neutral_sources||[]);var out=[];for(var z=0;z<g.length&&out.length<3;z++){var p=(g[z].publisher||g[z].title||'').replace(/…+/g,'').slice(0,30);if(p)out.push(p);}return out.join(' | ');};
-  var isRo=function(t){return LANG==='ro';};
   if(claims.length>0){
-    var roam=isRo((d.claim||'')+claims.map(function(c){return c.claim||''}).join(' '));
-    var t=0,f=0;claims.forEach(function(c){var q=(c.verdict||'').toUpperCase();if(q==='TRUE')t++;else if(q==='FALSE')f++;});
+    var tr=0,fa=0;claims.forEach(function(c){var q=(c.verdict||'').toUpperCase();if(q==='TRUE')tr++;else if(q==='FALSE')fa++;});
     var verdictWord;
-    if(roam){verdictWord=(t>0&&f>0)?'unele afirma\u0163ii sunt <b>adev\u0103rate</b>, altele <b>false</b> (verdict amestecat)':(f===0?'aceste afirma\u0163ii sunt, pe larg, <b>adev\u0103rate</b>':'aceste afirma\u0163ii sunt, pe larg, <b>false</b>');}
-    else {verdictWord=(t>0&&f>0)?'some claims are <b>true</b>, others <b>false</b> (mixed verdict)':(f===0?'these statements are largely <b>true</b>':'these statements are largely <b>false</b>');}
-    var intro=roam?('Verdict general: '+verdictWord+'.<br><br>Detaliu pe fiecare afirma\u0163ie \u0219i sursele ei:'):('Overall verdict: '+verdictWord+'.<br><br>Each claim and the sources behind it:');
+    if(ro){verdictWord=(tr>0&&fa>0)?'unele afirma\u0163ii sunt <b>adev\u0103rate</b>, altele <b>false</b> (verdict amestecat)':(fa===0?'aceste afirma\u0163ii sunt, pe larg, <b>adev\u0103rate</b>':'aceste afirma\u0163ii sunt, pe larg, <b>false</b>');}
+    else{verdictWord=(tr>0&&fa>0)?'some claims are <b>true</b>, others <b>false</b> (mixed verdict)':(fa===0?'these statements are largely <b>true</b>':'these statements are largely <b>false</b>');}
+    var intro2=ro?('Verdict general: '+verdictWord+'.<br><br>Detaliu pe fiecare afirma\u0163ie \u0219i sursele ei:'):('Overall verdict: '+verdictWord+'.<br><br>Each claim and the sources behind it:');
     var itemsHtml=claims.map(function(c){
       var q=(c.verdict||'').toUpperCase();
-      var icon=q==='TRUE'?'✅':q==='FALSE'?'❌':'⚠️';
+      var icon=q==='TRUE'?'\u2705':q==='FALSE'?'\u274c':'\u26a0\ufe0f';
       var head=(c.claim||'').slice(0,90);
       var src=srcTxt(c);
       var tail;
-      if(roam){tail=(q==='TRUE')?'este <b>adev\u0103rat\u0103</b> \u2014 conform surselor':(q==='FALSE')?'este <b>fals\u0103</b> \u2014 sursele contrazic afirma\u0163ia':'nu se poate stabili cu siguran\u021b\u0103';}
-      else {tail=(q==='TRUE')?'is <b>true</b> \u2014 according to sources':(q==='FALSE')?'is <b>false</b> \u2014 the sources contradict it':'cannot be determined with confidence';}
-      var srcPart=src?' <span style=\"color:var(--text2)\">(\u201e'+esc(src)+'\u201d)</span>':'';
+      if(ro){tail=(q==='TRUE')?'este <b>adev\u0103rat\u0103</b> \u2014 conform surselor':(q==='FALSE')?'este <b>fals\u0103</b> \u2014 sursele contrazic afirma\u0163ia':'nu se poate stabili cu siguran\u021b\u0103';}
+      else{tail=(q==='TRUE')?'is <b>true</b> \u2014 according to sources':(q==='FALSE')?'is <b>false</b> \u2014 the sources contradict it':'cannot be determined with confidence';}
+      var srcPart=src?' <span style="color:var(--text2)">(\u201e'+esc(src)+'\u201d)</span>':'';
       return '<li>'+icon+' \u201c'+esc(head)+'\u201d '+tail+srcPart+'.</li>';
     }).join('');
-    return intro+'<ul style=\"margin:10px 0 0;padding-left:18px\">'+itemsHtml+'</ul>';
+    return intro2+'<ul style="margin:10px 0 0;padding-left:18px">'+itemsHtml+'</ul>';
   }
-  var roam2=isRo(d.claim||'');
-  var head=(d.claim||(roam2?'aceast\u0103 afirma\u0163ie':'this statement')).slice(0,90);
+  // Case 3: single claim, no decomposition
+  var head=(d.claim||(ro?'aceast\u0103 afirma\u0163ie':'this statement')).slice(0,90);
   var src=srcTxt(d);
-  var tail;
-  if(roam2){tail=(v==='TRUE')?'este <b>adev\u0103rat\u0103</b> \u2014 conform sursei':(v==='FALSE')?'este <b>fals\u0103</b> \u2014 sursele contrazic afirma\u021bia':'este <b>incert\u0103</b>';}
-  else {tail=(v==='TRUE')?'is <b>true</b> \u2014 according to sources':(v==='FALSE')?'is <b>false</b> \u2014 the sources contradict it':'is <b>uncertain</b>';}
-  var vPart=src?' <span style=\"color:var(--text2)\">(\u201e'+esc(src)+'\u201d)</span>':'';
-  return '\u201c'+esc(head)+'\u201d '+tail+vPart+'.';
+  var tail2;
+  if(ro){tail2=(v==='TRUE')?'este <b>adev\u0103rat\u0103</b> \u2014 conform sursei':(v==='FALSE')?'este <b>fals\u0103</b> \u2014 sursele contrazic afirma\u021bia':'este <b>incert\u0103</b>';}
+  else{tail2=(v==='TRUE')?'is <b>true</b> \u2014 according to sources':(v==='FALSE')?'is <b>false</b> \u2014 the sources contradict it':'is <b>uncertain</b>';}
+  var vPart=src?' <span style="color:var(--text2)">(\u201e'+esc(src)+'\u201d)</span>':'';
+  return '\u201c'+esc(head)+'\u201d '+tail2+vPart+'.';
 }
 
 
@@ -924,60 +954,128 @@ function perClaimExplanation(r){
 
 function renderExplain(d){
   let body='';
+  // Aggregate reason block \u2014 most important context, shown first
+  if(d.aggregate_reason){
+    const ar=LANG==='ro'?'Motiv agregat':'Aggregate verdict';
+    body+=`<div style="font-size:12px;line-height:1.6;padding:10px 13px;border-radius:10px;background:rgba(91,78,255,.08);border:1px solid rgba(91,78,255,.18);margin:14px 0 18px;color:#d0d0f0">\u2696\ufe0f <b>${ar}:</b> ${esc(d.aggregate_reason)}</div>`;
+  }
   body += `<h3 style="margin:20px 0 14px">${t('overallVerdict')}</h3>`;
   body += `<div class="expl-text">${explRomanian(d)}</div>`;
+  // Per-sub-claim mini cards for single /verify with decomposition
+  const scrs=d.sub_claim_results||[];
+  if(scrs.length>0){
+    const hdr=LANG==='ro'?'Detaliu per sub-afirma\u021bie':'Per-sub-claim breakdown';
+    body+=`<h3 style="margin:22px 0 12px">${hdr}</h3>`;
+    body+=scrs.map((r,i)=>{
+      const color=r.verdict==='TRUE'?'var(--green)':r.verdict==='FALSE'?'var(--red)':'var(--yellow)';
+      const label=r.verdict==='TRUE'?t('TRUE'):r.verdict==='FALSE'?t('FALSE'):t('UNCERTAIN');
+      const sup=(r.supporting||[]).length,con=(r.contradicting||[]).length;
+      return `<div style="border-left:3px solid ${color};padding:8px 12px;margin-bottom:8px;background:rgba(255,255,255,.02);border-radius:0 8px 8px 0">
+        <div style="color:${color};font-size:10px;font-weight:800;margin-bottom:4px">SUB-CLAIM #${i+1} \xb7 ${label}${r.confidence?' \xb7 '+r.confidence:''}</div>
+        <div style="font-size:12.5px;font-weight:650;margin-bottom:5px">${esc(r.claim||'')}</div>
+        <div style="height:4px;border-radius:99px;background:rgba(128,128,160,.22);overflow:hidden;margin-bottom:5px"><div style="height:100%;width:${Math.max(3,r.score)}%;background:${color};border-radius:99px"></div></div>
+        <div style="font-size:11.5px;color:#b8b8d4;line-height:1.55">${esc(r.explanation||'')}</div>
+        <div style="font-size:10px;color:var(--text2);margin-top:4px">${sup} supporting \xb7 ${con} contradicting</div>
+      </div>`;
+    }).join('');
+  }
   if(d.results && d.results.length>0){
     body += `<h3 style="margin:22px 0 12px">${t('verifySteps')}</h3>`;
     const PROC=[
-      ['🔍',t('stepSplit'),t('stepSplitD')],
-      ['🔎',t('stepSearch'),t('stepSearchD')],
-      ['⚖️',t('stepWeigh'),t('stepWeighD')],
-      ['📊',t('stepVerdict'),t('stepVerdictD')],
+      ['\ud83d\udd0d',t('stepSplit'),t('stepSplitD')],
+      ['\ud83d\udd0e',t('stepSearch'),t('stepSearchD')],
+      ['\u2696\ufe0f',t('stepWeigh'),t('stepWeighD')],
+      ['\ud83d\udcca',t('stepVerdict'),t('stepVerdictD')],
     ];
     body += PROC.map(p=>`<div class="proc-step"><b>${p[0]} ${p[1]}</b><div>${p[2]}</div></div>`).join('');
     body += `<h3 style="margin:22px 0 12px">${t('eachClaim')}</h3>`;
     body += (d.results||[]).map((r,i)=>`
       <div id="exp-${i}" class="claim-mini ${i===0?'hl':''}">
-        <div style="font-weight:650;margin-bottom:6px;cursor:pointer" onclick="jumpClaim(${i})">→ ${esc(r.claim||'')}</div>
+        <div style="font-weight:650;margin-bottom:6px;cursor:pointer" onclick="jumpClaim(${i})">\u2192 ${esc(r.claim||'')}</div>
         <div>${perClaimExplanation(r)}</div>
       </div>`).join('');
+  } else {
+    // Single-claim: process steps + models + latency + evidence summary
+    body += `<h3 style="margin:22px 0 12px">${t('verifySteps')}</h3>`;
+    const PROC2=[
+      ['\ud83d\udd0d',t('stepSplit'),t('stepSplitD')],
+      ['\ud83d\udd0e',t('stepSearch'),t('stepSearchD')],
+      ['\u2696\ufe0f',t('stepWeigh'),t('stepWeighD')],
+      ['\ud83d\udcca',t('stepVerdict'),t('stepVerdictD')],
+    ];
+    body += PROC2.map(p=>`<div class="proc-step"><b>${p[0]} ${p[1]}</b><div>${p[2]}</div></div>`).join('');
+    if((d.models_used||[]).length||(d.latency&&d.latency.total_ms)){
+      body+=`<div style="margin-top:14px;font-size:11px;color:var(--text2);line-height:1.8">`;
+      if((d.models_used||[]).length) body+=`\ud83e\udd16 <b>Models:</b> ${esc(d.models_used.join(', '))}<br>`;
+      if(d.latency&&d.latency.total_ms) body+=`\u23f1 <b>Total:</b> ${d.latency.total_ms.toFixed(0)}ms${d.latency.retrieval_ms?' \xb7 retrieval '+d.latency.retrieval_ms.toFixed(0)+'ms':''}${d.latency.nli_ms?' \xb7 NLI '+d.latency.nli_ms.toFixed(0)+'ms':''}`;
+      body+=`</div>`;
+    }
+    const sup2=(d.supporting||[]).length,con2=(d.contradicting||[]).length,neu2=(d.neutral_sources||[]).length;
+    if(sup2+con2+neu2>0){
+      const ev=LANG==='ro'?'Dovezi':'Evidence';
+      const sl=LANG==='ro'?'surs\u0103 confirm\u0103':'supporting',cl=LANG==='ro'?'surs\u0103 contrazice':'contradicting',nl=LANG==='ro'?'neutre':'neutral';
+      body+=`<div style="margin-top:10px;font-size:11px;color:var(--text2)">\ud83d\udcca <b>${ev}:</b> <span style="color:var(--green)">${sup2} ${sl}</span> \xb7 <span style="color:var(--red)">${con2} ${cl}</span> \xb7 <span>${neu2} ${nl}</span></div>`;
+    }
   }
   document.getElementById('tp-explain').innerHTML = body;
 }
+
+
 function renderSub(d){
   const subs=d.sub_claim_results||[];
-  const DIC={web:'🌐',wikipedia:'📖',wikidata:'🗄️',academic:'🎓',news:'📰',factcheck:'🔎'};
   if(subs.length){
-    const lrow=(g,c,ic)=>{let out='';(g||[]).forEach(s=>{if(!s)return;
-      out+=`<a class="src-line" href="${safeUrl(s.url)}" target="_blank" rel="noopener" style="padding:5px 9px"><span style="color:${c};flex-shrink:0;font-size:11px">${ic}</span><span class="src-pub">${DIC[s.type]||'📄'} ${esc((s.publisher||'source').slice(0,38))}</span><span class="src-title">${esc((s.title||'').slice(0,64))}</span></a>`;});return out;};
+    // Mini rich source card
+    const miniSrc=(s,cls)=>`<a class="src" href="${safeUrl(s.url)}" target="_blank" rel="noopener" style="margin-bottom:4px">
+      <span class="src-ico">${SRC_ICONS[s.type]||'\ud83d\udcc4'}</span>
+      <div class="src-body">
+        <div class="src-title">${esc((s.title||'').slice(0,70))}</div>
+        <div class="src-pub">${esc((s.publisher||'').slice(0,40))}</div>
+        ${s.snippet?`<div class="src-snip">${esc(s.snippet.slice(0,100))}</div>`:''}
+      </div>
+      <span class="src-tag ${cls}">${cls==='ts'?'\u2713':cls==='tc'?'\u2717':'\u2014'}</span>
+    </a>`;
+    const srcSection=(r)=>{
+      const sup=(r.supporting||[]).slice(0,4);
+      const con=(r.contradicting||[]).slice(0,4);
+      const neu=(r.neutral_sources||[]).slice(0,2);
+      let html='';
+      if(sup.length) html+=`<div style="font-size:10px;font-weight:800;color:var(--green);margin:8px 0 4px;letter-spacing:.4px">\u2713 ${LANG==='ro'?'SURSE CARE CONFIRM\u0102':'SUPPORTING SOURCES'} (${(r.supporting||[]).length})</div><div class="src-list" style="gap:4px">${sup.map(s=>miniSrc(s,'ts')).join('')}</div>`;
+      if(con.length) html+=`<div style="font-size:10px;font-weight:800;color:var(--red);margin:8px 0 4px;letter-spacing:.4px">\u2717 ${LANG==='ro'?'SURSE CARE CONTRAZIC':'CONTRADICTING SOURCES'} (${(r.contradicting||[]).length})</div><div class="src-list" style="gap:4px">${con.map(s=>miniSrc(s,'tc')).join('')}</div>`;
+      if(!sup.length&&!con.length){
+        if(neu.length) html+=`<div style="font-size:10px;color:var(--text2);margin:8px 0 4px">\u2014 ${LANG==='ro'?'Surse relevante':'Relevant sources'}</div><div class="src-list" style="gap:4px">${neu.map(s=>miniSrc(s,'tn')).join('')}</div>`;
+        else html+=`<div style="font-size:10px;color:var(--text2);opacity:.7;margin-top:8px">${t('noDirect')}</div>`;
+      }
+      return html;
+    };
     const cards=subs.map((r,i)=>{
       const color=r.verdict==='TRUE'?'var(--green)':r.verdict==='FALSE'?'var(--red)':'var(--yellow)';
       const label=r.verdict==='TRUE'?t('TRUE'):r.verdict==='FALSE'?t('FALSE'):t('UNCERTAIN');
-      const refBlock=(lrow(r.supporting,'var(--green)','✓')+lrow(r.contradicting,'var(--red)','✗')+lrow(r.neutral_sources,'var(--text2)','•'))||`<div style="font-size:10px;color:var(--text2);opacity:.7">${t('noDirect')}</div>`;
-      return `<div class="sub-item" style="display:block;border-left:3px solid ${color};margin-bottom:8px">
-        <div style="display:flex;justify-content:space-between;gap:12px;color:${color};font-size:11px;font-weight:800"><span>SUB-CLAIM #${i+1}</span><span>${label} · ${TOPIC_ICONS[r.topic]||'🔍'} ${esc(TOPIC_LABELS[r.topic]||r.topic||'')}${r.confidence?' · '+esc(r.confidence):''}</span></div>
+      return `<div class="sub-item" style="display:block;border-left:3px solid ${color};margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;gap:12px;color:${color};font-size:11px;font-weight:800"><span>SUB-CLAIM #${i+1}</span><span>${label} \xb7 ${TOPIC_ICONS[r.topic]||'\ud83d\udd0d'} ${esc(TOPIC_LABELS[r.topic]||r.topic||'')}${r.confidence?' \xb7 '+esc(r.confidence):''}</span></div>
         <div style="font-size:13px;font-weight:650;margin-top:7px">${esc(r.claim||'')}</div>
-        <div style="font-size:12px;color:#b8b8d4;margin-top:6px;line-height:1.6">${esc(r.explanation||'—')}</div>
+        <div style="font-size:12px;color:#b8b8d4;margin-top:6px;line-height:1.6">${esc(r.explanation||'\u2014')}</div>
         <div style="display:flex;align-items:center;gap:8px;margin-top:8px"><div style="flex:1;height:5px;border-radius:99px;background:rgba(128,128,160,.22);overflow:hidden"><div style="height:100%;width:${Math.max(3,r.score)}%;background:${color};border-radius:99px"></div></div><span style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:${color};min-width:38px;text-align:right">${r.score}%</span></div>
-        <div style="margin-top:8px;font-size:9px;font-weight:800;color:var(--text2);opacity:.85;letter-spacing:.4px">${t('subSources')}</div>
-        <div style="margin-top:4px">${refBlock}</div></div>`;
+        ${srcSection(r)}
+      </div>`;
     }).join('');
-    const aggReason=d.aggregate_reason?`<div style="font-size:11.5px;color:#b8b8d4;line-height:1.6;margin:-2px 0 12px;padding:9px 11px;border-radius:10px;background:rgba(91,78,255,.08);border:1px solid rgba(91,78,255,.18)">⚖️ ${esc(d.aggregate_reason)}</div>`:'';
+    const aggReason=d.aggregate_reason?`<div style="font-size:11.5px;color:#b8b8d4;line-height:1.6;margin:-2px 0 12px;padding:9px 11px;border-radius:10px;background:rgba(91,78,255,.08);border:1px solid rgba(91,78,255,.18)">\u2696\ufe0f ${esc(d.aggregate_reason)}</div>`:'';
     document.getElementById('tp-sub').innerHTML=`<div class="sec-lbl">${t('subTitle')} (${subs.length})</div><div style="font-size:11px;color:var(--text2);margin:-2px 0 10px">${t('subIntro')}</div>${aggReason}${cards}`;
     return;
   }
   const sc=d.sub_claims||[];
-  window._subClaims=sc;  // index-based dispatch: never interpolate claim text into an inline handler
+  window._subClaims=sc;
   document.getElementById('tp-sub').innerHTML=sc.length>1?`
     <div class="sec-lbl">${t('subTitle')} (${sc.length})</div>
     <div style="font-size:12px;color:var(--text2);margin-bottom:10px">${t('verifyIndividually')}</div>
     ${sc.map((c,i)=>`<div class="sub-item" onclick="verifySubIdx(${i})">
-      <span style="color:var(--accent);font-size:11px">▸</span>
+      <span style="color:var(--accent);font-size:11px">\u25b8</span>
       <span style="font-size:13px">${esc(c)}</span>
       <span class="sub-arr">${t('verifyArrow')}</span>
     </div>`).join('')}`:
     `<div style="color:var(--text2);font-size:13px;padding:8px 0">${t('simpleClaim')}</div>`;
 }
+
+
 function switchTab(name,btn){
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'));
