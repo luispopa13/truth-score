@@ -469,6 +469,91 @@ function _maybeAutoScan() {
   } catch(e) {}
 }
 _initYouTube();
+_passiveAutoScan();
+
+// ── Passive auto-scan (Grammarly-mode) ───────────────────────────
+async function _passiveAutoScan() {
+  const settings = await chrome.storage.sync.get(['passiveScan', 'backendUrl']).catch(() => ({}));
+  if (!settings.passiveScan) return;
+  // Don't run on YouTube (handled by _initYouTube) or TruthScore itself
+  if (/youtube\.com|truthscore/.test(location.hostname)) return;
+  // Wait for page to settle
+  await new Promise(r => setTimeout(r, 1800));
+  const pageText = extractPageText();
+  if (!pageText || pageText.length < 100) return;
+  let claims = [];
+  try {
+    const res = await safeMsg({ type: 'DETECT_CLAIMS', text: pageText.slice(0, 20000) });
+    claims = (res?.claims || []).slice(0, 4); // max 4 auto-highlighted claims
+  } catch { return; }
+  if (!claims.length) return;
+  // Show a subtle indicator
+  showIndicator('🔍 TruthScore scanning…');
+  const marks = claims.map(c => ({ claim: c, mark: highlightPending(c.text) }));
+  for (const { claim, mark } of marks) {
+    verifyAndColor(claim.text, mark);
+    await sleep(600);
+  }
+  hideIndicator();
+}
+
+// ── Pre-share intercept ───────────────────────────────────────────
+const _SHARE_PATTERNS = [
+  /twitter\.com\/intent\/tweet/i,
+  /x\.com\/intent\/tweet/i,
+  /facebook\.com\/sharer/i,
+  /api\.whatsapp\.com\/send/i,
+  /linkedin\.com\/sharing/i,
+  /t\.co\//i,
+];
+let _shareWarningShown = false;
+
+document.addEventListener('click', async (e) => {
+  if (_shareWarningShown) return;
+  const a = e.target.closest('a[href]');
+  if (!a) return;
+  const href = a.href || '';
+  if (!_SHARE_PATTERNS.some(p => p.test(href))) return;
+  const settings = await chrome.storage.sync.get('passiveScan').catch(() => ({}));
+  // Only intercept if passive scan found issues OR always show a quick check option
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  _shareWarningShown = true;
+  _showShareGuard(href, a);
+}, true);
+
+function _showShareGuard(shareUrl, anchor) {
+  const guard = document.createElement('div');
+  guard.id = 'ts-share-guard';
+  guard.style.cssText = 'position:fixed;bottom:24px;right:24px;z-index:2147483647;background:#1a1a2e;border:1px solid rgba(108,99,255,.4);border-radius:12px;padding:16px 18px;max-width:320px;box-shadow:0 8px 32px rgba(0,0,0,.5);font-family:Inter,sans-serif';
+  guard.innerHTML = `
+    <div style="font-size:13px;font-weight:700;color:#e5e7eb;margin-bottom:6px">⚡ TruthScore Pre-Share Check</div>
+    <div style="font-size:12px;color:#9ca3af;margin-bottom:12px">Before sharing, check if this page contains false claims.</div>
+    <div style="display:flex;gap:8px">
+      <button id="ts-sg-check" style="flex:1;padding:7px 10px;background:#6c63ff;color:#fff;border:none;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer">🔍 Check first</button>
+      <button id="ts-sg-share" style="flex:1;padding:7px 10px;background:rgba(255,255,255,.07);color:#9ca3af;border:1px solid rgba(255,255,255,.1);border-radius:7px;font-size:12px;cursor:pointer">Share anyway →</button>
+    </div>
+    <button id="ts-sg-x" style="position:absolute;top:8px;right:10px;background:none;border:none;color:#6b7280;cursor:pointer;font-size:14px">✕</button>
+  `;
+  document.body.appendChild(guard);
+
+  guard.querySelector('#ts-sg-check').addEventListener('click', () => {
+    guard.remove();
+    _shareWarningShown = false;
+    runFullScan();
+  });
+  guard.querySelector('#ts-sg-share').addEventListener('click', () => {
+    guard.remove();
+    _shareWarningShown = false;
+    window.open(shareUrl, '_blank', 'noopener');
+  });
+  guard.querySelector('#ts-sg-x').addEventListener('click', () => {
+    guard.remove();
+    _shareWarningShown = false;
+  });
+  // Auto-dismiss after 12s
+  setTimeout(() => { if (guard.isConnected) { guard.remove(); _shareWarningShown = false; } }, 12000);
+}
 
 // ── YouTube: inject "Check claims" button into video description ──
 function _initYouTube(){

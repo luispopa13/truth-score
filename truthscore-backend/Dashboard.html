@@ -3,6 +3,12 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#6c63ff">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="TruthScore">
 <title>TruthScore — AI Fact Checker</title>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
 <link rel="stylesheet" href="/tokens.css"/>
@@ -361,6 +367,7 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
     <div class="udrop" id="userDropdown">
       <div class="udrop-menu" onclick="event.stopPropagation()">
         <div class="umitem" onclick="document.getElementById('userDropdown').classList.remove('open');showHistory()" data-i18n="myChecks">🕑 My checks</div>
+        <div class="umitem" onclick="document.getElementById('userDropdown').classList.remove('open');openPublisherRanking()">📊 Publisher ranking</div>
         <div class="umitem" onclick="document.getElementById('userDropdown').classList.remove('open');openWatched()">🔔 Watched claims</div>
         <div class="umitem" onclick="document.getElementById('userDropdown').classList.remove('open');openApiKeys()">🔑 API Keys</div>
         <div class="umitem" onclick="document.getElementById('userDropdown').classList.remove('open');showPricing()" data-i18n="upgrade">⭐ Upgrade plan</div>
@@ -562,6 +569,10 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
 // whatever origin this page was loaded from (localhost while developing,
 // the Render URL once deployed). No hardcoded host needed.
 const API='';
+// Register PWA service worker
+if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catch(()=>{});}
+// Handle share_target: ?claim=... pre-fill
+(()=>{const u=new URL(location.href);const c=u.searchParams.get('claim');if(c){const el=document.getElementById('claimInput');if(el){el.value=c;setTimeout(()=>document.getElementById('verifyBtn')?.click(),600);}}})();
 
 // ── Internationalization (English default, any language via switcher) ──────
 // Single source of UI copy. t('key') returns the string for the active LANG,
@@ -1977,6 +1988,42 @@ function showPricing(){renderPlans();document.getElementById('pricingOverlay').c
 function closePricing(){document.getElementById('pricingOverlay').className='overlay';}
 function closeHistory(){document.getElementById('historyOverlay').className='overlay';}
 const _HV_COLORS={TRUE:'#22c55e',FALSE:'#ef4444',UNCERTAIN:'#eab308',MIXED:'#eab308'};
+async function openPublisherRanking(){
+  const overlay=document.createElement('div');
+  overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box';
+  overlay.innerHTML=`
+    <div style="background:#1a1a2e;border-radius:16px;padding:24px;max-width:580px;width:100%;max-height:80vh;overflow-y:auto;border:1px solid rgba(108,99,255,.3)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <div style="font-size:18px;font-weight:700;color:#e5e7eb">📊 Publisher Trust Ranking</div>
+        <button onclick="this.closest('div[style]').parentElement.remove()" style="background:none;border:none;color:#6b7280;cursor:pointer;font-size:18px">✕</button>
+      </div>
+      <div style="font-size:13px;color:#9ca3af;margin-bottom:16px">Based on sources cited in verified claims. Reliability scores from AllSides + domain analysis.</div>
+      <div id="pubRankList" style="display:flex;flex-direction:column;gap:6px">
+        <div style="color:#6b7280;font-size:13px">Loading…</div>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('mousedown', e => { if(e.target===overlay) overlay.remove(); });
+  try{
+    // Build ranking from DOMAIN_CRED (always available) + live data
+    const dominated = Object.entries(DOMAIN_CRED)
+      .sort((a,b)=>b[1].score-a[1].score)
+      .slice(0,25);
+    const biasColor={'Center':'#10b981','Center-Left':'#60a5fa','Left-Center':'#60a5fa','Left':'#818cf8','Center-Right':'#f59e0b','Right':'#ef4444','Right-Center':'#f59e0b','Scientific':'#10b981','Fact-Check':'#10b981','Official':'#10b981','Neutral':'#9ca3af','State Media':'#ef4444','Conspiracy':'#ef4444'};
+    document.getElementById('pubRankList').innerHTML=dominated.map(([domain,c],i)=>`
+      <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06)">
+        <div style="font-size:12px;font-weight:700;color:#6b7280;width:22px;text-align:right">#${i+1}</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;color:#e5e7eb;font-weight:600">${esc(domain)}</div>
+          <div style="font-size:11px;color:${biasColor[c.bias]||'#9ca3af'};margin-top:1px">${esc(c.bias)}</div>
+        </div>
+        <div style="font-size:20px;font-weight:800;color:${c.score>=85?'#10b981':c.score>=60?'#f59e0b':'#ef4444'}">${c.score}</div>
+      </div>`).join('');
+  }catch(e){
+    const el=document.getElementById('pubRankList');
+    if(el) el.innerHTML=`<div style="color:#ef4444;font-size:13px">${esc(e.message)}</div>`;
+  }
+}
 async function showHistory(){
   const ov=document.getElementById('historyOverlay'), body=document.getElementById('historyBody');
   ov.className='overlay show';

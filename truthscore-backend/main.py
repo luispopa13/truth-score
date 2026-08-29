@@ -1763,6 +1763,135 @@ async def _resolve_api_key(request) -> dict | None:
         return None
 
 
+# ── Claim Timeline / Version History ──────────────────────────────
+
+@app.get("/v/{verdict_id}/history")
+async def verdict_history(verdict_id: str):
+    """Return the full version history for a verdict (how it changed over time)."""
+    try:
+        from pipeline.verdict_store import load_verdict
+        from bson import ObjectId
+        from auth import _get_db
+        db = _get_db()
+        col = db["verdict_history"]
+        docs = await col.find({"verdict_id": verdict_id}).sort("checked_at", 1).to_list(50)
+        for d in docs:
+            d["id"] = str(d.pop("_id", ""))
+        # Also return the current verdict
+        current = load_verdict(verdict_id)
+        return {"verdict_id": verdict_id, "history": docs, "current": current}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+async def _record_verdict_history(verdict_id: str, verdict: str, score: int, claim: str):
+    """Append a snapshot to the verdict history collection. Called from /verify."""
+    try:
+        from auth import _get_db
+        db = _get_db()
+        col = db["verdict_history"]
+        await col.insert_one({
+            "verdict_id": verdict_id,
+            "verdict": verdict,
+            "score": score,
+            "claim": claim[:500],
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+        })
+    except Exception:
+        pass
+
+
+# ── WhatsApp Bot Webhook ───────────────────────────────────────────
+
+@app.post("/whatsapp/webhook")
+async def whatsapp_webhook(request: Request):
+    """
+    Receives WhatsApp Business Cloud API (Meta) webhook events.
+    Set up: Meta Developer Console → WhatsApp → Webhook → https://<host>/whatsapp/webhook
+    Required env: WHATSAPP_TOKEN, WHATSAPP_VERIFY_TOKEN
+    """
+    # Verification challenge (GET is handled separately)
+    wa_token = os.getenv("WHATSAPP_TOKEN", "")
+    if not wa_token:
+        return {"status": "WHATSAPP_TOKEN not configured"}
+    try:
+        body = await request.json()
+        from whatsapp_bot import handle_whatsapp_update
+        import asyncio as _asyncio
+        _asyncio.create_task(handle_whatsapp_update(body, wa_token))
+    except Exception as e:
+        print(f"[whatsapp-webhook] error: {e}")
+    return {"status": "ok"}
+
+
+@app.get("/whatsapp/webhook")
+async def whatsapp_verify(
+    hub_mode: str = "",
+    hub_challenge: str = "",
+    hub_verify_token: str = "",
+):
+    """Meta webhook verification challenge."""
+    expected = os.getenv("WHATSAPP_VERIFY_TOKEN", "truthscore_verify")
+    if hub_mode == "subscribe" and hub_verify_token == expected:
+        return PlainTextResponse(hub_challenge)
+    raise HTTPException(403, "Invalid verify token")
+
+
+# ── Publisher Trust Ranking ────────────────────────────────────────
+
+@app.get("/publishers/ranking")
+async def publisher_ranking(limit: int = 30):
+    """
+    Aggregate source stats from stored verdicts to build a publisher trust ranking.
+    Returns publishers sorted by reliability score (weighted by appearance count).
+    """
+    try:
+        from auth import _get_db
+        db = _get_db()
+        col = db["verdicts"]
+        # Aggregate: for each source domain, count appearances and average score
+        pipeline_agg = [
+            {"$project": {"sources": {"$concatArrays": [
+                {"$ifNull": ["$supporting", []]},
+                {"$ifNull": ["$contradicting", []]},
+                {"$ifNull": ["$neutral_sources", []]}
+            ]}}},
+            {"$unwind": "$sources"},
+            {"$group": {
+                "_id": "$sources.publisher",
+                "count": {"$sum": 1},
+                "supporting": {"$sum": {"$cond": [{"$in": ["$sources", "$supporting"]}, 1, 0]}},
+                "urls": {"$addToSet": "$sources.url"},
+            }},
+            {"$match": {"_id": {"$ne": None}, "_id": {"$ne": ""}, "count": {"$gte": 2}}},
+            {"$sort": {"count": -1}},
+            {"$limit": limit},
+        ]
+        docs = await col.aggregate(pipeline_agg).to_list(limit)
+        # Merge with DOMAIN_CRED for reliability score
+        results = []
+        for d in docs:
+            publisher = d.get("_id", "")
+            domain = ""
+            for url in (d.get("urls") or [])[:3]:
+                try:
+                    from urllib.parse import urlparse
+                    domain = urlparse(url).hostname or ""
+                    domain = domain.replace("www.", "")
+                    if domain:
+                        break
+                except Exception:
+                    pass
+            results.append({
+                "publisher": publisher,
+                "domain": domain,
+                "appearances": d["count"],
+            })
+        return {"publishers": results, "total": len(results)}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 @app.post("/verify-pdf")
 async def pdf(req: VerifyRequest, user=Depends(require_user)):
     return await verify_and_pdf(req, user)
@@ -1793,6 +1922,14 @@ async def telegram_webhook(request: Request):
 
 
 # ── Widget ────────────────────────────────────────────────
+
+@app.get("/manifest.json")
+async def pwa_manifest():
+    return FileResponse("manifest.json", media_type="application/manifest+json")
+
+@app.get("/sw.js")
+async def service_worker():
+    return FileResponse("sw.js", media_type="application/javascript")
 
 @app.get("/widget.js")
 async def widget(user_key: str = ""):

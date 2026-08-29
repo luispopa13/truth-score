@@ -98,6 +98,12 @@ input::placeholder{color:#505068;font-family:inherit}
 
   <div class="card">
     <div class="card-title">🔍 Auto-Scan <span class="badge badge-free" style="background:rgba(251,146,60,.15);color:#fb923c">NEW</span></div>
+    <div style="margin-bottom:16px">
+      <label style="display:flex;align-items:center;gap:10px;cursor:pointer">
+        <input type="checkbox" id="passiveScan" style="width:16px;height:16px;accent-color:#6c63ff">
+        <span><strong>Passive scan</strong> — automatically highlight claims on every page you visit (Grammarly-mode)</span>
+      </label>
+    </div>
     <div class="field" style="display:flex;align-items:center;gap:10px">
       <input type="checkbox" id="autoScan" style="width:16px;height:16px;accent-color:#6c63ff;cursor:pointer;flex-shrink:0"/>
       <label for="autoScan" style="margin:0;cursor:pointer">Automatically scan and highlight claims on every page you visit</label>
@@ -114,9 +120,10 @@ input::placeholder{color:#505068;font-family:inherit}
 <script src="i18n.js"></script>
 <script>
 document.addEventListener('DOMContentLoaded', () => {
-  chrome.storage.sync.get(['backendUrl', 'autoScan'], r => {
+  chrome.storage.sync.get(['backendUrl', 'autoScan', 'passiveScan'], r => {
     if (r.backendUrl) document.getElementById('backendUrl').value = r.backendUrl;
     document.getElementById('autoScan').checked = !!r.autoScan;
+    document.getElementById('passiveScan').checked = !!r.passiveScan;
   });
   // Language selector reflects the current UI language and updates it live.
   const sel = document.getElementById('langSelect');
@@ -131,6 +138,7 @@ function saveSettings() {
   chrome.storage.sync.set({
     backendUrl: document.getElementById('backendUrl').value.trim() || 'http://localhost:8000',
     autoScan: document.getElementById('autoScan').checked,
+    passiveScan: document.getElementById('passiveScan').checked,
   }, () => {
     const el = document.getElementById('toast');
     el.classList.add('active');
