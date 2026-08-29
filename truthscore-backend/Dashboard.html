@@ -851,6 +851,7 @@ async function runVerify(){
         if(!r.ok)throw new Error(`HTTP ${r.status}: ${await r.text()}`);
         d=await r.json();
         d._interactionId=r.headers.get('X-TruthScore-Interaction-Id')||'';
+        d._verdictId=r.headers.get('X-TruthScore-Verdict-Id')||'';
         showAds=r.headers.get('X-TruthScore-Show-Ads')==='1';
       }
     }
@@ -984,7 +985,11 @@ function renderScore(d){
 function shareResult(d){
   const text=(d&&d.claim)||document.getElementById('claimInput').value.trim();
   if(!text)return;
-  const url=location.origin+'/?claim='+encodeURIComponent(text);
+  // Prefer the permanent verdict permalink (the shareable, unfurling snapshot).
+  // Fall back to a prefilled re-check link only when no verdict id was returned.
+  const vid=(d&&d._verdictId)||(lastResult&&lastResult._verdictId)||'';
+  const url=vid?(location.origin+'/v/'+vid)
+              :(location.origin+'/?claim='+encodeURIComponent(text));
   const done=()=>toast(LANG==='ro'?'Link copiat!':'Link copied!','ok');
   if(navigator.share){navigator.share({title:'TruthScore',text:text,url:url}).catch(()=>{});return;}
   if(navigator.clipboard){navigator.clipboard.writeText(url).then(done).catch(()=>prompt('Copy link:',url));}

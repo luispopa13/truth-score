@@ -21,6 +21,7 @@ from fastapi import Response
 from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel
 from pipeline.case_study import log_interaction
+from pipeline.verdict_store import save_verdict, load_verdict
 
 # Auth
 try:
@@ -97,6 +98,7 @@ app.add_middleware(
     # Extension JS must be able to READ these custom response headers
     expose_headers    = [
         "X-TruthScore-Interaction-Id",
+        "X-TruthScore-Verdict-Id",
         "X-TruthScore-Show-Ads",
         "X-TruthScore-Quota-Left",
         "X-TruthScore-Truncated",
@@ -384,6 +386,17 @@ async def verify(req: VerifyRequest, response: Response,
     except Exception as e:
         print(f"[CASE-STUDY] Logging skipped (non-fatal): {e}")
 
+    # ── Permanent shareable verdict page (the moat) ──────────────
+    # Persist the full result under a short id and hand the client a permalink
+    # id. Skip cache hits' re-save is unnecessary — every distinct result gets a
+    # stable /v/{id}. Best-effort: a failed save just means no share link.
+    try:
+        _vid = await save_verdict(result.model_dump())
+        if _vid:
+            response.headers["X-TruthScore-Verdict-Id"] = _vid
+    except Exception as e:
+        print(f"[VERDICT-STORE] save skipped (non-fatal): {e}")
+
     # Internal telemetry records model choices before this point. Public clients
     # receive no provider/model metadata, which also keeps the API contract clean.
     result.models_used = []
@@ -481,6 +494,13 @@ async def verify_stream(req: VerifyRequest, request: Request,
             payload["latency_ms"] = duration_ms
             if interaction_id:
                 payload["_interactionId"] = interaction_id
+            # Permanent shareable permalink id (moat) — best-effort.
+            try:
+                _vid = await save_verdict(payload)
+                if _vid:
+                    payload["_verdictId"] = _vid
+            except Exception as e:
+                print(f"[VERDICT-STORE] save skipped (non-fatal): {e}")
             payload["show_ads"] = show_ads
             if quota_left is not None:
                 payload["quota_left"] = quota_left
@@ -781,6 +801,137 @@ async def root():
         return HTMLResponse((Path(__file__).parent / "Dashboard.html").read_text(encoding="utf-8"))
     except Exception:
         return HTMLResponse("<h1>TruthScore v12</h1><p>API running.</p>")
+
+
+def _esc(s: str) -> str:
+    """Minimal HTML-attribute/text escaping for OG tags and page text."""
+    return (str(s or "")
+            .replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            .replace('"', "&quot;").replace("'", "&#39;"))
+
+
+_VERDICT_PAGE_COLORS = {
+    "TRUE": "#2ecc71", "FALSE": "#e74c3c", "UNCERTAIN": "#f1c40f",
+    "MISLEADING": "#e67e22", "UNVERIFIABLE": "#95a5a6",
+}
+
+
+@app.get("/v/{vid}/card.png", include_in_schema=False)
+async def verdict_card(vid: str):
+    """Open-Graph social card (1200×630 PNG) for a shared verdict permalink."""
+    from fastapi.responses import Response as _Resp
+    rec = await load_verdict(vid)
+    if not rec:
+        raise HTTPException(404, "Verdict not found")
+    try:
+        from pipeline.social_card import render_card
+        png = render_card(vid, rec.get("verdict", "UNCERTAIN"),
+                          int(rec.get("score", 50)), rec.get("claim", ""))
+    except Exception as e:
+        print(f"[VERDICT-CARD] render failed: {e}")
+        raise HTTPException(500, "card render failed")
+    return _Resp(content=png, media_type="image/png",
+                 headers={"Cache-Control": "public, max-age=86400"})
+
+
+@app.get("/v/{vid}", include_in_schema=False)
+async def verdict_page(vid: str, request: Request):
+    """Permanent, crawlable, frozen snapshot of a verification at a stable URL.
+
+    This is the moat: a shareable citation that unfurls (OG card) in chats and
+    social, unlike an ephemeral chatbot answer. The page renders server-side so
+    crawlers see real content + meta tags without executing JS, and links back to
+    the live dashboard for a fresh re-check.
+    """
+    from fastapi.responses import HTMLResponse
+    rec = await load_verdict(vid)
+    if not rec:
+        return HTMLResponse(
+            "<h1>Verdict not found</h1><p>This link may have expired or is "
+            f"invalid. <a href='/'>Check a claim on TruthScore</a>.</p>",
+            status_code=404)
+
+    payload = rec.get("payload", {}) or {}
+    claim = rec.get("claim", "") or payload.get("claim", "")
+    verdict = (rec.get("verdict", "UNCERTAIN") or "UNCERTAIN").upper()
+    score = int(rec.get("score", 50))
+    explanation = payload.get("explanation", "") or payload.get("aggregate_reason", "")
+    color = _VERDICT_PAGE_COLORS.get(verdict, "#95a5a6")
+
+    base = str(request.base_url).rstrip("/")
+    page_url = f"{base}/v/{vid}"
+    card_url = f"{page_url}/card.png"
+    title = f"{verdict} ({score}/100) — TruthScore"
+    desc = (explanation or claim)[:280]
+
+    # Source lists (frozen snapshot).
+    def _src_items(items):
+        out = []
+        for s in (items or [])[:12]:
+            u = _esc(s.get("url", ""))
+            t = _esc(s.get("title") or s.get("publisher") or s.get("url", ""))
+            pub = _esc(s.get("publisher", ""))
+            if not u:
+                continue
+            out.append(f'<li><a href="{u}" target="_blank" rel="noopener nofollow">{t}</a>'
+                       + (f' <span class="pub">{pub}</span>' if pub else "") + "</li>")
+        return "\n".join(out)
+
+    sup = _src_items(payload.get("supporting"))
+    con = _src_items(payload.get("contradicting"))
+    sources_html = ""
+    if sup:
+        sources_html += f'<h3 class="s-sup">✓ Supporting evidence</h3><ul>{sup}</ul>'
+    if con:
+        sources_html += f'<h3 class="s-con">✗ Contradicting evidence</h3><ul>{con}</ul>'
+    if not sources_html:
+        sources_html = '<p class="muted">No public sources were attached to this verdict.</p>'
+
+    created = _esc(rec.get("created_at", ""))
+    html = f"""<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{_esc(title)}</title>
+<meta name="description" content="{_esc(desc)}">
+<meta property="og:type" content="article">
+<meta property="og:title" content="{_esc(title)}">
+<meta property="og:description" content="{_esc(desc)}">
+<meta property="og:url" content="{_esc(page_url)}">
+<meta property="og:image" content="{_esc(card_url)}">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:site_name" content="TruthScore">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{_esc(title)}">
+<meta name="twitter:description" content="{_esc(desc)}">
+<meta name="twitter:image" content="{_esc(card_url)}">
+<style>
+  :root{{color-scheme:dark}}
+  body{{margin:0;background:#0f101c;color:#eeeef8;font:16px/1.6 -apple-system,Segoe UI,Roboto,sans-serif}}
+  .wrap{{max-width:760px;margin:0 auto;padding:40px 22px 80px}}
+  .brand{{color:#9898b8;font-weight:700;letter-spacing:.3px}}
+  .verdict{{font-size:52px;font-weight:800;margin:18px 0 6px;color:{color}}}
+  .score{{display:inline-block;background:#1e2034;border-radius:12px;padding:6px 14px;font-weight:700}}
+  .claim{{font-size:22px;margin:22px 0;padding:16px 18px;background:#161826;border-left:4px solid {color};border-radius:8px}}
+  .expl{{color:#c9c9e0;margin:18px 0}}
+  h3{{margin:26px 0 8px;font-size:15px;text-transform:uppercase;letter-spacing:.5px}}
+  .s-sup{{color:#2ecc71}} .s-con{{color:#e74c3c}}
+  ul{{padding-left:20px;margin:6px 0}} li{{margin:6px 0}}
+  a{{color:#7aa2ff}} .pub{{color:#9898b8;font-size:13px}}
+  .muted{{color:#9898b8}}
+  .cta{{display:inline-block;margin-top:34px;background:{color};color:#0f101c;font-weight:700;
+        text-decoration:none;padding:12px 22px;border-radius:10px}}
+  .foot{{margin-top:30px;color:#6d6d8a;font-size:13px}}
+</style></head><body><div class="wrap">
+  <div class="brand">TruthScore · verified fact check</div>
+  <div class="verdict">{_esc(verdict)}</div>
+  <div class="score">{score}/100 confidence</div>
+  <div class="claim">{_esc(claim)}</div>
+  <div class="expl">{_esc(explanation)}</div>
+  {sources_html}
+  <a class="cta" href="/">Check your own claim →</a>
+  <div class="foot">Snapshot generated {created}. Verdicts reflect evidence available at check time.</div>
+</div></body></html>"""
+    return HTMLResponse(html, headers={"Cache-Control": "public, max-age=3600"})
 
 
 @app.get("/tokens.css", include_in_schema=False)
