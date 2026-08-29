@@ -18,6 +18,21 @@ _MODELS_DIR = Path(__file__).parent.parent / "models"
 # Optional sidecar URL — set RANKING_SERVICE_URL=http://ranking:8001 in prod
 _RANKING_URL = os.getenv("RANKING_SERVICE_URL", "").rstrip("/")
 
+# Dedicated bounded pool for torch inference (cross-encoder + embeddings).
+# The default executor is shared by ALL run_in_executor(None, ...) calls in the
+# process; letting torch — which is CPU-heavy and releases the GIL in bursts —
+# use it means a spike of concurrent verifications can saturate every default
+# worker and starve unrelated blocking calls (file I/O, DB drivers). A small
+# dedicated pool caps how many torch jobs run at once, so under 1000 users the
+# ranking stage degrades to a queue instead of thrashing the CPU/GIL. Sized low
+# by default because torch already parallelizes internally; oversubscribing
+# threads here just adds context-switch overhead.
+from concurrent.futures import ThreadPoolExecutor as _ThreadPoolExecutor
+_TORCH_POOL = _ThreadPoolExecutor(
+    max_workers=int(os.getenv("TORCH_POOL_WORKERS", "2")),
+    thread_name_prefix="ts-torch",
+)
+
 
 async def _sidecar_rank(endpoint: str, payload: dict) -> list | None:
     """POST to ranking sidecar; return sources list or None on any failure."""
@@ -124,7 +139,7 @@ async def rerank_with_crossencoder(
 
         loop = _aio.get_event_loop()
         scores = await loop.run_in_executor(
-            None,
+            _TORCH_POOL,
             lambda: encoder.predict(pairs, show_progress_bar=False)
         )
 
@@ -189,7 +204,7 @@ async def rank_by_relevance(claim: str, evidence: list) -> list:
 
             loop = _aio.get_event_loop()
             embeddings = await loop.run_in_executor(
-                None,
+                _TORCH_POOL,
                 lambda: model.encode(texts, show_progress_bar=False)
             )
 

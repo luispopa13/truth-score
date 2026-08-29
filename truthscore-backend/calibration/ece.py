@@ -8,8 +8,15 @@ import json
 import asyncio
 from pathlib import Path
 from datetime import datetime, timezone
+from collections import deque
 
-_feedback_store: list = []
+# Bounded ring buffer: the live calibration state must not grow without limit in
+# a long-running process (it would leak memory under sustained feedback). The
+# durable JSONL/Mongo copy below is the real source of truth for offline
+# analysis; this in-memory window only needs the most recent N samples for the
+# live ECE curve. deque supports append + iteration + list() like the old list.
+_FEEDBACK_STORE_MAX = int(os.getenv("FEEDBACK_STORE_MAX", "50000"))
+_feedback_store: deque = deque(maxlen=_FEEDBACK_STORE_MAX)
 
 # ── Durable feedback persistence (JSONL source of truth + optional Mongo) ──
 # Mirrors pipeline/case_study.py conventions: append-only JSONL guarded by an

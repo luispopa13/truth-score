@@ -14,6 +14,15 @@ logger = logging.getLogger("truthscore.api_keys")
 
 KEY_PREFIX = "ts_"  # keys always start with this prefix for identification
 
+# Ceiling on active (non-revoked) keys per user. Without it a script could mint
+# unbounded valid credentials — storage bloat plus a wider blast radius if any
+# key leaks. Generous default; real integrations need a handful.
+MAX_API_KEYS_PER_USER = int(os.getenv("MAX_API_KEYS_PER_USER", "20"))
+
+
+class APIKeyLimitError(Exception):
+    """Raised when a user is already at their active-key ceiling."""
+
 
 def generate_api_key() -> str:
     """Generate a cryptographically-secure API key (plaintext)."""
@@ -40,6 +49,18 @@ async def create_api_key(user_id: str, name: str = "", plan: str = "free") -> di
     hashed = hash_api_key(plaintext)
     key_id = hashlib.sha256(plaintext.encode()).hexdigest()[:16]
 
+    db = get_db()
+    # Enforce the per-user ceiling before minting another credential.
+    try:
+        active = await db.api_keys.count_documents(
+            {"user_id": user_id, "revoked": False})
+    except Exception:
+        active = 0
+    if active >= MAX_API_KEYS_PER_USER:
+        raise APIKeyLimitError(
+            f"You already have {active} active API keys "
+            f"(limit {MAX_API_KEYS_PER_USER}). Revoke one before creating another.")
+
     key_doc = {
         "key_id": key_id,
         "hashed_key": hashed,
@@ -51,7 +72,6 @@ async def create_api_key(user_id: str, name: str = "", plan: str = "free") -> di
         "revoked": False,
     }
 
-    db = get_db()
     try:
         await db.api_keys.insert_one(key_doc)
         logger.info("API key created: key_id=%s user=%s plan=%s", key_id, user_id, plan)

@@ -378,7 +378,6 @@ async def verify(req: VerifyRequest, response: Response,
             "cached":              getattr(result, "cached", False),
             "duration_ms":         duration_ms,
             "user_id":             user.get("id") if user else None,
-            "user_email":          user.get("email") if user else None,
             "user_plan":           (user.get("plan") if user else "anonymous"),
         })
         response.headers["X-TruthScore-Interaction-Id"] = interaction_id
@@ -439,53 +438,59 @@ async def verify_stream(req: VerifyRequest, request: Request,
             return f"data: {_json.dumps(obj, ensure_ascii=False)}\n\n"
         start = time.perf_counter()
         task = _asyncio.create_task(verify_claim(req, eco=eco))
-        stages = ["classify", "search", "compare", "score"]
-        yield _evt({"stage": stages[0]})
-        idx = 1
-        # Advance synthetic stages while the pipeline runs; the last stage holds
-        # until the real result is ready. Heartbeats keep proxies from buffering.
-        while not task.done():
-            done, _pending = await _asyncio.wait({task}, timeout=2.5)
-            if not done:
-                if idx < len(stages):
-                    yield _evt({"stage": stages[idx]}); idx += 1
-                else:
-                    yield _evt({"heartbeat": True})
         try:
-            result = await task
-        except HTTPException as he:
-            yield _evt({"event": "error", "detail": str(he.detail), "status": he.status_code}); return
-        except Exception as e:
-            yield _evt({"event": "error", "detail": str(e)[:200]}); return
+            stages = ["classify", "search", "compare", "score"]
+            yield _evt({"stage": stages[0]})
+            idx = 1
+            # Advance synthetic stages while the pipeline runs; the last stage holds
+            # until the real result is ready. Heartbeats keep proxies from buffering.
+            while not task.done():
+                done, _pending = await _asyncio.wait({task}, timeout=2.5)
+                if not done:
+                    if idx < len(stages):
+                        yield _evt({"stage": stages[idx]}); idx += 1
+                    else:
+                        yield _evt({"heartbeat": True})
+            try:
+                result = await task
+            except HTTPException as he:
+                yield _evt({"event": "error", "detail": str(he.detail), "status": he.status_code}); return
+            except Exception as e:
+                yield _evt({"event": "error", "detail": str(e)[:200]}); return
 
-        duration_ms = round((time.perf_counter() - start) * 1000, 1)
-        try:
-            interaction_id = await log_interaction({
-                "claim":               getattr(result, "claim", req.text)[:500],
-                "topic":               getattr(result, "topic", None),
-                "verdict":             getattr(result, "verdict", None),
-                "score":               getattr(result, "score", None),
-                "confidence":          getattr(result, "confidence", None),
-                "evidence_count":      getattr(result, "evidence_count", None),
-                "cached":              getattr(result, "cached", False),
-                "duration_ms":         duration_ms,
-                "user_id":             user.get("id") if user else None,
-                "user_email":          user.get("email") if user else None,
-                "user_plan":           (user.get("plan") if user else "anonymous"),
-            })
-        except Exception as e:
-            interaction_id = ""
-            print(f"[CASE-STUDY] Logging skipped (non-fatal): {e}")
+            duration_ms = round((time.perf_counter() - start) * 1000, 1)
+            try:
+                interaction_id = await log_interaction({
+                    "claim":               getattr(result, "claim", req.text)[:500],
+                    "topic":               getattr(result, "topic", None),
+                    "verdict":             getattr(result, "verdict", None),
+                    "score":               getattr(result, "score", None),
+                    "confidence":          getattr(result, "confidence", None),
+                    "evidence_count":      getattr(result, "evidence_count", None),
+                    "cached":              getattr(result, "cached", False),
+                    "duration_ms":         duration_ms,
+                    "user_id":             user.get("id") if user else None,
+                    "user_plan":           (user.get("plan") if user else "anonymous"),
+                })
+            except Exception as e:
+                interaction_id = ""
+                print(f"[CASE-STUDY] Logging skipped (non-fatal): {e}")
 
-        result.models_used = []
-        payload = result.model_dump() if hasattr(result, "model_dump") else dict(result)
-        payload["latency_ms"] = duration_ms
-        if interaction_id:
-            payload["_interactionId"] = interaction_id
-        payload["show_ads"] = show_ads
-        if quota_left is not None:
-            payload["quota_left"] = quota_left
-        yield _evt({"event": "result", "data": payload})
+            result.models_used = []
+            payload = result.model_dump() if hasattr(result, "model_dump") else dict(result)
+            payload["latency_ms"] = duration_ms
+            if interaction_id:
+                payload["_interactionId"] = interaction_id
+            payload["show_ads"] = show_ads
+            if quota_left is not None:
+                payload["quota_left"] = quota_left
+            yield _evt({"event": "result", "data": payload})
+        finally:
+            # If the client disconnected (or the generator was closed) before the
+            # pipeline finished, cancel the orphaned compute — otherwise it keeps
+            # burning LLM/search cost producing a result nobody will read.
+            if not task.done():
+                task.cancel()
 
     return StreamingResponse(_sse(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache",
@@ -631,7 +636,13 @@ async def detect_claims(req: ClaimDetectRequest, request: Request,
 
 
 @app.post("/feedback")
-async def feedback(req: FeedbackRequest, user: dict = Depends(get_current_user)):
+async def feedback(req: FeedbackRequest, request: Request,
+                   user: dict = Depends(get_current_user)):
+    # Rate-limit per IP so the calibration/ECE loop can't be flooded or skewed by
+    # one actor. Fails open if Redis is down (see feedback_can_submit).
+    from utils.abuse import feedback_can_submit
+    if not await feedback_can_submit(_client_ip(request)):
+        raise HTTPException(429, "Too many feedback submissions today. Please try again tomorrow.")
     # Resolve either naming convention: the dashboard sends
     # verdict/score/correct, the browser extension sends
     # predicted_verdict/predicted_score/user_says_correct.
@@ -1074,9 +1085,12 @@ async def plans():
 @app.post("/api-keys")
 async def create_key(user=Depends(require_user)):
     """Create a new stable API key for the logged-in user."""
-    from utils.api_keys import create_api_key
+    from utils.api_keys import create_api_key, APIKeyLimitError
     plan = user.get("plan", "free")
-    result = await create_api_key(str(user["_id"]), plan=plan)
+    try:
+        result = await create_api_key(str(user["_id"]), plan=plan)
+    except APIKeyLimitError as e:
+        raise HTTPException(429, str(e))
     return result
 
 

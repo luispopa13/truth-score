@@ -105,6 +105,30 @@ async def ip_can_register(ip: str) -> bool:
         return True
 
 
+# Cap feedback submissions per IP per day. Feedback feeds the calibration/ECE
+# loop, so an unbounded endpoint lets one actor skew the model's confidence
+# curve (and hammer the durable store). Generous default — honest users click a
+# handful of thumbs per session; only floods hit this.
+MAX_FEEDBACK_PER_IP_PER_DAY = int(os.getenv("MAX_FEEDBACK_PER_IP_PER_DAY", "100"))
+
+
+async def feedback_can_submit(ip: str) -> bool:
+    """True if this IP is under the daily feedback cap. Fails OPEN when Redis is
+    down: blocking honest thumbs-up/down is worse than a rare unthrottled window,
+    since the bonus-check grant is separately capped and unique-claim guarded."""
+    from utils.redis_client import get_async_redis
+    redis = get_async_redis()
+    if not redis or not ip:
+        return True
+    try:
+        key = f"ts:fbrate:{ip}:{_utc_day()}"
+        used = await redis.incr(key)
+        await redis.expire(key, 172800)
+        return used <= MAX_FEEDBACK_PER_IP_PER_DAY
+    except Exception:
+        return True
+
+
 # ── Anonymous try-before-signup quota (per IP) ──────────────────
 # Curious visitors get a few free verifications WITHOUT an account —
 # the taste that drives signups. Requires Redis; without it (local dev)

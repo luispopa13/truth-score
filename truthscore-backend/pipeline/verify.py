@@ -297,6 +297,40 @@ async def verify_claim(req: VerifyRequest, eco: bool = False):
     except Exception:
         _got_lock = True  # Redis unavailable — compute normally
 
+    # Everything past the herd-lock acquisition runs under a try/finally so the
+    # inflight lock is ALWAYS released — on the math-shortcut early return, on a
+    # normal return, and on an exception mid-pipeline. Leaking it used to pin the
+    # key for its full 30 s TTL, so a single failed compute stalled every retry
+    # and every concurrent waiter for ~25 s.
+    try:
+        return await _verify_compute(claim, key, eco, t_total_start)
+    except Exception as _e:
+        print(f"  [VERIFY] compute failed for '{claim[:60]}': {type(_e).__name__}: {_e}")
+        # Degrade to an honest UNCERTAIN rather than surfacing a 500 — keeps the
+        # app responsive when a downstream provider (LLM, search, NLI) hiccups.
+        return VerifyResponse(
+            claim=claim, score=50, verdict="UNCERTAIN", confidence="LOW",
+            explanation="Verification could not be completed due to a temporary "
+                        "error. Please try again in a moment.",
+            models_used=["error-fallback"],
+        )
+    finally:
+        try:
+            if _got_lock and _lock_redis:
+                await _lock_redis.delete(_inflight_key)
+        except Exception:
+            pass
+
+
+async def _verify_compute(claim: str, key: str, eco: bool, t_total_start: float):
+    """Core verification compute: retrieval → reasoning → aggregate → response.
+
+    Split out of verify_claim so the thundering-herd lock release can wrap the
+    whole thing in one try/finally. Assumes the semantic-cache miss and the
+    inflight-lock acquisition already happened in verify_claim.
+    """
+    import time as _t
+
     # ── Math shortcut ─────────────────────────────────────────
     math_result = evaluate_math_claim(claim)
     if math_result:
@@ -614,12 +648,9 @@ async def verify_claim(req: VerifyRequest, eco: bool = False):
         await semantic_store(claim, result.model_dump())
     except Exception:
         pass
-    # Release inflight lock so waiting requests pick up the cached result
-    try:
-        if _got_lock and _lock_redis:
-            await _lock_redis.delete(_inflight_key)
-    except Exception:
-        pass
+    # NB: the thundering-herd inflight lock is released by verify_claim's
+    # finally block (which wraps this whole function), so waiting requests pick
+    # up the freshly-cached result on their next poll.
     return result
 
 

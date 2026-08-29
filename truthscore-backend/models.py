@@ -9,6 +9,16 @@ from pydantic import field_validator
 class VerifyRequest(BaseModel):
     text: str = Field(..., min_length=5, max_length=4000)
 
+    @field_validator("text")
+    @classmethod
+    def _not_only_whitespace(cls, v: str) -> str:
+        # min_length counts raw chars, so "      " (6 spaces) passes the length
+        # gate but is an empty claim that wastes an LLM call and returns garbage.
+        # Reject anything whose trimmed form is shorter than the real minimum.
+        if len(v.strip()) < 5:
+            raise ValueError("Claim must contain at least 5 non-whitespace characters.")
+        return v
+
 
 class NLIScore(BaseModel):
     entailment:    float
@@ -126,28 +136,30 @@ class ClaimDetectResponse(BaseModel):
 
 
 class FeedbackRequest(BaseModel):
-    claim:          str
-    verdict:        str  = ""
+    # Length-bounded so feedback can't be used to flood the calibration store
+    # with megabyte payloads (memory/DoS). claim mirrors /verify's 4000-char cap.
+    claim:          str = Field("", max_length=4000)
+    verdict:        str = Field("", max_length=24)
     # None (not 0) is the "unset" sentinel so /feedback can fall back to
     # predicted_score. A default of 0 would look like a real score of zero and
     # suppress the alias, mislabeling extension feedback as score=0.
     score:          int | None = None
-    topic:          str  = "general"
+    topic:          str = Field("general", max_length=40)
     correct:        bool = False
-    failure_reason: str  = ""
+    failure_reason: str = Field("", max_length=500)
     # Backward-compatible aliases -- the browser extension (popup.js) sends
     # these names instead of verdict/score/correct. Accepting both means
     # neither the extension nor the dashboard ever 422s on this endpoint,
     # regardless of which naming convention the caller uses.
-    predicted_verdict: str | None  = None
+    predicted_verdict: str | None  = Field(None, max_length=24)
     predicted_score:   int | None  = None
     user_says_correct: bool | None = None
-    source_page:       str         = ""
+    source_page:       str         = Field("", max_length=300)
     # Links this feedback back to the exact verification it refers to (the value
     # of the X-TruthScore-Interaction-Id response header from /verify). Lets the
     # calibration loop join a correctness label to the logged interaction's real
     # score/sources/models instead of re-deriving them from the claim text.
-    interaction_id:    str | None  = None
+    interaction_id:    str | None  = Field(None, max_length=64)
 
 
 class BatchVerifyRequest(BaseModel):
