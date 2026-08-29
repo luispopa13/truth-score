@@ -2138,6 +2138,32 @@ async def slack_events(request: Request):
     return {"status": "ok"}
 
 
+# ── Live Debate Mode ──────────────────────────────────────────────────────────
+
+@app.post("/debate")
+async def debate_claim(request: Request, current_user=Depends(get_current_user)):
+    """Stream a structured debate between PRO and CON agents on a claim."""
+    body = await request.json()
+    claim = (body.get("claim") or "").strip()
+    if not claim:
+        raise HTTPException(status_code=422, detail="claim required")
+    if len(claim) > 2000:
+        raise HTTPException(status_code=422, detail="claim too long (max 2000 chars)")
+
+    from pipeline.debate import run_debate
+
+    async def event_stream():
+        try:
+            async for event_json in run_debate(claim):
+                yield f"data: {event_json}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+        finally:
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
 # ── Widget ────────────────────────────────────────────────
 
 @app.get("/manifest.json")
@@ -2151,3 +2177,25 @@ async def service_worker():
 @app.get("/widget.js")
 async def widget(user_key: str = ""):
     return await widget_script(user_key)
+
+
+# ── Temporal Truth Drift ──────────────────────────────────────────────────────
+
+@app.get("/claims/timeline")
+async def get_claim_timeline(claim: str, db=Depends(_get_db)):
+    """Get the full truth-over-time history for a claim."""
+    from pipeline.temporal_drift import get_drift_summary
+    if not claim or len(claim) < 5:
+        raise HTTPException(status_code=422, detail="claim required")
+    summary = await get_drift_summary(db, claim)
+    if summary is None:
+        return {"has_drift": False, "total_checks": 0, "timeline": []}
+    return summary
+
+
+@app.post("/temporal-drift/scan", dependencies=[Depends(require_admin)])
+async def run_drift_scan(db=Depends(_get_db)):
+    """Re-verify all watched claims older than 30 days. Admin only."""
+    from pipeline.temporal_drift import scan_watched_for_drift
+    drifted = await scan_watched_for_drift(db)
+    return {"drifted_count": len(drifted), "drifted": drifted[:20]}

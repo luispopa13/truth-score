@@ -43,6 +43,20 @@ except ImportError:
     _LIVE_DATA_AVAILABLE = False
     async def fetch_live_evidence(c, **k): return []
 
+try:
+    from pipeline.manipulation import score_manipulation
+    _MANIPULATION_AVAILABLE = True
+except ImportError:
+    _MANIPULATION_AVAILABLE = False
+    async def score_manipulation(c): return {"manipulation_score": 0, "techniques": [], "summary": "", "is_manipulative": False}
+
+try:
+    from pipeline.entity_memory import get_claim_entity_profiles
+    _ENTITY_MEMORY_AVAILABLE = True
+except ImportError:
+    _ENTITY_MEMORY_AVAILABLE = False
+    async def get_claim_entity_profiles(db, c): return []
+
 @dataclass
 class RetrievalResult:
     """Everything /verify, batch, and PDF need out of the shared retrieval+rank stage."""
@@ -681,6 +695,14 @@ async def _verify_compute(claim: str, key: str, eco: bool, t_total_start: float)
         except Exception as _e:
             pass
 
+    # Manipulation score
+    _manip = {}
+    if _MANIPULATION_AVAILABLE:
+        try:
+            _manip = await score_manipulation(claim)
+        except Exception:
+            _manip = {}
+
     result = VerifyResponse(
         claim=claim, score=score, verdict=verdict,
         confidence=confidence, explanation=explanation,
@@ -714,7 +736,14 @@ async def _verify_compute(claim: str, key: str, eco: bool, t_total_start: float)
     # NB: the thundering-herd inflight lock is released by verify_claim's
     # finally block (which wraps this whole function), so waiting requests pick
     # up the freshly-cached result on their next poll.
-    return result
+    # Add manipulation + entity profile data
+    _final = result.model_dump() if hasattr(result, 'model_dump') else dict(result)
+    if _manip:
+        _final["manipulation_score"] = _manip.get("manipulation_score", 0)
+        _final["manipulation_techniques"] = _manip.get("techniques", [])
+        _final["manipulation_summary"] = _manip.get("summary", "")
+        _final["is_manipulative"] = _manip.get("is_manipulative", False)
+    return _final
 
 
 # ════════════════════════════════════════════════════════════

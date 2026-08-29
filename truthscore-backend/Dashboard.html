@@ -570,6 +570,8 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
   </div>
 </div>
 
+<div id="liveDebateOverlay" class="overlay" onclick="if(event.target===this)closeLiveDebate()" style="padding:20px;overflow-y:auto"></div>
+
 <script>
 // Relative API base -- dashboard.html is served BY the same FastAPI
 // backend (see main.py's "/" route), so fetch() calls resolve against
@@ -1344,6 +1346,56 @@ function openWatched(){
   loadWatched();
 }
 function closeWatched(){document.getElementById('watchedOverlay').className='overlay';}
+async function openLiveDebate() {
+  const claim = document.getElementById('claimInput')?.value?.trim() || window._lastClaim || '';
+  if (!claim) return;
+  let html = `<div style="max-width:680px;margin:0 auto">
+    <div style="font-size:18px;font-weight:700;margin-bottom:16px">⚔️ ${LANG==='ro'?'Dezbatere live':'Live Debate'}</div>
+    <div style="font-size:12px;color:var(--text2);margin-bottom:14px;padding:8px 12px;background:rgba(255,255,255,.04);border-radius:8px">"${esc(claim.slice(0,200))}"</div>
+    <div id="debateStream" style="display:flex;flex-direction:column;gap:10px"></div>
+    <div id="debateSpinner" style="text-align:center;padding:20px;color:var(--text2);font-size:13px">Starting debate…</div>
+  </div>`;
+  document.getElementById('liveDebateOverlay').innerHTML = html;
+  document.getElementById('liveDebateOverlay').classList.add('show');
+
+  const token = localStorage.getItem('ts_token');
+  const resp = await fetch(`${API}/debate`, {method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},body:JSON.stringify({claim})});
+  if (!resp.ok) { document.getElementById('debateSpinner').textContent='Error: '+resp.status; return; }
+  const reader = resp.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  document.getElementById('debateSpinner').style.display='none';
+  const stream = document.getElementById('debateStream');
+  const colors = {pro:'rgba(16,185,129,.12)',con:'rgba(239,68,68,.12)',judge:'rgba(108,99,255,.12)'};
+  const icons = {pro:'✅',con:'❌',judge:'⚖️'};
+  while(true) {
+    const {done,value}=await reader.read();
+    if(done)break;
+    buf+=dec.decode(value,{stream:true});
+    const lines=buf.split('\n');
+    buf=lines.pop();
+    for(const line of lines){
+      if(!line.startsWith('data:'))continue;
+      const data=line.slice(5).trim();
+      if(data==='[DONE]')break;
+      try{
+        const ev=JSON.parse(data);
+        if(ev.type==='error'){stream.innerHTML+=`<div style="color:#ef4444;font-size:12px">Error: ${esc(ev.message)}</div>`;continue;}
+        if(['pro','con','judge'].includes(ev.type)){
+          const label = ev.type==='pro'?'PRO (arguing TRUE)':ev.type==='con'?'CON (arguing FALSE)':'JUDGE';
+          stream.innerHTML+=`<div style="padding:12px;border-radius:8px;background:${colors[ev.type]};font-size:12px;line-height:1.6">
+            <div style="font-weight:700;margin-bottom:6px">${icons[ev.type]} ${label}${ev.verdict?` · Verdict: <strong>${esc(ev.verdict)}</strong> (${ev.score}/100)`:''}</div>
+            <div style="white-space:pre-wrap;color:var(--text2)">${esc(ev.text)}</div>
+            ${ev.winner?`<div style="margin-top:6px;font-size:11px;color:var(--text2)">Stronger argument: <strong>${esc(ev.winner)}</strong></div>`:''}
+          </div>`;
+        }
+      }catch{}
+    }
+  }
+}
+function closeLiveDebate() {
+  document.getElementById('liveDebateOverlay').classList.remove('show');
+}
 async function loadWatched(){
   const list=document.getElementById('watchedList');
   list.innerHTML='<div style="color:var(--text2);font-size:13px">Loading…</div>';
@@ -1533,6 +1585,7 @@ function renderScore(d){
         <div><span class="topic-pill">${TOPIC_ICONS[topic]||'🔍'} ${TOPIC_LABELS[topic]||topic}</span></div>
         <div class="conf-line">${d.confidence==='HIGH'?t('confHigh'):d.confidence==='MEDIUM'?t('confMed'):t('confLow')}${d.calibrated_confidence?' · '+t(d.calibrated_confidence):''}</div>
         ${d.is_misleading?`<div style="display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:6px;background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.3);font-size:11px;color:#f59e0b;margin-top:6px;cursor:pointer" title="${esc(d.mislead_note||'')}" onclick="document.getElementById(\'misleadPanel\').style.display=document.getElementById(\'misleadPanel\').style.display===\'none\'?\'block\':\'none\'">⚠️ Potentially misleading · ${esc(d.mislead_type||'')}</div>`:''}
+        ${(d.manipulation_score&&d.manipulation_score>=50)?`<div style="display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:6px;background:rgba(239,68,68,.10);border:1px solid rgba(239,68,68,.25);font-size:11px;color:#ef4444;margin-top:4px;cursor:pointer" title="${esc(d.manipulation_summary||'')}" onclick="document.getElementById('manipPanel').style.display=document.getElementById('manipPanel').style.display==='none'?'block':'none'">🎭 Manipulation score: ${d.manipulation_score}/100 · ${esc((d.manipulation_techniques||[]).slice(0,2).join(', '))}</div>`:''}
       </div>
     </div>
        <div class="expl-text">${explRomanian(d)}</div>
@@ -1553,6 +1606,7 @@ function renderScore(d){
       <button class="fbbtn" id="shareBtn" title="${LANG==='ro'?'Copiază linkul':'Copy share link'}">🔗 ${LANG==='ro'?'Distribuie':'Share'}</button>
       <button class="fbbtn" id="steelManBtn" title="${LANG==='ro'?'Contraargument puternic':'Strongest counter-argument'}" onclick="openSteelMan()">🛡️</button>
       <button class="fbbtn" id="watchBtn" title="${LANG==='ro'?'Urmărește afirmația':'Watch this claim'}" onclick="toggleWatch(d)">🔔</button>
+      <button onclick="openLiveDebate()" style="padding:6px 14px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--text2);font-size:12px;cursor:pointer;display:flex;align-items:center;gap:5px">⚔️ ${LANG==='ro'?'Dezbatere live':'Live Debate'}</button>
       ${pdfBtn}
     </div>
     <div class="fb-note-area" id="fbNote" style="display:none">
@@ -1578,6 +1632,11 @@ function renderScore(d){
       <div style="font-size:12px;font-weight:700;color:#f59e0b;margin-bottom:6px">⚠️ ${LANG==='ro'?'Afirmație potențial înșelătoare':'Potentially Misleading'}</div>
       <div style="font-size:12px;color:var(--text2);line-height:1.6">${esc((d&&d.mislead_note)||'')}</div>
       ${(d&&d.corrected_context)?`<div style="font-size:12px;color:var(--text);margin-top:6px;padding-top:6px;border-top:1px solid rgba(245,158,11,.15)">📌 ${esc(d.corrected_context)}</div>`:''}
+    </div>
+    <div id="manipPanel" style="display:none;margin-top:10px;padding:12px 14px;border-radius:10px;background:rgba(239,68,68,.06);border:1px solid rgba(239,68,68,.18)">
+      <div style="font-size:12px;font-weight:700;color:#ef4444;margin-bottom:6px">🎭 ${LANG==='ro'?'Tehnici de manipulare detectate':'Manipulation Techniques Detected'}</div>
+      <div style="font-size:12px;color:var(--text2);line-height:1.6">${esc((d&&d.manipulation_summary)||'')}</div>
+      ${(d&&d.manipulation_techniques&&d.manipulation_techniques.length)?`<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:8px">${(d.manipulation_techniques||[]).map(t=>`<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(239,68,68,.12);color:#ef4444">${esc(t)}</span>`).join('')}</div>`:''}
     </div>`;
   setTimeout(()=>{const c=document.getElementById('rc');if(c)c.style.strokeDashoffset=offset;},80);
   document.getElementById('fbY').onclick=()=>sendFb(true,d);
@@ -1752,6 +1811,22 @@ function renderExplain(d){
   }
   if(d.model_results&&d.model_results.length){
     body+=`<div style="margin-top:14px;padding:12px;border-radius:8px;background:rgba(255,255,255,.03);border:1px solid var(--border2)"><div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">🤖 Model Consensus</div>${d.models_agree===false?`<div style="font-size:11px;padding:5px 10px;background:rgba(245,158,11,.12);border-radius:6px;color:#f59e0b;margin-bottom:8px">⚠️ Models disagreed — result set to UNCERTAIN</div>`:''}<div style="display:flex;gap:6px;flex-wrap:wrap">${(d.model_results||[]).map(m=>`<span style="font-size:11px;padding:3px 9px;border-radius:12px;background:rgba(255,255,255,.05);color:var(--text2)">${esc(m.model)} ${m.verdict==='TRUE'?'✅':m.verdict==='FALSE'?'❌':'⚠️'} ${m.score}</span>`).join('')}</div></div>`;
+  }
+  // Entity Memory Profiles
+  if (d.entity_profiles && d.entity_profiles.length) {
+    body += `<div style="margin-top:14px;padding:12px;border-radius:8px;background:rgba(255,255,255,.03);border:1px solid var(--border2)">
+    <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">🧠 Entity Memory</div>
+    <div style="display:flex;flex-direction:column;gap:6px">
+    ${d.entity_profiles.map(e=>`<div style="font-size:11px;color:var(--text2);display:flex;align-items:center;gap:8px">
+      <span style="font-weight:600;color:var(--text)">${esc(e.name)}</span>
+      <span style="opacity:.5">${esc(e.type)}</span>
+      <span>${e.claim_count} claims checked</span>
+      <span style="color:${e.accuracy_pct>=60?'#10b981':e.accuracy_pct>=40?'#f59e0b':'#ef4444'}">${e.accuracy_pct}% accurate</span>
+      ${e.misleading_count>0?`<span style="color:#f59e0b">${e.misleading_count} misleading</span>`:''}
+      ${e.pattern_notes?`<span style="opacity:.6;font-style:italic">${esc(e.pattern_notes.slice(0,80))}</span>`:''}
+    </div>`).join('')}
+    </div>
+  </div>`;
   }
   if(d.domain){
     body+=`<div style="margin-top:10px;font-size:11px;color:var(--text2)">🏷️ Domain: <strong style="color:var(--text)">${esc(d.domain)}</strong>${d.domain_hint?` · <span style="opacity:.7">${esc(d.domain_hint.slice(0,80))}</span>`:''}</div>`;
