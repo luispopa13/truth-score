@@ -25,6 +25,7 @@ import os
 import re
 import json
 import asyncio
+import hashlib
 import secrets
 from pathlib import Path
 from collections import OrderedDict, deque
@@ -73,6 +74,33 @@ def new_verdict_id() -> str:
     return secrets.token_urlsafe(_ID_BYTES)
 
 
+def verdict_content_hash(record: dict) -> str:
+    """Deterministic SHA-256 over the integrity-relevant fields of a verdict.
+
+    This is the tamper-evidence moat: the hash is computed from the SAME fields
+    the public /v/{id} page displays (id, timestamp, claim, verdict, score, and
+    the exact source URLs), so anyone can recompute it and prove the verdict was
+    not altered after publication. A screenshot of a chatbot answer carries no
+    such proof. Excludes the stored `integrity` field itself and the volatile
+    parts of the payload (only source URLs are committed to, not snippets)."""
+    payload = record.get("payload", {}) or {}
+
+    def _urls(key):
+        return [ (s or {}).get("url", "") for s in (payload.get(key) or []) ]
+
+    canonical = {
+        "id":            record.get("id", ""),
+        "created_at":    record.get("created_at", ""),
+        "claim":         record.get("claim", ""),
+        "verdict":       record.get("verdict", ""),
+        "score":         record.get("score", ""),
+        "supporting":    _urls("supporting"),
+        "contradicting": _urls("contradicting"),
+    }
+    blob = json.dumps(canonical, sort_keys=True, ensure_ascii=False, default=str)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
 def _cache_put(vid: str, record: dict) -> None:
     _cache[vid] = record
     _cache.move_to_end(vid)
@@ -102,6 +130,9 @@ async def save_verdict(payload: dict, user_id: str = "") -> str | None:
         "topic": payload.get("topic", "general"),
         "payload": payload,
     }
+    # Tamper-evidence: stamp a content hash over the integrity-relevant fields
+    # so the verdict is provably unaltered after publication (see /v/{id}/integrity).
+    record["integrity"] = verdict_content_hash(record)
 
     line = json.dumps(record, ensure_ascii=False, default=str)
     async with _write_lock:

@@ -175,6 +175,28 @@ def test_related_verdict_similarity():
     assert _jaccard(_tokenize("the is of and"), _tokenize("a an to for")) == 0.0
 
 
+def test_verdict_integrity_hash():
+    """Tamper-evidence: the content hash is stable when the `integrity` field
+    is added back, and any change to a committed field (verdict/score/claim/
+    source URL) changes the hash. Guards the verifiable-citation moat."""
+    from pipeline.verdict_store import verdict_content_hash
+    rec = {"id": "abc123", "created_at": "2026-08-29T10:00:00+00:00",
+           "claim": "The Earth is round", "verdict": "TRUE", "score": 95,
+           "payload": {"supporting": [{"url": "https://nasa.gov/x"}],
+                       "contradicting": []}}
+    h1 = verdict_content_hash(rec)
+    rec["integrity"] = h1
+    assert verdict_content_hash(rec) == h1           # self-field excluded
+    assert len(h1) == 64 and int(h1, 16) >= 0        # valid sha256 hex
+    tampered = dict(rec); tampered["verdict"] = "FALSE"
+    assert verdict_content_hash(tampered) != h1      # tamper detected
+    src = {"id": "abc123", "created_at": "2026-08-29T10:00:00+00:00",
+           "claim": "The Earth is round", "verdict": "TRUE", "score": 95,
+           "payload": {"supporting": [{"url": "https://evil.example/x"}],
+                       "contradicting": []}}
+    assert verdict_content_hash(src) != h1           # source-URL swap detected
+
+
 if __name__ == "__main__":
     import pytest
     raise SystemExit(pytest.main([__file__, "-x"]))

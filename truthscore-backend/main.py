@@ -891,10 +891,49 @@ async def verdict_page(vid: str, request: Request):
         sources_html = '<p class="muted">No public sources were attached to this verdict.</p>'
 
     created = _esc(rec.get("created_at", ""))
+
+    # ── ClaimReview structured data (schema.org) ─────────────────
+    # THE fact-checker distribution moat: valid ClaimReview markup lets Google
+    # surface this page AS a fact-check (search rich result, Google News, Fact
+    # Check Explorer) — a channel no chatbot answer can enter. Rating is mapped
+    # to schema.org's required 1-5 scale from our 0-100 score + verdict band.
+    if score >= 80:      _rating_val = 5
+    elif score >= 62:    _rating_val = 4
+    elif score >= 38:    _rating_val = 3
+    elif score >= 20:    _rating_val = 2
+    else:                _rating_val = 1
+    _created_date = (rec.get("created_at", "") or "")[:10]
+    _claimreview = {
+        "@context": "https://schema.org",
+        "@type": "ClaimReview",
+        "url": page_url,
+        "datePublished": _created_date,
+        "claimReviewed": claim,
+        "author": {"@type": "Organization", "name": "TruthScore", "url": base},
+        "reviewRating": {
+            "@type": "Rating",
+            "ratingValue": _rating_val,
+            "bestRating": 5,
+            "worstRating": 1,
+            "alternateName": verdict,
+        },
+        "itemReviewed": {"@type": "Claim", "name": claim},
+    }
+    # Escape "</" so the JSON can never break out of the <script> element.
+    _jsonld = json.dumps(_claimreview, ensure_ascii=False).replace("</", "<\\/")
+
+    # ── Tamper-evidence line ─────────────────────────────────────
+    _integrity = _esc((rec.get("integrity", "") or "")[:16])
+    _integrity_html = (
+        f'<div class="foot">🔒 Integrity: <a href="{_esc(page_url)}/integrity">'
+        f'{_integrity}…</a> — SHA-256 of this verdict; recompute to prove it was '
+        f'not altered.</div>' if _integrity else "")
+
     html = f"""<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{_esc(title)}</title>
 <meta name="description" content="{_esc(desc)}">
+<script type="application/ld+json">{_jsonld}</script>
 <meta property="og:type" content="article">
 <meta property="og:title" content="{_esc(title)}">
 <meta property="og:description" content="{_esc(desc)}">
@@ -933,8 +972,35 @@ async def verdict_page(vid: str, request: Request):
   {sources_html}
   <a class="cta" href="/">Check your own claim →</a>
   <div class="foot">Snapshot generated {created}. Verdicts reflect evidence available at check time.</div>
+  {_integrity_html}
 </div></body></html>"""
     return HTMLResponse(html, headers={"Cache-Control": "public, max-age=3600"})
+
+
+@app.get("/v/{vid}/integrity")
+async def verdict_integrity(vid: str):
+    """Prove a verdict was not altered after publication. Recomputes the
+    SHA-256 over the same fields the /v/{id} page displays and compares it to
+    the hash stamped at save time. `intact=true` means the snapshot is
+    byte-faithful. This verifiable-citation property is something a screenshot
+    of a chatbot answer can never offer."""
+    rec = await load_verdict(vid)
+    if not rec:
+        raise HTTPException(404, "Verdict not found")
+    from pipeline.verdict_store import verdict_content_hash
+    stored = rec.get("integrity", "") or ""
+    recomputed = verdict_content_hash(rec)
+    return {
+        "id": vid,
+        "algo": "sha256",
+        "stored_hash": stored,
+        "recomputed_hash": recomputed,
+        # Legacy verdicts saved before integrity stamping have no stored hash;
+        # report intact=null (unknown) rather than a misleading false.
+        "intact": (stored == recomputed) if stored else None,
+        "fields": ["id", "created_at", "claim", "verdict", "score",
+                   "supporting_urls", "contradicting_urls"],
+    }
 
 
 @app.get("/v/{vid}/embed", include_in_schema=False)
