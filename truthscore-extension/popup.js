@@ -44,6 +44,31 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("scanBtn").addEventListener("click", onScan);
   document.getElementById("claimInput").addEventListener("keydown", e => { if (e.key==="Enter"&&e.ctrlKey) onVerify(); });
 
+  // Live claim preview: debounce detect-claims, show how many facts will be checked
+  let _pvTimer;
+  document.getElementById("claimInput").addEventListener("input", () => {
+    const v = document.getElementById("claimInput").value;
+    const prev = document.getElementById("claimPreview");
+    clearTimeout(_pvTimer);
+    if (!prev) return;
+    if (v.trim().length < 60) { prev.style.display="none"; prev.innerHTML=""; return; }
+    _pvTimer = setTimeout(async () => {
+      try {
+        const settings = await chrome.storage.sync.get("backendUrl").catch(()=>({}));
+        const base = (settings && settings.backendUrl) || "http://localhost:8000";
+        const hdr = {"Content-Type":"application/json"};
+        const tok = getToken(); if(tok) hdr["Authorization"]="Bearer "+tok;
+        const r = await fetch(`${base}/detect-claims`, {method:"POST",headers:hdr,body:JSON.stringify({text:v.trim()})});
+        if (!r.ok) { prev.style.display="none"; return; }
+        const {claims=[]} = await r.json();
+        if (claims.length < 2) { prev.style.display="none"; return; }
+        prev.style.display = "block";
+        prev.innerHTML = `<div style="font-weight:700;color:var(--accent);margin-bottom:4px">🔍 ${claims.length} ${TS_LANG==="ro"?"afirmații detectate":"claims detected"}</div>`+
+          claims.map((c,i)=>`<div style="padding:2px 0">#${i+1} ${esc(c.slice(0,70))}${c.length>70?"…":""}</div>`).join("");
+      } catch(e) { if(prev) prev.style.display="none"; }
+    }, 700);
+  });
+
   // AI Detect tab
   document.getElementById("aiDetectBtn").addEventListener("click", onAIDetect);
   document.getElementById("aiPasteBtn").addEventListener("click", onAIPaste);

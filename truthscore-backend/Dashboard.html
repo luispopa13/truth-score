@@ -222,6 +222,7 @@ textarea::placeholder{color:var(--text3)}
 .src-pub{font-size:10px;color:var(--text2);font-family:'JetBrains Mono',monospace}
 .src-snip{font-size:11px;color:var(--text2);margin-top:4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.45}
 .src-claim-badge{font-size:10px;color:var(--text2);margin-top:3px;font-style:italic;opacity:.8}
+.src-year{display:inline-block;font-size:9px;font-weight:700;padding:1px 5px;border-radius:4px;background:rgba(91,78,255,.15);color:#a0a0ff;margin-left:5px;vertical-align:middle}
 .claim-overview-item{display:flex;align-items:center;gap:9px;padding:9px 12px;border-radius:9px;border:1px solid var(--border2);margin-bottom:6px;background:rgba(255,255,255,.015);transition:background .15s}
 .claim-overview-item:hover{background:rgba(255,255,255,.032)}
 .claim-num{font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;color:var(--text2);min-width:22px;flex-shrink:0}
@@ -397,6 +398,7 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
       <button class="btn btn-secondary" onclick="document.getElementById('imgInput').click()" data-i18n="checkImage" title="Verify the claims inside a screenshot">🖼️ Check a screenshot</button>
       <input type="file" id="imgInput" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp" style="display:none" onchange="if(this.files&&this.files[0]){verifyImage(this.files[0]);this.value='';}">
       <button class="btn btn-secondary" onclick="openDebate()" title="Verify two opposing claims side by side">⚔️ Debate</button>
+      <button class="btn btn-secondary" onclick="openBatch()" title="Verify multiple claims at once — one per line">📋 Batch</button>
       <button class="btn btn-primary" id="verifyBtn" onclick="runVerify()" data-i18n="verifyNow">🔍 Verify now</button>
     </div>
     <div class="loading" id="vLoad">
@@ -506,6 +508,20 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
     </div>
     <button id="debateRunBtn" class="form-btn" style="margin-bottom:0" onclick="runDebate()">⚔️ Start Debate</button>
     <div id="debateResults" style="margin-top:16px"></div>
+  </div>
+</div>
+
+<div class="overlay" id="batchOverlay" onmousedown="if(event.target===this)closeBatch()">
+  <div class="modal" style="max-width:700px;width:100%">
+    <button class="modal-x" onclick="closeBatch()">✕</button>
+    <div class="modal-title">📋 Batch Verify</div>
+    <div style="font-size:13px;color:var(--text2);margin-bottom:12px">One claim per line · up to 50 · results shown as a table + CSV export</div>
+    <textarea id="batchInput" class="finput" rows="8" placeholder="The Earth is flat.&#10;Vaccines cause autism.&#10;The Great Wall of China is visible from space." style="width:100%;padding:10px 12px;font-size:13px;resize:vertical;min-height:160px;box-sizing:border-box"></textarea>
+    <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
+      <button class="form-btn" onclick="runBatch()" id="batchRunBtn">🔍 Verify All</button>
+      <span id="batchStatus" style="font-size:12px;color:var(--text2)"></span>
+    </div>
+    <div id="batchResults" style="margin-top:16px"></div>
   </div>
 </div>
 
@@ -1102,6 +1118,7 @@ function renderTextAnalysis(d){
   document.querySelectorAll('.tab-panel').forEach((p,i)=>p.classList.toggle('active',i===0));
   renderRelated(d);
   _stampTrendBadge(d);
+  _renderContradictionReport(d);
 }
 function showParagraphClaim(index){
   const r=lastResult?.results?.[index];if(!r)return;
@@ -1164,6 +1181,35 @@ function _stampTrendBadge(d){
   b.textContent=`🔥 ${d.check_count} ${LANG==='ro'?'verificări recente':'recent checks'}`;
   sc.insertAdjacentElement('afterbegin',b);
 }
+function _renderContradictionReport(d){
+  if(!d||!Array.isArray(d.results)||d.results.length<2)return;
+  const trueC=d.results.filter(r=>r.verdict==='TRUE');
+  const falseC=d.results.filter(r=>r.verdict==='FALSE');
+  if(!trueC.length||!falseC.length)return;
+  const ro=LANG==='ro';
+  const banner=`<div style="margin-bottom:14px;padding:12px 14px;border-radius:10px;background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.22)"><div style="font-size:12px;font-weight:800;color:var(--yellow);margin-bottom:6px">⚠️ ${ro?'Conflict detectat în paragraf':'Conflicting claims detected'}</div><div style="font-size:11.5px;color:var(--text2);line-height:1.6;margin-bottom:8px">${ro?`${trueC.length} adevărate, ${falseC.length} false — posibil contradicție:`:`${trueC.length} true vs ${falseC.length} false — possible contradiction:`}</div>${trueC.slice(0,2).map(r=>`<div style="font-size:11px;padding:4px 8px;border-radius:6px;background:rgba(16,185,129,.08);border-left:2px solid var(--green);margin-bottom:4px">✅ ${esc((r.claim||'').slice(0,80))}${(r.claim||'').length>80?'…':''}</div>`).join('')}${falseC.slice(0,2).map(r=>`<div style="font-size:11px;padding:4px 8px;border-radius:6px;background:rgba(239,68,68,.08);border-left:2px solid var(--red);margin-bottom:4px">❌ ${esc((r.claim||'').slice(0,80))}${(r.claim||'').length>80?'…':''}</div>`).join('')}</div>`;
+  const el=document.getElementById('tp-explain');
+  if(el)el.innerHTML=banner+(el.innerHTML||'');
+}
+async function openSteelMan(){
+  const panel=document.getElementById('steelManPanel');
+  const body=document.getElementById('steelManBody');
+  if(!panel||!body)return;
+  panel.style.display='block';
+  body.innerHTML=`<div style="opacity:.6">${LANG==='ro'?'Se generează...':'Generating...'}</div>`;
+  const d=lastResult;
+  if(!d){body.innerHTML=`<div style="opacity:.6">${LANG==='ro'?'Niciun rezultat':'No result'}</div>`;return;}
+  try{
+    const hdr={'Content-Type':'application/json'};
+    if(token())hdr['Authorization']='Bearer '+token();
+    const r=await fetch(`${API}/steel-man`,{method:'POST',headers:hdr,body:JSON.stringify({claim:d.claim||d.text||'',verdict:d.verdict||'',score:d.score||50})});
+    if(!r.ok)throw new Error(await r.text());
+    const j=await r.json();
+    body.innerHTML=`<div style="margin-bottom:8px">${esc(j.steel_man||'')}</div>`+(j.key_points&&j.key_points.length?`<ul style="padding-left:16px;margin:0;font-size:12px;color:#94a3b8">${j.key_points.map(p=>`<li style="margin-bottom:4px">${esc(p)}</li>`).join('')}</ul>`:'');
+  }catch(e){
+    body.innerHTML=`<div style="color:var(--red);font-size:12px">⚠️ ${esc(e.message||String(e))}</div>`;
+  }
+}
 function openDebate(){
   const inp=document.getElementById('claimInput').value.trim();
   if(inp)document.getElementById('debateA').value=inp;
@@ -1171,6 +1217,50 @@ function openDebate(){
   document.getElementById('debateOverlay').className='overlay show';
 }
 function closeDebate(){document.getElementById('debateOverlay').className='overlay';}
+function openBatch(){
+  document.getElementById('batchInput').value='';
+  document.getElementById('batchResults').innerHTML='';
+  document.getElementById('batchStatus').textContent='';
+  document.getElementById('batchOverlay').className='overlay show';
+}
+function closeBatch(){document.getElementById('batchOverlay').className='overlay';}
+window._lastBatchResults=[];
+async function runBatch(){
+  const raw=document.getElementById('batchInput').value;
+  const claims=raw.split('\n').map(l=>l.trim()).filter(l=>l.length>=5);
+  if(!claims.length)return;
+  if(claims.length>50){alert(LANG==='ro'?'Maxim 50 afirmații.':'Maximum 50 claims.');return;}
+  const btn=document.getElementById('batchRunBtn');
+  const status=document.getElementById('batchStatus');
+  const results=document.getElementById('batchResults');
+  btn.disabled=true;
+  status.textContent=`${LANG==='ro'?'Verificare':'Verifying'} ${claims.length}…`;
+  results.innerHTML='';
+  try{
+    const hdr={'Content-Type':'application/json'};
+    if(token())hdr['Authorization']='Bearer '+token();
+    const r=await fetch(`${API}/batch-verify`,{method:'POST',headers:hdr,body:JSON.stringify({claims,user_id:''})});
+    if(!r.ok)throw new Error(await r.text());
+    const data=await r.json();
+    window._lastBatchResults=data.results||[];
+    const rows=(data.results||[]).map((d,i)=>{
+      const color=d.verdict==='TRUE'?'#10b981':d.verdict==='FALSE'?'#ef4444':d.verdict==='MIXED'?'#8b5cf6':'#f59e0b';
+      const icon=d.verdict==='TRUE'?'✅':d.verdict==='FALSE'?'❌':d.verdict==='MIXED'?'🔀':'⚠️';
+      return `<tr><td style="padding:8px 6px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text);max-width:380px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc((d.claim||claims[i]||'').slice(0,90))}</td><td style="padding:8px 6px;border-bottom:1px solid var(--border);white-space:nowrap"><span class="verdict-chip vc-${d.verdict}">${icon} ${t(d.verdict)||d.verdict}</span></td><td style="padding:8px 6px;border-bottom:1px solid var(--border);font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:${color}">${d.score}%</td></tr>`;
+    }).join('');
+    results.innerHTML=`<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr><th style="padding:8px 6px;text-align:left;font-size:10px;font-weight:700;color:var(--text2);border-bottom:1px solid var(--border2);text-transform:uppercase;letter-spacing:.4px">${LANG==='ro'?'Afirmație':'Claim'}</th><th style="padding:8px 6px;text-align:left;font-size:10px;font-weight:700;color:var(--text2);border-bottom:1px solid var(--border2);text-transform:uppercase;letter-spacing:.4px">Verdict</th><th style="padding:8px 6px;text-align:left;font-size:10px;font-weight:700;color:var(--text2);border-bottom:1px solid var(--border2);text-transform:uppercase;letter-spacing:.4px">Score</th></tr></thead><tbody>${rows}</tbody></table></div><button class="btn btn-secondary" style="margin-top:12px;font-size:12px" onclick="_exportBatchCSV()">📥 Export CSV</button>`;
+    status.textContent=`${data.success||claims.length}/${claims.length} ${LANG==='ro'?'verificate':'verified'}`;
+  }catch(e){
+    results.innerHTML=`<div style="color:var(--red);font-size:13px;padding:10px 0">⚠️ ${esc(e.message||String(e))}</div>`;
+    status.textContent='';
+  }finally{btn.disabled=false;}
+}
+function _exportBatchCSV(){
+  const res=window._lastBatchResults||[];if(!res.length)return;
+  const rows=[['Claim','Verdict','Score','Confidence','Explanation'],...res.map(d=>[d.claim||'',d.verdict||'',d.score||0,d.confidence||'',(d.explanation||'').replace(/\n/g,' ')])];
+  const csv=rows.map(r=>r.map(v=>'"'+String(v==null?'':v).replace(/"/g,'""')+'"').join(',')).join('\n');
+  const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,﻿'+encodeURIComponent(csv);a.download='truthscore_batch.csv';document.body.appendChild(a);a.click();document.body.removeChild(a);
+}
 async function runDebate(){
   const tA=document.getElementById('debateA').value.trim();
   const tB=document.getElementById('debateB').value.trim();
@@ -1228,6 +1318,10 @@ function renderScore(d){
   const circ=2*Math.PI*38,offset=circ-(score/100)*circ;
   const sup=(d.supporting||[]).length,con=(d.contradicting||[]).length,neu=(d.neutral_sources||[]).length;
   const pdfBtn=currentUser&&['pro','enterprise'].includes(currentUser.plan)?`<button class="fbbtn" onclick="downloadPDF()" style="margin-left:auto">📄 PDF</button>`:'';
+  const _exAll=[...(d.supporting||[]),...(d.contradicting||[]),...(d.neutral_sources||[])];
+  const _exCnt=_exAll.filter(s=>s.type==='academic'||s.type==='factcheck').length;
+  const _exSup=(d.supporting||[]).filter(s=>s.type==='academic'||s.type==='factcheck').length;
+  const consensusHtml=_exCnt>=2?(()=>{const p=Math.round(_exSup/_exCnt*100);const c=p>=60?'#10b981':p<=40?'#ef4444':'#f59e0b';return `<div style="margin-top:8px;padding:8px 10px;border-radius:9px;background:rgba(255,255,255,.03);border:1px solid rgba(91,78,255,.18)"><div style="display:flex;justify-content:space-between;font-size:10px;font-weight:700;margin-bottom:5px"><span style="color:var(--text2)">🎓 ${LANG==='ro'?'Consens experți':'Expert consensus'}</span><span style="color:${c}">${p}% ${LANG==='ro'?'confirmat':'confirmed'}</span></div><div style="height:4px;border-radius:99px;background:rgba(128,128,160,.2);overflow:hidden"><div style="height:100%;width:${p}%;background:${c};border-radius:99px;transition:width .8s"></div></div><div style="font-size:10px;color:var(--text2);margin-top:4px">${_exSup}/${_exCnt} ${LANG==='ro'?'surse acad./factcheck':'academic/factcheck sources'}</div></div>`;})():'';
   document.getElementById('scoreCard').innerHTML=`
     <div class="ring-row">
       <div class="ring-wrap">
@@ -1254,12 +1348,14 @@ function renderScore(d){
         <div style="flex:${Math.max(1,neu)};background:rgba(120,120,160,.12)"></div>
       </div>
       <div class="ev-label">${d.evidence_count||0} ${t('evidence')} · ${sup} ${t('supportN')} · ${con} ${t('contradictN')}</div>
+      ${consensusHtml}
     </div>
     <div class="fb-row">
       <span class="fb-lbl">${t('verdictCorrect')}</span>
       <button class="fbbtn" id="fbY">👍</button>
       <button class="fbbtn" id="fbN">👎</button>
       <button class="fbbtn" id="shareBtn" title="${LANG==='ro'?'Copiază linkul':'Copy share link'}">🔗 ${LANG==='ro'?'Distribuie':'Share'}</button>
+      <button class="fbbtn" id="steelManBtn" title="${LANG==='ro'?'Contraargument puternic':'Strongest counter-argument'}" onclick="openSteelMan()">🛡️</button>
       ${pdfBtn}
     </div>
     <div class="fb-note-area" id="fbNote" style="display:none">
@@ -1269,6 +1365,13 @@ function renderScore(d){
         <button class="fb-note-submit" onclick="submitFbNote()">→ ${LANG==='ro'?'Trimite':'Send'}</button>
         <span style="font-size:10px;color:var(--text2);opacity:.65">ℹ️ ${LANG==='ro'?'Feedback-ul ajută la îmbunătățirea verdictelor viitoare.':'Feedback helps improve future verdicts.'}</span>
       </div>
+    </div>
+    <div id="steelManPanel" style="display:none;margin-top:12px;padding:12px 14px;border-radius:10px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.22)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <span style="font-size:12px;font-weight:700;color:#60a5fa">🛡️ ${LANG==='ro'?'Contraargument':'Counter-Argument'}</span>
+        <button style="background:none;border:none;color:var(--text2);cursor:pointer;font-size:14px;line-height:1" onclick="document.getElementById('steelManPanel').style.display='none'">✕</button>
+      </div>
+      <div id="steelManBody" style="font-size:13px;color:var(--text2);line-height:1.7"></div>
     </div>`;
   setTimeout(()=>{const c=document.getElementById('rc');if(c)c.style.strokeDashoffset=offset;},80);
   document.getElementById('fbY').onclick=()=>sendFb(true,d);
@@ -1291,6 +1394,7 @@ function shareResult(d){
 function renderSources(d){
   const sup=d.supporting||[],con=d.contradicting||[],neu=d.neutral_sources||[];
   const claimBadge=(s)=>s.claim_index>=0?`<div class="src-claim-badge">${LANG==='ro'?'sub-afirmație':'sub-claim'} #${s.claim_index+1}</div>`:'';
+  const yearOf=(url)=>{const m=(url||'').match(/\b(20\d{2})\b/);return m?m[1]:null;};
   const grp=(arr,cls,lbl,cap)=>arr.length?`
     <div class="grp-lbl" style="color:${cls==='ts'?'var(--green)':cls==='tc'?'var(--red)':'var(--text2)'}">${lbl} (${arr.length})</div>
     ${arr.slice(0,cap).map(s=>`
@@ -1298,7 +1402,7 @@ function renderSources(d){
         <span class="src-ico">${SRC_ICONS[s.type]||'📄'}</span>
         <div class="src-body">
           <div class="src-title">${esc(s.title||'')}</div>
-          <div class="src-pub">${esc(s.publisher||'')}</div>
+          <div class="src-pub">${esc(s.publisher||'')}${yearOf(s.url)?`<span class="src-year">${yearOf(s.url)}</span>`:''}</div>
           ${s.snippet?`<div class="src-snip">${esc(s.snippet.slice(0,160))}</div>`:''}
           ${claimBadge(s)}
         </div>

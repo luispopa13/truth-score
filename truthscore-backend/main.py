@@ -1640,6 +1640,46 @@ async def batch(req: BatchVerifyRequest, user=Depends(require_user)):
     return await batch_verify(req, user)
 
 
+class SteelManRequest(BaseModel):
+    claim: str = ""
+    verdict: str = ""
+    score: int = 50
+
+
+@app.post("/steel-man")
+async def steel_man(req: SteelManRequest):
+    """Generate the strongest possible counter-argument for a verified claim."""
+    claim = (req.claim or "").strip()[:2000]
+    if not claim:
+        return {"steel_man": "", "key_points": []}
+    verdict_ctx = f"The claim was rated {req.verdict} with a score of {req.score}/100." if req.verdict else ""
+    prompt = (
+        f"A fact-checking system has evaluated the following claim:\n\n"
+        f"CLAIM: {claim}\n"
+        f"{verdict_ctx}\n\n"
+        f"Your task: produce the STRONGEST possible counter-argument — the most credible, well-sourced "
+        f"case that challenges this verdict. Steel-man the opposing view even if you agree with the verdict. "
+        f"Be specific and factual. Avoid rhetoric.\n\n"
+        f"Reply in JSON only:\n"
+        f"{{\"steel_man\": \"<2-3 sentence counter-argument>\", "
+        f"\"key_points\": [\"<point 1>\", \"<point 2>\", \"<point 3>\"]}}"
+    )
+    try:
+        from pipeline.reasoning import call_llm_raw
+        raw = await call_llm_raw(prompt, max_tokens=400, model="groq")
+        import re as _re
+        m = _re.search(r'\{.*\}', raw, _re.DOTALL)
+        if m:
+            data = json.loads(m.group())
+            return {
+                "steel_man": str(data.get("steel_man", "") or ""),
+                "key_points": [str(p) for p in (data.get("key_points") or [])[:5]],
+            }
+    except Exception as e:
+        print(f"[steel-man] error: {e}")
+    return {"steel_man": "Unable to generate counter-argument at this time.", "key_points": []}
+
+
 @app.post("/verify-pdf")
 async def pdf(req: VerifyRequest, user=Depends(require_user)):
     return await verify_and_pdf(req, user)

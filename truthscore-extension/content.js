@@ -277,13 +277,14 @@ function showResult(p, text, d) {
   const sup=d.supporting||[], con=d.contradicting||[], neu=d.neutral_sources||[];
   const icons={web:"🌐",wikipedia:"📖",wikidata:"🗄️",academic:"🎓",news:"📰",factcheck:"🔎"};
 
+  const _yr=(url)=>{const m=(url||'').match(/\b(20\d{2})\b/);return m?m[1]:null;};
   const srcGroup=(group,clr,label)=>group.length
     ?`<div class="tsp-grp" style="color:${clr}">${label} (${group.length})</div>`
       +group.slice(0,3).map(s=>`<a class="tsp-src" href="${safeUrl(s.url)}" target="_blank" rel="noopener" style="border-left:3px solid ${clr}">
         <span class="tsp-src-icon">${icons[s.type]||"📄"}</span>
         <div class="tsp-src-body">
           <div class="tsp-src-title">${esc(s.title||"")}</div>
-          <div class="tsp-src-pub">${esc(s.publisher||"")}</div>
+          <div class="tsp-src-pub">${esc(s.publisher||"")}${_yr(s.url)?` <span style="display:inline-block;font-size:8px;font-weight:700;padding:1px 4px;border-radius:3px;background:rgba(108,99,255,.2);color:#a0a0ff;margin-left:4px">${_yr(s.url)}</span>`:""}</div>
           ${s.snippet?`<div class="tsp-src-snip">${esc(s.snippet.slice(0,100))}…</div>`:""}
         </div></a>`).join(""):"";
 
@@ -306,6 +307,7 @@ function showResult(p, text, d) {
       <div style="flex:${Math.max(1,neu.length)};background:rgba(100,100,120,.25)"></div>
     </div>
     <div class="tsp-ev-label">${d.evidence_count||0} ${t('evidence')} · ${sup.length} ${t('supportN')} · ${con.length} ${t('contradictN')}</div>
+    ${d.check_count>=3?`<div style="display:inline-block;font-size:9px;font-weight:700;padding:2px 7px;border-radius:10px;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.25);color:#fca5a5;margin:4px 0">🔥 Trending · ${d.check_count}×</div>`:""}
     <div class="tsp-sources">
       ${srcGroup(sup,"#22c55e",t('grpSupport'))}
       ${srcGroup(con,"#ef4444",t('grpContradict'))}
@@ -316,11 +318,34 @@ function showResult(p, text, d) {
       <span class="tsp-fb-lbl">${t('verdictCorrect')}</span>
       <button class="tsp-fb-yes" data-fbid="${fbId}">${t('yes')}</button>
       <button class="tsp-fb-no"  data-fbid="${fbId}">${t('no')}</button>
-    </div>`;
+    </div>
+    <div class="tsp-related" id="tsrel${fbId}"></div>`;
 
   // Attach feedback listeners (avoid inline onclick + closure issues)
   el.querySelector(".tsp-fb-yes").addEventListener("click", () => sendFeedback(fbId, true, p));
   el.querySelector(".tsp-fb-no").addEventListener("click",  () => sendFeedback(fbId, false, p));
+  _loadRelatedForPanel(el, text, fbId);
+}
+
+async function _loadRelatedForPanel(container, text, fbId){
+  try{
+    const relEl=container.querySelector(`#tsrel${fbId}`);
+    if(!relEl)return;
+    const settings=await chrome.storage.sync.get('backendUrl').catch(()=>({}));
+    const base=(settings&&settings.backendUrl)||'http://localhost:8000';
+    const r=await fetch(`${base}/related?limit=2&q=${encodeURIComponent(text.slice(0,200))}`);
+    if(!r.ok)return;
+    const data=await r.json();
+    const items=(data.related||[]).filter(Boolean);
+    if(!items.length)return;
+    const vIcons={TRUE:'✅',FALSE:'❌',UNCERTAIN:'⚠️',MIXED:'🔀'};
+    relEl.innerHTML=`<div style="font-size:9.5px;font-weight:700;color:var(--text2);margin-top:10px;margin-bottom:5px;text-transform:uppercase;letter-spacing:.5px">🔗 Previously checked</div>`+
+      items.map(item=>`<a href="${safeUrl(base+item.url)}" target="_blank" rel="noopener" style="display:flex;align-items:center;gap:6px;font-size:10.5px;color:var(--text2);text-decoration:none;padding:5px 7px;border-radius:7px;background:rgba(255,255,255,.03);border:1px solid var(--border);margin-bottom:4px">
+        <span>${vIcons[item.verdict]||'⚠️'}</span>
+        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc((item.claim||'').slice(0,55))}</span>
+        <span style="font-family:monospace;font-size:9px;color:${item.verdict==='TRUE'?'#22c55e':item.verdict==='FALSE'?'#ef4444':'#f59e0b'}">${item.score||'?'}%</span>
+      </a>`).join('');
+  }catch(e){}
 }
 
 function showParagraphResult(p, text, d) {
