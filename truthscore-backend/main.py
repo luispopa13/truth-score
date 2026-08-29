@@ -1360,6 +1360,22 @@ async def login(data: UserLogin):
     return await login_user(data)
 
 
+@app.get("/related")
+async def related_verdicts(q: str = "", limit: int = 3, exclude: str = ""):
+    """Public 'has this been checked before?' lookup — the compounding
+    knowledge base. Given a claim, return semantically-overlapping prior
+    verdicts (each with its permanent /v/{id} link). This is a moat ChatGPT
+    can't touch: it accumulates NO shared, citable fact base across users.
+    Best-effort; returns an empty list on any issue."""
+    try:
+        from pipeline.verdict_store import find_similar_verdicts
+        items = await find_similar_verdicts(q, limit=limit, exclude_id=exclude)
+        return {"count": len(items), "items": items}
+    except Exception as e:
+        print(f"[RELATED] lookup skipped (non-fatal): {e}")
+        return {"count": 0, "items": []}
+
+
 @app.get("/auth/me")
 async def me(user=Depends(require_user)):
     return await get_user_out(user)

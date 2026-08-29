@@ -397,6 +397,8 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
     </div>
   </div>
 
+  <div id="relatedStrip" style="display:none;margin-top:14px"></div>
+
   <!-- AdSense unit zone — materialized by ensureAds(): live ads once
        ADSENSE_CLIENT is set+approved; a dashed reserved-space preview on
        localhost so placement is visible during development. Never overlays
@@ -503,6 +505,7 @@ const I18N={
     myChecksEmpty:'No checks yet. Verify a claim and it will appear here.',
     myChecksLogin:'Sign in to keep a permanent history of your checks.',
     myChecksOpen:'Open ↗',
+    relatedTitle:'🔁 Previously checked on TruthScore',
     eyebrow:'🔬 40+ sources · 26 domains',
     heroTitle:'Verify any<br/><em>claim</em> with AI',
     heroSub:'Enter any claim and get an evidence-based verdict from authoritative sources.',
@@ -572,6 +575,7 @@ const I18N={
     myChecksEmpty:'Încă nimic. Verifică o afirmație și va apărea aici.',
     myChecksLogin:'Autentifică-te ca să păstrezi un istoric permanent al verificărilor.',
     myChecksOpen:'Deschide ↗',
+    relatedTitle:'🔁 Verificat anterior pe TruthScore',
     eyebrow:'🔬 40+ surse · 26 domenii',
     heroTitle:'Verifică orice<br/><em>afirmație</em> cu AI',
     heroSub:'Introdu orice afirmație și primești un verdict bazat pe dovezi din surse autorizate.',
@@ -953,6 +957,35 @@ function renderAll(d){
   document.getElementById('resultWrap').className='result-wrap active';
   document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',i===0));
   document.querySelectorAll('.tab-panel').forEach((p,i)=>p.classList.toggle('active',i===0));
+  renderRelated(d);
+}
+async function renderRelated(d){
+  const box=document.getElementById('relatedStrip');
+  if(!box)return;
+  box.style.display='none';box.innerHTML='';
+  const claim=(d&&d.claim)||'';
+  if(!claim)return;
+  try{
+    const ex=(d&&d._verdictId)||'';
+    const r=await fetch(`${API}/related?limit=3&exclude=${encodeURIComponent(ex)}&q=${encodeURIComponent(claim)}`);
+    if(!r.ok)return;
+    const j=await r.json();
+    const items=(j&&j.items)||[];
+    if(!items.length)return;
+    const rows=items.map(it=>{
+      const v=(it.verdict||'UNCERTAIN').toUpperCase();
+      const col=_HV_COLORS[v]||_HV_COLORS.UNCERTAIN;
+      const lbl=v==='TRUE'?t('TRUE'):v==='FALSE'?t('FALSE'):v==='MIXED'?t('MIXED'):t('UNCERTAIN');
+      return `<a href="${esc(it.url)}" target="_blank" rel="noopener" style="display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--border);border-radius:10px;text-decoration:none;background:var(--bg2)">
+        <span style="flex-shrink:0;width:8px;height:8px;border-radius:50%;background:${col}"></span>
+        <span style="flex:1;min-width:0;font-size:13px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(it.claim)}</span>
+        <span style="flex-shrink:0;font-size:12px;font-weight:700;color:${col}">${esc(lbl)}</span>
+      </a>`;
+    }).join('');
+    box.innerHTML=`<div style="font-size:12px;color:var(--text2);font-weight:600;margin-bottom:8px">${t('relatedTitle')}</div>
+      <div style="display:flex;flex-direction:column;gap:8px">${rows}</div>`;
+    box.style.display='block';
+  }catch(e){}
 }
 function renderScore(d){
   const score=d.score??50,verdict=d.verdict||'UNCERTAIN';

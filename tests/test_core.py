@@ -160,6 +160,21 @@ def test_detect_claims_without_auth():
         assert "claims" in r.json()
 
 
+def test_related_verdict_similarity():
+    """Knowledge-base matching: near-duplicate claims score high, unrelated
+    claims score ~0, and empty input is safe. Guards the compounding
+    'previously checked' moat against silent regressions."""
+    from pipeline.verdict_store import _tokenize, _jaccard
+    a = _tokenize("Vaccines cause autism in children")
+    b = _tokenize("Do vaccines cause autism?")
+    c = _tokenize("Paris is the capital of France")
+    assert _jaccard(a, b) >= 0.5          # same claim, reworded -> matches
+    assert _jaccard(a, c) < 0.2           # unrelated -> no false match
+    assert _jaccard(_tokenize(""), a) == 0.0   # empty is safe, never raises
+    # Stopwords must not create spurious overlap between unrelated claims.
+    assert _jaccard(_tokenize("the is of and"), _tokenize("a an to for")) == 0.0
+
+
 if __name__ == "__main__":
     import pytest
     raise SystemExit(pytest.main([__file__, "-x"]))

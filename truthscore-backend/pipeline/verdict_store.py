@@ -22,11 +22,12 @@ This module never raises to its callers: saving is best-effort (a failed save
 just means no permalink for that check), and loading returns None on any miss.
 """
 import os
+import re
 import json
 import asyncio
 import secrets
 from pathlib import Path
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from datetime import datetime, timezone
 
 _BACKEND_ROOT = Path(__file__).parent.parent
@@ -216,6 +217,124 @@ async def list_user_verdicts(user_id: str, limit: int = 50) -> list[dict]:
         None, _scan_jsonl_user, user_id, limit
     )
     return [_summarize(r) for r in recs]
+
+
+# ── Compounding knowledge base: "has this been checked before?" ──────
+# The network-effect moat. Every saved verdict enriches a shared, public,
+# cross-lingual fact archive; a new claim is matched against it so we can answer
+# "TruthScore already checked this" instantly with a permalink. ChatGPT starts
+# every conversation from zero — it cannot accumulate a shared verdict base.
+#
+# Matching is lexical (token-overlap / Jaccard) so it needs no ML model, works
+# in any language, and is fully deterministic/testable. It is intentionally
+# conservative: better to miss a loose match than to wrongly tell a user their
+# claim was "already checked" by an unrelated verdict.
+_TOKEN_RE = re.compile(r"[0-9a-zà-öø-ÿ]+", re.IGNORECASE)
+# A tiny, multilingual-ish stopword set (EN + common RO) so shared filler words
+# don't inflate similarity. Kept small on purpose — content words carry the signal.
+_STOP = {
+    "the", "a", "an", "is", "are", "was", "were", "be", "been", "being", "to",
+    "of", "in", "on", "at", "and", "or", "for", "that", "this", "these", "those",
+    "it", "its", "as", "by", "with", "from", "has", "have", "had", "do", "does",
+    "not", "no", "but", "if", "then", "than", "so", "who", "what", "when", "which",
+    "si", "sau", "de", "la", "in", "un", "o", "este", "sunt", "era", "au", "cu",
+    "ca", "ce", "care", "pe", "din", "nu", "se", "el", "ea", "le", "lui", "sa",
+}
+_RELATED_SCAN_MAX = int(os.getenv("RELATED_SCAN_MAX", "3000"))
+
+
+def _tokenize(text: str) -> set:
+    """Lowercased content-word token set (len>2, stopwords dropped)."""
+    if not text:
+        return set()
+    return {t for t in _TOKEN_RE.findall(text.lower())
+            if len(t) > 2 and t not in _STOP}
+
+
+def _jaccard(a: set, b: set) -> float:
+    if not a or not b:
+        return 0.0
+    union = len(a | b)
+    return (len(a & b) / union) if union else 0.0
+
+
+def _scan_recent(limit_scan: int) -> list[dict]:
+    """Return the most-recent `limit_scan` verdict records from the JSONL,
+    deduped by id (last write wins). Bounded memory via a deque tail-window."""
+    if not VERDICTS_FILE.exists():
+        return []
+    tail: "deque[str]" = deque(maxlen=max(1, limit_scan))
+    try:
+        with open(VERDICTS_FILE, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    tail.append(line)
+    except Exception as e:
+        print(f"[VERDICT-STORE] recent scan failed: {e}")
+        return []
+    by_id: "OrderedDict[str, dict]" = OrderedDict()
+    for line in tail:
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        rid = rec.get("id")
+        if rid:
+            by_id[rid] = rec
+            by_id.move_to_end(rid)
+    return list(by_id.values())
+
+
+async def find_similar_verdicts(claim: str, limit: int = 3,
+                                min_sim: float = 0.5,
+                                exclude_id: str = "") -> list[dict]:
+    """Return prior verdicts whose claim overlaps `claim` above `min_sim`,
+    most-similar first (each a compact row + `similarity` + /v/{id} permalink).
+    Never raises — returns [] on any problem or empty query."""
+    q = _tokenize(claim)
+    if not q:
+        return []
+    limit = max(1, min(int(limit or 3), 10))
+    min_sim = min(max(float(min_sim), 0.0), 1.0)
+
+    candidates: list[dict] = []
+    _try_init_mongo()
+    if _mongo_collection is not None:
+        try:
+            # Exclude the heavy payload; we only need the denormalized fields.
+            cursor = _mongo_collection.find({}, {"payload": 0}).sort(
+                "created_at", -1).limit(_RELATED_SCAN_MAX)
+            candidates = await cursor.to_list(length=_RELATED_SCAN_MAX)
+        except Exception as e:
+            print(f"[VERDICT-STORE] Mongo related scan failed, JSONL fallback ({e})")
+            candidates = []
+    if not candidates:
+        candidates = await asyncio.get_event_loop().run_in_executor(
+            None, _scan_recent, _RELATED_SCAN_MAX)
+
+    scored: list[tuple[float, dict]] = []
+    for rec in candidates:
+        if exclude_id and rec.get("id") == exclude_id:
+            continue
+        sim = _jaccard(q, _tokenize(rec.get("claim", "")))
+        if sim >= min_sim:
+            scored.append((sim, rec))
+    scored.sort(key=lambda x: x[0], reverse=True)
+
+    out: list[dict] = []
+    seen_claims: set = set()
+    for sim, rec in scored:
+        key = (rec.get("claim", "") or "").lower().strip()
+        if key in seen_claims:
+            continue
+        seen_claims.add(key)
+        row = _summarize(rec)
+        row["similarity"] = round(sim, 3)
+        out.append(row)
+        if len(out) >= limit:
+            break
+    return out
 
 
 async def load_verdict(vid: str) -> dict | None:
