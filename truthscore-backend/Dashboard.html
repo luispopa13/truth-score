@@ -1295,7 +1295,12 @@ async function openSteelMan(){
     const r=await fetch(`${API}/steel-man`,{method:'POST',headers:hdr,body:JSON.stringify({claim:d.claim||d.text||'',verdict:d.verdict||'',score:d.score||50})});
     if(!r.ok)throw new Error(await r.text());
     const j=await r.json();
-    body.innerHTML=`<div style="margin-bottom:8px">${esc(j.steel_man||'')}</div>`+(j.key_points&&j.key_points.length?`<ul style="padding-left:16px;margin:0;font-size:12px;color:#94a3b8">${j.key_points.map(p=>`<li style="margin-bottom:4px">${esc(p)}</li>`).join('')}</ul>`:'');
+    const txt=j.steel_man||'';
+    if(!txt||txt.startsWith('Unable to generate')){
+      body.innerHTML=`<div style="opacity:.6;font-size:12px">${LANG==='ro'?'Funcția necesită AI — disponibil pe laptopul personal.':'This feature requires AI — available when LLM is reachable.'}</div>`;
+    } else {
+      body.innerHTML=`<div style="margin-bottom:8px">${esc(txt)}</div>`+(j.key_points&&j.key_points.length?`<ul style="padding-left:16px;margin:0;font-size:12px;color:#94a3b8">${j.key_points.map(p=>`<li style="margin-bottom:4px">${esc(p)}</li>`).join('')}</ul>`:'');
+    }
   }catch(e){
     body.innerHTML=`<div style="color:var(--red);font-size:12px">⚠️ ${esc(e.message||String(e))}</div>`;
   }
@@ -1606,7 +1611,7 @@ function renderScore(d){
       <button class="fbbtn" id="shareBtn" title="${LANG==='ro'?'Copiază linkul':'Copy share link'}">🔗</button>
       <button class="fbbtn" id="steelManBtn" title="${LANG==='ro'?'Contraargument puternic':'Strongest counter-argument'}" onclick="openSteelMan()">🛡️</button>
       <button class="fbbtn" id="watchBtn" title="${LANG==='ro'?'Urmărește afirmația':'Watch this claim'}" onclick="toggleWatch(d)">🔔</button>
-      <button class="fbbtn" title="${LANG==='ro'?'Dezbatere live — PRO vs CON':'Live Debate — PRO vs CON'}" onclick="openLiveDebate()">⚔️</button>
+      <button class="fbbtn" id="debateBtn" title="${LANG==='ro'?'Dezbatere live — PRO vs CON':'Live Debate — PRO vs CON'}" onclick="openLiveDebate()">⚔️</button>
       ${pdfBtn}
     </div>
     <div class="fb-note-area" id="fbNote" style="display:none">
@@ -1642,6 +1647,9 @@ function renderScore(d){
   document.getElementById('fbY').onclick=()=>sendFb(true,d);
   document.getElementById('fbN').onclick=()=>sendFb(false,d);
   document.getElementById('shareBtn').onclick=()=>shareResult(d);
+  document.getElementById('watchBtn').onclick=()=>toggleWatch(d);
+  document.getElementById('steelManBtn').onclick=()=>openSteelMan();
+  document.getElementById('debateBtn').onclick=()=>openLiveDebate();
 }
 function shareResult(d){
   const text=(d&&d.claim)||document.getElementById('claimInput').value.trim();
