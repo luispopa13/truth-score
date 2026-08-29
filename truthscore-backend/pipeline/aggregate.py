@@ -28,8 +28,10 @@ _TRUE_AT  = VERDICT_TRUE_AT
 _FALSE_AT = VERDICT_FALSE_AT
 
 # A sub-claim is "decisively false on authoritative evidence" when it is FALSE,
-# its score is this low, and at least one contradicting source is authoritative.
-_DECISIVE_FALSE_AT = 30
+# its score is at/below the pipeline's FALSE threshold, and at least one
+# contradicting source is authoritative. Aligned with VERDICT_FALSE_AT so the
+# hard gate can never disagree with what _verdict_from_score calls FALSE.
+_DECISIVE_FALSE_AT = _FALSE_AT
 _AUTH_TYPES = ("factcheck", "academic", "news")
 
 
@@ -65,13 +67,13 @@ def _split_by_stance(sources: list[Source], atom_verdict: str) -> tuple:
             elif v == "NEUTRAL":
                 stance = "neutral"
         if not stance:
-            # Last resort: attribute to the atom's overall direction.
-            if atom_verdict == "TRUE":
-                stance = "supporting"
-            elif atom_verdict == "FALSE":
-                stance = "contradicting"
-            else:
-                stance = "neutral"
+            # No per-source stance and no NLI verdict: we genuinely don't know
+            # which way this source cuts. Attributing it to the atom's overall
+            # verdict (supporting when TRUE, contradicting when FALSE) would
+            # fabricate agreement it never expressed and let a pile of unresolved
+            # sources inflate one side of the tally. Treat it as neutral -- shown
+            # to the user as context, excluded from the support/contradict count.
+            stance = "neutral"
         s.stance = stance
         if stance == "supporting":
             supporting.append(s)
@@ -182,7 +184,10 @@ def aggregate_score(subs: list[SubClaimResult]) -> tuple:
             (s for s in subs if s.verdict == "FALSE"),
             key=lambda s: s.score,
         )
-        score = min(score, _DECISIVE_FALSE_AT)
+        # Cap strictly BELOW the FALSE threshold so the displayed score can never
+        # disagree with the FALSE verdict (a score of exactly _FALSE_AT reads as
+        # UNCERTAIN via _verdict_from_score).
+        score = min(score, _FALSE_AT - 1)
         verdict = "FALSE"
         reason = (
             f"Overall FALSE: {n_false} of {total} sub-claims are contradicted, "
@@ -192,6 +197,16 @@ def aggregate_score(subs: list[SubClaimResult]) -> tuple:
         )
     else:
         verdict = _verdict_from_score(score)
+        # Conjunction gate: a compound claim is a logical AND of its parts, so it
+        # cannot be TRUE unless EVERY sub-claim is TRUE. When a part is
+        # contradicted or unresolved, the authority-weighted mean can still land
+        # above the TRUE threshold (e.g. one strong TRUE atom outweighing a weak
+        # FALSE one) -- which would wrongly report the whole claim TRUE. Cap the
+        # score just below TRUE so the best honest verdict for a claim with a
+        # false/unknown part is UNCERTAIN (or FALSE if the mean is low enough).
+        if verdict == "TRUE" and n_true < total:
+            score = min(score, _TRUE_AT - 1)
+            verdict = _verdict_from_score(score)
         parts = []
         if n_true:
             parts.append(f"{n_true} supported")
@@ -200,10 +215,16 @@ def aggregate_score(subs: list[SubClaimResult]) -> tuple:
         if n_unc:
             parts.append(f"{n_unc} uncertain")
         breakdown = ", ".join(parts)
+        gate_note = ""
+        if n_true < total:
+            gate_note = (
+                " Not every part is confirmed, so the claim as a whole cannot be "
+                "rated TRUE."
+            )
         reason = (
             f"Weighted across {total} sub-claims ({breakdown}), giving more "
             f"weight to sub-claims backed by authoritative sources. "
-            f"Aggregate score {score}/100 -> {verdict}."
+            f"Aggregate score {score}/100 -> {verdict}.{gate_note}"
         )
 
     confidence = _confidence_from_score(score)

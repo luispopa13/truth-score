@@ -113,8 +113,9 @@ async def hyde_retrieve(claim: str, hyde_data: dict) -> list[Source]:
     for (qtype, _), res in zip(search_tasks, results):
         if isinstance(res, list):
             for src in res:
-                # Tag source with retrieval direction
-                src.snippet = f"[{qtype.upper()}] {src.snippet}"
+                # Record retrieval direction as provenance metadata, NOT inside
+                # the snippet (which is shown to the user and fed to NLI).
+                src.retrieval_hint = qtype
                 sources.append(src)
 
     print(f"  [HYDE] Retrieved {len(sources)} sources via hypothetical docs")
@@ -355,8 +356,14 @@ async def averitec_generate_questions(claim: str) -> list:
         return []
 
 
-async def averitec_answer_question(question: str) -> dict:
-    """Answer a single verification question using retrieval + Gemini."""
+async def averitec_answer_question(question: str, claim: str = "") -> dict:
+    """Answer a single verification question using retrieval + Gemini.
+
+    `claim` is the statement being fact-checked. It is passed into the prompt so
+    the SUPPORTS/CONTRADICTS stance is anchored to THIS claim rather than a vague
+    "a claim about this topic" — without it the model guessed which direction
+    counted as support, flipping stances at random on ambiguous questions.
+    """
     # These three searches are independent — fire them concurrently instead of
     # awaiting one at a time (~3x faster per question). Order of results is
     # preserved (tavily, ddg_wiki, semantic_scholar) for deterministic ranking.
@@ -379,11 +386,14 @@ async def averitec_answer_question(question: str) -> dict:
         for i, s in enumerate(sources[:5])
     )
 
+    claim_line = f'Claim being verified: "{claim}"\n' if claim else ""
     prompt = (
+        f'{claim_line}'
         f'Question: "{question}"\n\n'
         f'Evidence:\n{ev_text}\n\n'
-        'Answer in 1-2 sentences. State if answer SUPPORTS, CONTRADICTS, '
-        'or is NEUTRAL to a claim about this topic.\n'
+        'Answer the question in 1-2 sentences using ONLY the evidence above. '
+        'Then state whether your answer SUPPORTS, CONTRADICTS, or is NEUTRAL '
+        'toward the claim being verified.\n'
         'JSON: {"answer": "...", "stance": "SUPPORTS|CONTRADICTS|NEUTRAL"}'
     )
 
@@ -422,8 +432,8 @@ async def averitec_verify(claim: str) -> tuple:
     if not questions:
         return None, None, None, None
 
-    # Answer all questions in parallel
-    tasks = [averitec_answer_question(q) for q in questions]
+    # Answer all questions in parallel (each anchored to the claim)
+    tasks = [averitec_answer_question(q, claim) for q in questions]
     qa_results = await asyncio.gather(*tasks, return_exceptions=True)
 
     valid_qa = [r for r in qa_results if isinstance(r, dict)]
@@ -439,18 +449,25 @@ async def averitec_verify(claim: str) -> tuple:
     print(f"  [AVERITEC] Q&A: supports={len(supports)} "
           f"contradicts={len(contradicts)} neutral={len(neutrals)}")
 
-    # Aggregate
-    if len(contradicts) > len(supports):
-        score    = 15 + (len(contradicts) * 5)
+    # Aggregate. A single-vote lead (e.g. 2 contradict vs 1 support) is NOT
+    # enough to declare a verdict — one stray stance shouldn't flip the result.
+    # Require either a lead of >=2, or a UNANIMOUS direction (all non-neutral
+    # answers agree). Anything closer stays UNCERTAIN and hands off to the rest
+    # of the pipeline.
+    c, s = len(contradicts), len(supports)
+    decisive_false = (c - s >= 2) or (c >= 1 and s == 0)
+    decisive_true  = (s - c >= 2) or (s >= 1 and c == 0)
+    if decisive_false and c >= s:
+        score    = 15 + (c * 5)
         verdict  = "FALSE"
-        conf     = "HIGH" if len(contradicts) >= 2 else "MEDIUM"
+        conf     = "HIGH" if c >= 2 else "MEDIUM"
         expl     = (f"Verification questions reveal contradictions: "
                    + "; ".join(f'"{r["question"][:50]}": {r["answer"][:80]}'
                                 for r in contradicts[:2]))
-    elif len(supports) > 0 and len(contradicts) == 0:
-        score    = 75 + (len(supports) * 5)
+    elif decisive_true and s >= c:
+        score    = 75 + (s * 5)
         verdict  = "TRUE"
-        conf     = "HIGH" if len(supports) >= 2 else "MEDIUM"
+        conf     = "HIGH" if s >= 2 else "MEDIUM"
         expl     = (f"All verification questions answered positively: "
                    + "; ".join(f'"{r["question"][:50]}": {r["answer"][:80]}'
                                 for r in supports[:2]))
@@ -642,12 +659,11 @@ async def search_with_queries(queries: dict) -> list:
     for label, res in zip(qlabels, results):
         if isinstance(res, list):
             for src in res:
-                # Tag snippet with retrieval direction
-                # This helps Path B understand the provenance
-                if label == "contradict" and not src.snippet.startswith("[CONTRADICT]"):
-                    src.snippet = f"[CONTRADICT] {src.snippet}"
-                elif label == "support" and not src.snippet.startswith("[SUPPORT]"):
-                    src.snippet = f"[SUPPORT] {src.snippet}"
+                # Record retrieval direction as provenance metadata only — never
+                # prepend it to the snippet (keeps user-facing text + NLI input
+                # clean). Nothing downstream parses the old inline tag.
+                if not src.retrieval_hint:
+                    src.retrieval_hint = label
                 all_sources.append(src)
 
     print(f"  [QUERIES] Retrieved {len(all_sources)} sources from targeted queries")

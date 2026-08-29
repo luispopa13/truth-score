@@ -30,6 +30,11 @@ class Source(BaseModel):
     # Additive with defaults so previously-cached Source blobs still deserialize.
     claim_index: int = -1
     stance:      str = ""
+    # Which retrieval direction surfaced this source (support / contradict /
+    # neutral / hyde). Kept OUT of `snippet` so the user-visible text and the
+    # NLI/embedding input stay clean; purely provenance metadata. Additive with a
+    # default so previously-cached Source blobs still deserialize.
+    retrieval_hint: str = ""
 
 
 class LatencyBreakdown(BaseModel):

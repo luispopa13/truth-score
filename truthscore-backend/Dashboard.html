@@ -475,6 +475,9 @@ const I18N={
     pricing:'Pricing', privacy:'Privacy',
     TRUE:'TRUE', FALSE:'FALSE', UNCERTAIN:'UNCERTAIN', MIXED:'MIXED',
     confHigh:'🟢 High confidence', confMed:'🟡 Medium', confLow:'🔴 Low',
+    calVeryHigh:'Very confident', calHigh:'Confident',
+    calLikelyFactcheck:'Likely correct — confirmed by fact-checkers', calLikely:'Likely correct',
+    calLowInsufficient:'Uncertain — insufficient evidence, verify manually', calLow:'Uncertain — verify manually',
     verdictCorrect:'Is this verdict correct?',
     evidence:'evidence', supportN:'support', contradictN:'contradict',
     sourcesTitle:'Sources & Evidence', grpSupport:'✅ Supports', grpContradict:'❌ Contradicts', grpRelevant:'⚪ Relevant',
@@ -536,6 +539,9 @@ const I18N={
     pricing:'Prețuri', privacy:'Confidențialitate',
     TRUE:'ADEVĂRAT', FALSE:'FALS', UNCERTAIN:'INCERT', MIXED:'MIXT',
     confHigh:'🟢 Confidență ridicată', confMed:'🟡 Medie', confLow:'🔴 Scăzută',
+    calVeryHigh:'Foarte sigur', calHigh:'Sigur',
+    calLikelyFactcheck:'Probabil corect — confirmat de fact-checkers', calLikely:'Probabil corect',
+    calLowInsufficient:'Nesigur — dovezi insuficiente, verifică manual', calLow:'Nesigur — verifică manual',
     verdictCorrect:'Verdictul e corect?',
     evidence:'dovezi', supportN:'susțin', contradictN:'contrazic',
     sourcesTitle:'Surse & Evidențe', grpSupport:'✅ Susțin', grpContradict:'❌ Contrazic', grpRelevant:'⚪ Relevante',
@@ -950,7 +956,7 @@ function renderScore(d){
       <div>
         <div><span class="verdict-chip vc-${verdict}">${icon} ${lbl}</span></div>
         <div><span class="topic-pill">${TOPIC_ICONS[topic]||'🔍'} ${TOPIC_LABELS[topic]||topic}</span></div>
-        <div class="conf-line">${d.confidence==='HIGH'?t('confHigh'):d.confidence==='MEDIUM'?t('confMed'):t('confLow')}${d.calibrated_confidence?' · '+d.calibrated_confidence:''}</div>
+        <div class="conf-line">${d.confidence==='HIGH'?t('confHigh'):d.confidence==='MEDIUM'?t('confMed'):t('confLow')}${d.calibrated_confidence?' · '+t(d.calibrated_confidence):''}</div>
       </div>
     </div>
        <div class="expl-text">${explRomanian(d)}</div>

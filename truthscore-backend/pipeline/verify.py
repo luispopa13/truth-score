@@ -509,6 +509,39 @@ async def verify_claim(req: VerifyRequest, eco: bool = False):
     if sub_results:
         agg_score, agg_verdict, agg_conf, aggregate_reason = aggregate_score(sub_results)
         score, verdict, confidence = agg_score, agg_verdict, agg_conf
+        # The override just changed the verdict, so the Path-A/B `explanation` and
+        # the whole-claim supporting/contradicting/neutral lists produced earlier
+        # can now CONTRADICT the aggregate verdict on the score bar (e.g. the text
+        # still argues TRUE while the aggregate says UNCERTAIN). Rebuild both from
+        # the sub-claim results — the evidence the aggregate is actually computed
+        # from — so the narrative, the source columns, and the score all agree.
+        explanation = aggregate_reason or explanation
+        rebuilt_sup, rebuilt_con, rebuilt_neu = [], [], []
+        for sc in sub_results:
+            rebuilt_sup.extend(sc.supporting)
+            rebuilt_con.extend(sc.contradicting)
+            rebuilt_neu.extend(sc.neutral_sources)
+        # Fold back any WHOLE-CLAIM source not mapped to a sub-claim
+        # (claim_index == -1) — most importantly the Wikidata structured sources
+        # stamped neutral above — so surfacing the aggregate never drops evidence.
+        seen_urls = {(s.url or "").rstrip("/").lower()
+                     for s in rebuilt_sup + rebuilt_con + rebuilt_neu}
+        for s in supporting + contradicting + neutral:
+            if getattr(s, "claim_index", -1) != -1:
+                continue  # already represented through its sub-claim
+            u = (s.url or "").rstrip("/").lower()
+            if u and u in seen_urls:
+                continue
+            if u:
+                seen_urls.add(u)
+            st = (s.stance or "").lower()
+            if st == "supporting":
+                rebuilt_sup.append(s)
+            elif st == "contradicting":
+                rebuilt_con.append(s)
+            else:
+                rebuilt_neu.append(s)
+        supporting, contradicting, neutral = rebuilt_sup, rebuilt_con, rebuilt_neu
 
     # Claim splitting & explainability (runs fast, parallel with cache write)
     # sub_claims already computed early (before reasoning) to gate decomposition.
@@ -541,19 +574,22 @@ async def verify_claim(req: VerifyRequest, eco: bool = False):
     if "[Low confidence]" in explanation:
         confidence = "LOW"
 
-    # Calibrated label for UI
+    # Calibrated label for UI — emit a LANGUAGE-NEUTRAL enum key, not a
+    # hardcoded string. The client (Dashboard I18N / extension i18n.js) maps the
+    # key to the active UI language via t(); previously this shipped Romanian
+    # text that never translated for the EN-default audience.
     if confidence == "HIGH" and score_distance >= 45:
-        cal_conf = "Foarte sigur"          # score ≥ 95 or ≤ 5
+        cal_conf = "calVeryHigh"           # score ≥ 95 or ≤ 5
     elif confidence == "HIGH" and score_distance >= 35:
-        cal_conf = "Sigur"                 # score ≥ 85 or ≤ 15
+        cal_conf = "calHigh"               # score ≥ 85 or ≤ 15
     elif confidence == "MEDIUM" and n_factcheck >= 1:
-        cal_conf = "Probabil corect -- confirmat de fact-checkers"
+        cal_conf = "calLikelyFactcheck"
     elif confidence == "MEDIUM":
-        cal_conf = "Probabil corect"
+        cal_conf = "calLikely"
     elif "[Low confidence]" in explanation:
-        cal_conf = "Nesigur -- dovezi insuficiente, verifică manual"
+        cal_conf = "calLowInsufficient"
     else:
-        cal_conf = "Nesigur -- verifică manual"
+        cal_conf = "calLow"
 
     result = VerifyResponse(
         claim=claim, score=score, verdict=verdict,

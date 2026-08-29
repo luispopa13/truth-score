@@ -741,27 +741,21 @@ Hard claims requiring extra care:
               f"implies {score_implies} -> UNCERTAIN LOW")
         verdict, confidence = "UNCERTAIN", "LOW"
 
-    # Ensure at least one source is shown
-    # If Gemini classified all as irrelevant, promote neutral sources
+    # Ensure at least one source is shown when Gemini classified everything as
+    # neither supporting nor contradicting. We still SURFACE the collected
+    # neutral sources (so the UI isn't empty) but we do NOT relabel them into
+    # supporting/contradicting: promoting a source Gemini judged irrelevant into
+    # the "✅ Supports" column just because the verdict came out TRUE fabricates
+    # agreement the source never expressed, and it inflates the relevant-evidence
+    # count (n_relevant) that drives the confidence label. Honest neutral beats
+    # fake support — the verdict stays low-confidence, as it should when no
+    # source actually takes a side.
     if not supporting and not contradicting:
-        # First try: use neutral sources that were collected
         real_neutral = [s for s in neutral
                         if s.publisher != "TruthScore Knowledge Base"
                         and s.url != "https://deepmind.google/technologies/gemini/"]
-
-        if real_neutral:
-            # Promote top neutral sources to supporting/contradicting based on verdict
-            if verdict == "TRUE":
-                supporting    = real_neutral[:3]
-                neutral       = real_neutral[3:]
-            elif verdict == "FALSE":
-                contradicting = real_neutral[:3]
-                neutral       = real_neutral[3:]
-            else:
-                neutral = real_neutral
-        else:
-            # Never invent a citation when no external evidence was found.
-            # The verdict remains low-confidence and the source lists stay empty.
-            neutral = real_neutral
+        for s in real_neutral:
+            s.stance = "neutral"
+        neutral = real_neutral
 
     return score, verdict, confidence, explanation, supporting, contradicting, neutral

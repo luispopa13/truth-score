@@ -91,10 +91,12 @@ async def verify_and_pdf(req: VerifyRequest, user=Depends(require_user)):
         "evidence_count": len(rr.all_evidence),
         "sub_claims": sub_claims,
         "word_importance": word_imp,
+        # PDF is a static document with no client-side i18n, so emit readable
+        # English text directly (EN-default) rather than an enum key.
         "calibrated_confidence": (
-            "Foarte sigur" if confidence=="HIGH" and score>=80 else
-            "Sigur" if confidence=="HIGH" else
-            "Probabil corect" if confidence=="MEDIUM" and score>=60 else "Incert"
+            "Very confident" if confidence=="HIGH" and score>=80 else
+            "Confident" if confidence=="HIGH" else
+            "Likely correct" if confidence=="MEDIUM" and score>=60 else "Uncertain"
         ),
         "latency": {"total_ms": round((time.time()-t0)*1000)},
     }
