@@ -40,7 +40,7 @@ def capability_report() -> dict:
         "scopus":      _has("SCOPUS_API_KEY"),
         "openfda":     _has("OPENFDA_API_KEY", "OPENFDA"),
         "noaa":        _has("NOAA_TOKEN", "NOAA"),
-        "factcheck":   _has("GOOGLE_FACTCHECK_API_KEY", "FACTCHECK_API_KEY"),
+        "factcheck":   _has("GOOGLE_API_KEY", "GOOGLE_API_TOKEN"),
     }
     infra = {
         "redis":       _has("REDIS_URL"),
