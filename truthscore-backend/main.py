@@ -17,6 +17,9 @@ from pipeline.helpers import split_claims
 # User case study logging (MSc thesis evaluation data collection) -- new, self-contained
 import time
 import json
+import secrets as _secrets
+import hashlib as _hashlib
+from datetime import datetime, timezone
 from typing import Optional as _Optional
 from fastapi import Response, UploadFile, File
 from fastapi.responses import FileResponse, PlainTextResponse
@@ -1680,9 +1683,113 @@ async def steel_man(req: SteelManRequest):
     return {"steel_man": "Unable to generate counter-argument at this time.", "key_points": []}
 
 
+# ── Watch This Claim ────────────────────────────────────────────
+
+class WatchRequest(BaseModel):
+    claim: str = ""
+    verdict: str = ""
+    score: int = 50
+
+@app.post("/watch")
+async def watch_claim(req: WatchRequest, user=Depends(require_user)):
+    """Save a claim to the user's watch list."""
+    claim = (req.claim or "").strip()[:2000]
+    if not claim:
+        raise HTTPException(400, "claim required")
+    try:
+        from auth import _get_db
+        db = _get_db()
+        col = db["watched_claims"]
+        existing = await col.find_one({"user_id": user["id"], "claim": claim})
+        if existing:
+            return {"id": str(existing["_id"]), "already_watching": True}
+        doc = {
+            "user_id": user["id"],
+            "claim": claim,
+            "last_verdict": req.verdict or "UNCERTAIN",
+            "last_score": req.score,
+            "last_checked": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        result = await col.insert_one(doc)
+        return {"id": str(result.inserted_id), "already_watching": False}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+@app.get("/watch")
+async def list_watched(user=Depends(require_user)):
+    """List all watched claims for the user."""
+    try:
+        from auth import _get_db
+        db = _get_db()
+        col = db["watched_claims"]
+        docs = await col.find({"user_id": user["id"]}).sort("created_at", -1).to_list(100)
+        for d in docs:
+            d["id"] = str(d.pop("_id", ""))
+        return {"items": docs}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+@app.delete("/watch/{watch_id}")
+async def unwatch_claim(watch_id: str, user=Depends(require_user)):
+    """Remove a claim from watch list."""
+    try:
+        from auth import _get_db
+        from bson import ObjectId
+        db = _get_db()
+        col = db["watched_claims"]
+        result = await col.delete_one({"_id": ObjectId(watch_id), "user_id": user["id"]})
+        return {"deleted": result.deleted_count > 0}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+async def _resolve_api_key(request) -> dict | None:
+    """Check X-API-Key header and return the user dict if valid."""
+    api_key = request.headers.get("X-API-Key", "")
+    if not api_key.startswith("ts_sk_"):
+        return None
+    key_hash = _hashlib.sha256(api_key.encode()).hexdigest()
+    try:
+        from auth import _get_db
+        db = _get_db()
+        col = db["api_keys"]
+        doc = await col.find_one({"key_hash": key_hash, "active": True})
+        if not doc:
+            return None
+        await col.update_one({"_id": doc["_id"]}, {"$inc": {"use_count": 1}, "$set": {"last_used": datetime.now(timezone.utc).isoformat()}})
+        return {"id": doc["user_id"], "plan": "pro"}
+    except Exception:
+        return None
+
+
 @app.post("/verify-pdf")
 async def pdf(req: VerifyRequest, user=Depends(require_user)):
     return await verify_and_pdf(req, user)
+
+
+# ── Telegram Bot Webhook ───────────────────────────────────────
+
+@app.post("/telegram/webhook")
+async def telegram_webhook(request: Request):
+    """Receives Telegram Bot API updates and processes them."""
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    if not token:
+        return {"ok": False, "error": "TELEGRAM_BOT_TOKEN not configured"}
+    secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+    # Optional secret token validation (set via setWebhook secretToken param)
+    tg_secret = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
+    if tg_secret and secret != tg_secret:
+        raise HTTPException(403, "Invalid webhook secret")
+    try:
+        update = await request.json()
+        backend_url = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
+        from telegram_bot import handle_update
+        import asyncio as _asyncio
+        _asyncio.create_task(handle_update(update, backend_url))
+    except Exception as e:
+        print(f"[telegram-webhook] error: {e}")
+    return {"ok": True}
 
 
 # ── Widget ────────────────────────────────────────────────

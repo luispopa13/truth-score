@@ -277,6 +277,8 @@ function showResult(p, text, d) {
   const sup=d.supporting||[], con=d.contradicting||[], neu=d.neutral_sources||[];
   const icons={web:"🌐",wikipedia:"📖",wikidata:"🗄️",academic:"🎓",news:"📰",factcheck:"🔎"};
 
+  const _CRED_DB={'reuters.com':97,'apnews.com':98,'bbc.com':94,'bbc.co.uk':94,'nytimes.com':90,'nature.com':99,'pubmed.ncbi.nlm.nih.gov':99,'snopes.com':91,'politifact.com':90,'factcheck.org':92,'who.int':92,'cdc.gov':93,'nih.gov':95,'rt.com':22,'infowars.com':8,'breitbart.com':42};
+  const _cred=(url)=>{try{const d=new URL(url||'').hostname.replace(/^www\./,'');const s=_CRED_DB[d];if(!s)return '';const col=s>=85?'#10b981':s>=60?'#f59e0b':'#ef4444';return ` <span style="display:inline-block;font-size:8px;font-weight:700;padding:1px 4px;border-radius:3px;background:rgba(255,255,255,.06);border:1px solid ${col};color:${col};margin-left:3px" title="Reliability: ${s}/100">${s}</span>`;}catch(e){return '';}};
   const _yr=(url)=>{const m=(url||'').match(/\b(20\d{2})\b/);return m?m[1]:null;};
   const srcGroup=(group,clr,label)=>group.length
     ?`<div class="tsp-grp" style="color:${clr}">${label} (${group.length})</div>`
@@ -284,7 +286,7 @@ function showResult(p, text, d) {
         <span class="tsp-src-icon">${icons[s.type]||"📄"}</span>
         <div class="tsp-src-body">
           <div class="tsp-src-title">${esc(s.title||"")}</div>
-          <div class="tsp-src-pub">${esc(s.publisher||"")}${_yr(s.url)?` <span style="display:inline-block;font-size:8px;font-weight:700;padding:1px 4px;border-radius:3px;background:rgba(108,99,255,.2);color:#a0a0ff;margin-left:4px">${_yr(s.url)}</span>`:""}</div>
+          <div class="tsp-src-pub">${esc(s.publisher||"")}${_yr(s.url)?` <span style="display:inline-block;font-size:8px;font-weight:700;padding:1px 4px;border-radius:3px;background:rgba(108,99,255,.2);color:#a0a0ff;margin-left:4px">${_yr(s.url)}</span>`:""}${_cred(s.url)}</div>
           ${s.snippet?`<div class="tsp-src-snip">${esc(s.snippet.slice(0,100))}…</div>`:""}
         </div></a>`).join(""):"";
 
@@ -465,6 +467,52 @@ function _maybeAutoScan() {
       }
     });
   } catch(e) {}
+}
+_initYouTube();
+
+// ── YouTube: inject "Check claims" button into video description ──
+function _initYouTube(){
+  if(!/^www\.youtube\.com$/.test(location.hostname))return;
+  _tryInjectYTButton();
+  // YouTube is a SPA — watch for navigation changes
+  const obs=new MutationObserver(()=>_tryInjectYTButton());
+  obs.observe(document.body,{childList:true,subtree:true});
+}
+
+let _ytBtnInjected=false;
+function _tryInjectYTButton(){
+  if(_ytBtnInjected)return;
+  const desc=document.querySelector('#description-inner') || document.querySelector('#description .content') || document.querySelector('ytd-expander#description');
+  if(!desc)return;
+  _ytBtnInjected=true;
+  const btn=document.createElement('button');
+  btn.id='ts-yt-btn';
+  btn.textContent='🔍 TruthScore: Check claims';
+  btn.style.cssText='margin-top:10px;padding:6px 14px;background:#6c63ff;color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;display:block';
+  btn.addEventListener('click',async()=>{
+    btn.disabled=true;btn.textContent='⏳ Checking…';
+    try{
+      const title=(document.querySelector('h1.ytd-watch-metadata yt-formatted-string')||document.querySelector('h1.title')||{}).textContent||'';
+      const descText=(desc.textContent||'').slice(0,3000);
+      const combined=(title+'\n'+descText).trim();
+      if(combined.length<30){btn.textContent='⚠️ No text found';return;}
+      const settings=await chrome.storage.sync.get('backendUrl').catch(()=>({}));
+      const base=(settings&&settings.backendUrl)||'http://localhost:8000';
+      const r=await fetch(`${base}/analyze-text`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:combined.slice(0,3000)})});
+      if(!r.ok)throw new Error(await r.text());
+      const d=await r.json();
+      btn.textContent=`✅ Done — ${d.results?.length||0} claims checked`;
+      // Re-use the existing scan panel injection mechanism
+      const p=_createPanel(combined);
+      document.body.appendChild(p);
+      showResult(p,combined,d);
+      p.scrollIntoView({behavior:'smooth',block:'center'});
+    }catch(e){
+      btn.textContent=`⚠️ ${e.message||'Error'}`;
+      btn.disabled=false;
+    }
+  });
+  desc.insertAdjacentElement('afterend',btn);
 }
 
 function esc(t){return String(t==null?"":t).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}

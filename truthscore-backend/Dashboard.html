@@ -361,6 +361,8 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
     <div class="udrop" id="userDropdown">
       <div class="udrop-menu" onclick="event.stopPropagation()">
         <div class="umitem" onclick="document.getElementById('userDropdown').classList.remove('open');showHistory()" data-i18n="myChecks">🕑 My checks</div>
+        <div class="umitem" onclick="document.getElementById('userDropdown').classList.remove('open');openWatched()">🔔 Watched claims</div>
+        <div class="umitem" onclick="document.getElementById('userDropdown').classList.remove('open');openApiKeys()">🔑 API Keys</div>
         <div class="umitem" onclick="document.getElementById('userDropdown').classList.remove('open');showPricing()" data-i18n="upgrade">⭐ Upgrade plan</div>
         <div class="umitem" onclick="document.getElementById('userDropdown').classList.remove('open');openBillingPortal()" data-i18n="billing">💳 Billing</div>
         <div class="umdiv"></div>
@@ -522,6 +524,35 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
       <span id="batchStatus" style="font-size:12px;color:var(--text2)"></span>
     </div>
     <div id="batchResults" style="margin-top:16px"></div>
+  </div>
+</div>
+
+<div class="overlay" id="watchedOverlay" onmousedown="if(event.target===this)closeWatched()">
+  <div class="modal" style="max-width:600px;width:100%">
+    <button class="modal-x" onclick="closeWatched()">✕</button>
+    <div class="modal-title">🔔 Watched Claims</div>
+    <div style="font-size:13px;color:var(--text2);margin-bottom:14px">Claims you're monitoring for verdict changes.</div>
+    <div id="watchedList" style="display:flex;flex-direction:column;gap:8px;max-height:400px;overflow-y:auto"></div>
+  </div>
+</div>
+
+<div class="overlay" id="apiKeysOverlay" onmousedown="if(event.target===this)closeApiKeys()">
+  <div class="modal" style="max-width:640px;width:100%">
+    <button class="modal-x" onclick="closeApiKeys()">✕</button>
+    <div class="modal-title">🔑 API Keys</div>
+    <div style="font-size:13px;color:var(--text2);margin-bottom:14px">Use API keys to call TruthScore from your own apps. Include <code style="background:rgba(255,255,255,.08);padding:1px 6px;border-radius:4px;font-size:12px">X-API-Key: ts_sk_...</code> in request headers.</div>
+    <div style="display:flex;gap:8px;margin-bottom:16px">
+      <input id="newKeyName" class="finput" placeholder="Key name (e.g. My App)" style="flex:1;padding:8px 12px;font-size:13px">
+      <button class="form-btn" onclick="createApiKey()" style="white-space:nowrap">+ Create key</button>
+    </div>
+    <div id="apiKeysList" style="display:flex;flex-direction:column;gap:8px;max-height:360px;overflow-y:auto"></div>
+    <div id="newKeyReveal" style="display:none;margin-top:14px;padding:12px 14px;border-radius:10px;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.3)">
+      <div style="font-size:11px;color:#10b981;font-weight:700;margin-bottom:6px">✅ Key created — copy it now, it won't be shown again:</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <code id="newKeyValue" style="font-size:12px;color:#e5e7eb;flex:1;word-break:break-all;background:rgba(255,255,255,.05);padding:6px 10px;border-radius:6px"></code>
+        <button class="fbbtn" onclick="copyNewKey()" style="white-space:nowrap">📋 Copy</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -706,6 +737,42 @@ function applyI18n(){
 }
 document.addEventListener('DOMContentLoaded',applyI18n);
 const SRC_ICONS={web:'🌐',wikipedia:'📖',wikidata:'🗄️',academic:'🎓',news:'📰',factcheck:'🔎'};
+const DOMAIN_CRED={
+  'reuters.com':{bias:'Center',score:97},'apnews.com':{bias:'Center',score:98},
+  'bbc.com':{bias:'Center',score:94},'bbc.co.uk':{bias:'Center',score:94},
+  'nytimes.com':{bias:'Center-Left',score:90},'washingtonpost.com':{bias:'Center-Left',score:88},
+  'theguardian.com':{bias:'Left-Center',score:87},'foxnews.com':{bias:'Right',score:61},
+  'cnn.com':{bias:'Left-Center',score:80},'nbcnews.com':{bias:'Left-Center',score:83},
+  'abcnews.go.com':{bias:'Left-Center',score:85},'cbsnews.com':{bias:'Left-Center',score:84},
+  'usatoday.com':{bias:'Center',score:87},'politico.com':{bias:'Center',score:86},
+  'thehill.com':{bias:'Center',score:85},'nature.com':{bias:'Scientific',score:99},
+  'science.org':{bias:'Scientific',score:99},'pubmed.ncbi.nlm.nih.gov':{bias:'Scientific',score:99},
+  'ncbi.nlm.nih.gov':{bias:'Scientific',score:99},'scholar.google.com':{bias:'Academic',score:96},
+  'wikipedia.org':{bias:'Neutral',score:78},'snopes.com':{bias:'Fact-Check',score:91},
+  'politifact.com':{bias:'Fact-Check',score:90},'factcheck.org':{bias:'Fact-Check',score:92},
+  'fullfact.org':{bias:'Fact-Check',score:93},'who.int':{bias:'Official',score:92},
+  'cdc.gov':{bias:'Official',score:93},'nih.gov':{bias:'Official',score:95},
+  'ec.europa.eu':{bias:'Official',score:88},'un.org':{bias:'Official',score:85},
+  'breitbart.com':{bias:'Right',score:42},'infowars.com':{bias:'Conspiracy',score:8},
+  'rt.com':{bias:'State Media',score:22},'sputniknews.com':{bias:'State Media',score:18},
+  'xinhuanet.com':{bias:'State Media',score:25},'thedailywire.com':{bias:'Right',score:57},
+  'huffpost.com':{bias:'Left',score:65},'vox.com':{bias:'Left-Center',score:75},
+  'economist.com':{bias:'Center',score:93},'ft.com':{bias:'Center',score:93},
+  'wsj.com':{bias:'Center-Right',score:88},'bloomberg.com':{bias:'Center',score:92},
+  'forbes.com':{bias:'Center-Right',score:82},'digi24.ro':{bias:'Center',score:82},
+  'g4media.ro':{bias:'Center-Left',score:85},'hotnews.ro':{bias:'Center',score:80},
+  'mediafax.ro':{bias:'Center',score:79},'antena3.ro':{bias:'Right',score:48},
+};
+function credOf(url){
+  try{const d=new URL(url||'').hostname.replace(/^www\./,'');
+    return DOMAIN_CRED[d]||null;}catch(e){return null;}
+}
+function credBadge(url){
+  const c=credOf(url);if(!c)return '';
+  const col=c.score>=85?'rgba(16,185,129,.2)':c.score>=60?'rgba(245,158,11,.2)':'rgba(239,68,68,.2)';
+  const tcol=c.score>=85?'#10b981':c.score>=60?'#f59e0b':'#ef4444';
+  return `<span style="display:inline-flex;align-items:center;gap:3px;font-size:8.5px;font-weight:700;padding:1px 5px;border-radius:4px;background:${col};color:${tcol};margin-left:5px;vertical-align:middle" title="${c.bias} · ${c.score}/100 reliability">${c.score}</span>`;
+}
 const TOPIC_ICONS={medical:'🏥',biology:'🧬',chemistry:'⚗️',physics:'⚛️',astronomy:'🌌',mathematics:'📐',logic:'🔣',cs_tech:'💻',engineering:'⚙️',geography:'🌍',history:'📜',literature:'📚',art:'🎨',sports:'⚽',economics:'💰',business:'💼',climate:'🌡️',politics:'🏛️',sociology:'👥',psychology:'🧠',philosophy:'💭',ethics:'⚖️',religion:'✝️',nutrition:'🥗',news:'📰',general:'🔍'};
 const TOPIC_LABELS={medical:'Medicine',biology:'Biology',chemistry:'Chemistry',physics:'Physics',astronomy:'Astronomy',mathematics:'Mathematics',logic:'Logic',cs_tech:'Computer Science',engineering:'Engineering',geography:'Geography',history:'History',literature:'Literature',art:'Art',sports:'Sports',economics:'Economics',business:'Business',climate:'Climate',politics:'Politics',sociology:'Sociology',psychology:'Psychology',philosophy:'Philosophy',ethics:'Ethics',religion:'Religion',nutrition:'Nutrition',news:'News',general:'General'};
 const EXAMPLES=['Vaccines cause autism.','Romania joined the EU in 2007.','The Great Wall of China is visible from space.','The angles of a triangle sum to 180°.','The number π is irrational.','Pure water has a pH of 7 at 25°C.','Shakespeare wrote Hamlet.','CO2 contributes to global warming.'];
@@ -1224,6 +1291,113 @@ function openBatch(){
   document.getElementById('batchOverlay').className='overlay show';
 }
 function closeBatch(){document.getElementById('batchOverlay').className='overlay';}
+
+// ── Watch This Claim ────────────────────────────────────────────
+let _watchedId=null;
+async function toggleWatch(d){
+  if(!currentUser){showAuth('login');return;}
+  const btn=document.getElementById('watchBtn');
+  const panel=document.getElementById('watchPanel');
+  if(_watchedId){
+    try{
+      await fetch(`${API}/watch/${_watchedId}`,{method:'DELETE',headers:{'Authorization':'Bearer '+token()}});
+    }catch(e){}
+    _watchedId=null;
+    if(btn){btn.textContent='🔔';btn.style.color='';}
+    if(panel)panel.style.display='none';
+    toast('Unwatched','ok');
+    return;
+  }
+  try{
+    const r=await fetch(`${API}/watch`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token()},body:JSON.stringify({claim:(d&&d.claim)||document.getElementById('claimInput').value.trim(),verdict:(d&&d.verdict)||'',score:(d&&d.score)||50})});
+    const j=await r.json();
+    _watchedId=j.id||null;
+    if(btn){btn.textContent='🔕';btn.style.color='#fbbf24';}
+    if(panel)panel.style.display='';
+    toast(j.already_watching?'Already watching':'Now watching 🔔','ok');
+  }catch(e){toast('Watch failed: '+e.message,'err');}
+}
+function openWatched(){
+  if(!currentUser){showAuth('login');return;}
+  document.getElementById('watchedOverlay').className='overlay show';
+  loadWatched();
+}
+function closeWatched(){document.getElementById('watchedOverlay').className='overlay';}
+async function loadWatched(){
+  const list=document.getElementById('watchedList');
+  list.innerHTML='<div style="color:var(--text2);font-size:13px">Loading…</div>';
+  try{
+    const r=await fetch(`${API}/watch`,{headers:{'Authorization':'Bearer '+token()}});
+    const j=await r.json();
+    if(!j.items||!j.items.length){list.innerHTML='<div style="color:var(--text2);font-size:13px;padding:10px 0">No watched claims yet. Click 🔔 on any result to watch it.</div>';return;}
+    list.innerHTML=j.items.map(w=>`
+      <div style="padding:10px 12px;border-radius:8px;border:1px solid var(--border2);display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;color:var(--text);line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(w.claim||'')}</div>
+          <div style="font-size:11px;color:var(--text2);margin-top:3px">Last: <span style="color:${w.last_verdict==='TRUE'?'#10b981':w.last_verdict==='FALSE'?'#ef4444':'#f59e0b'}">${w.last_verdict||'?'}</span> · ${w.last_score||0}/100</div>
+        </div>
+        <button class="fbbtn" style="font-size:11px;flex-shrink:0" onclick="unwatchClaim('${w.id}',this)">✕</button>
+      </div>`).join('');
+  }catch(e){list.innerHTML=`<div style="color:var(--red);font-size:13px">${esc(e.message)}</div>`;}
+}
+async function unwatchClaim(id,btn){
+  try{
+    await fetch(`${API}/watch/${id}`,{method:'DELETE',headers:{'Authorization':'Bearer '+token()}});
+    btn.closest('div[style]').remove();
+  }catch(e){toast('Error: '+e.message,'err');}
+}
+
+// ── API Keys ────────────────────────────────────────────────────
+function openApiKeys(){
+  if(!currentUser){showAuth('login');return;}
+  document.getElementById('apiKeysOverlay').className='overlay show';
+  document.getElementById('newKeyReveal').style.display='none';
+  loadApiKeys();
+}
+function closeApiKeys(){document.getElementById('apiKeysOverlay').className='overlay';}
+async function loadApiKeys(){
+  const list=document.getElementById('apiKeysList');
+  list.innerHTML='<div style="color:var(--text2);font-size:13px">Loading…</div>';
+  try{
+    const r=await fetch(`${API}/api-keys`,{headers:{'Authorization':'Bearer '+token()}});
+    const j=await r.json();
+    const keys=j.keys||[];
+    if(!keys.length){list.innerHTML='<div style="color:var(--text2);font-size:13px;padding:10px 0">No API keys yet.</div>';return;}
+    list.innerHTML=keys.map(k=>`
+      <div style="padding:10px 12px;border-radius:8px;border:1px solid var(--border2);display:flex;justify-content:space-between;align-items:center;gap:10px">
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;color:var(--text);font-weight:600">${esc(k.name||'Key')}</div>
+          <div style="font-size:11px;color:var(--text2);font-family:monospace;margin-top:3px">${esc(k.key_prefix||'')}… · ${k.use_count||0} calls</div>
+        </div>
+        <button class="fbbtn" style="font-size:11px;color:var(--red);flex-shrink:0" onclick="revokeApiKey('${k.id}',this)">Revoke</button>
+      </div>`).join('');
+  }catch(e){list.innerHTML=`<div style="color:var(--red);font-size:13px">${esc(e.message)}</div>`;}
+}
+async function createApiKey(){
+  const name=(document.getElementById('newKeyName').value||'').trim()||'My App';
+  try{
+    const r=await fetch(`${API}/api-keys`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token()},body:JSON.stringify({name})});
+    if(!r.ok)throw new Error(await r.text());
+    const j=await r.json();
+    const reveal=document.getElementById('newKeyReveal');
+    document.getElementById('newKeyValue').textContent=j.key||'';
+    reveal.style.display='';
+    document.getElementById('newKeyName').value='';
+    loadApiKeys();
+  }catch(e){toast('Error: '+e.message,'err');}
+}
+async function revokeApiKey(id,btn){
+  if(!confirm('Revoke this API key? Apps using it will stop working.'))return;
+  try{
+    await fetch(`${API}/api-keys/${id}`,{method:'DELETE',headers:{'Authorization':'Bearer '+token()}});
+    btn.closest('div[style]').remove();
+    toast('Key revoked','ok');
+  }catch(e){toast('Error: '+e.message,'err');}
+}
+function copyNewKey(){
+  const v=document.getElementById('newKeyValue').textContent;
+  navigator.clipboard&&navigator.clipboard.writeText(v).then(()=>toast('Copied!','ok')).catch(()=>prompt('Copy key:',v));
+}
 window._lastBatchResults=[];
 async function runBatch(){
   const raw=document.getElementById('batchInput').value;
@@ -1356,6 +1530,7 @@ function renderScore(d){
       <button class="fbbtn" id="fbN">👎</button>
       <button class="fbbtn" id="shareBtn" title="${LANG==='ro'?'Copiază linkul':'Copy share link'}">🔗 ${LANG==='ro'?'Distribuie':'Share'}</button>
       <button class="fbbtn" id="steelManBtn" title="${LANG==='ro'?'Contraargument puternic':'Strongest counter-argument'}" onclick="openSteelMan()">🛡️</button>
+      <button class="fbbtn" id="watchBtn" title="${LANG==='ro'?'Urmărește afirmația':'Watch this claim'}" onclick="toggleWatch(d)">🔔</button>
       ${pdfBtn}
     </div>
     <div class="fb-note-area" id="fbNote" style="display:none">
@@ -1372,6 +1547,10 @@ function renderScore(d){
         <button style="background:none;border:none;color:var(--text2);cursor:pointer;font-size:14px;line-height:1" onclick="document.getElementById('steelManPanel').style.display='none'">✕</button>
       </div>
       <div id="steelManBody" style="font-size:13px;color:var(--text2);line-height:1.7"></div>
+    </div>
+    <div id="watchPanel" style="display:none;margin-top:12px;padding:10px 14px;border-radius:10px;background:rgba(250,204,21,.06);border:1px solid rgba(250,204,21,.22)">
+      <div style="font-size:12px;font-weight:700;color:#fbbf24">🔔 ${LANG==='ro'?'Afirmație urmărită':'Claim Watched'}</div>
+      <div style="font-size:11px;color:var(--text2);margin-top:4px">${LANG==='ro'?'Vei fi notificat dacă verdictul se schimbă.':'You\'ll be notified if the verdict changes.'}</div>
     </div>`;
   setTimeout(()=>{const c=document.getElementById('rc');if(c)c.style.strokeDashoffset=offset;},80);
   document.getElementById('fbY').onclick=()=>sendFb(true,d);
@@ -1402,7 +1581,7 @@ function renderSources(d){
         <span class="src-ico">${SRC_ICONS[s.type]||'📄'}</span>
         <div class="src-body">
           <div class="src-title">${esc(s.title||'')}</div>
-          <div class="src-pub">${esc(s.publisher||'')}${yearOf(s.url)?`<span class="src-year">${yearOf(s.url)}</span>`:''}</div>
+          <div class="src-pub">${esc(s.publisher||'')}${yearOf(s.url)?`<span class="src-year">${yearOf(s.url)}</span>`:''} ${credBadge(s.url)}</div>
           ${s.snippet?`<div class="src-snip">${esc(s.snippet.slice(0,160))}</div>`:''}
           ${claimBadge(s)}
         </div>
