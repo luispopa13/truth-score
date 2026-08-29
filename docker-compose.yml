@@ -1,7 +1,8 @@
-# TruthScore Backend + Redis — local dev stack
+# TruthScore Backend + Redis + Ranking Sidecar — local dev stack
 # Usage:  docker compose up --build
-# Backend: http://localhost:8000
-# Redis:   localhost:6379
+# Backend:         http://localhost:8000
+# Ranking sidecar: http://localhost:8001  (internal: http://ranking:8001)
+# Redis:           localhost:6379
 
 services:
   redis:
@@ -14,6 +15,24 @@ services:
     volumes:
       - redis_data:/data
 
+  ranking:
+    build:
+      context: ./truthscore-backend
+    container_name: truthscore-ranking
+    command: >
+      uvicorn ranking_service:app
+      --host 0.0.0.0 --port 8001
+      --workers 1
+    ports:
+      - "8001:8001"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
   backend:
     build:
       context: ./truthscore-backend
@@ -23,10 +42,12 @@ services:
     environment:
       - REDIS_URL=redis://redis:6379/0
       - REDIS_ENABLED=true
+      - RANKING_SERVICE_URL=http://ranking:8001
     ports:
       - "8000:8000"
     depends_on:
       - redis
+      - ranking
     restart: unless-stopped
 
 volumes:

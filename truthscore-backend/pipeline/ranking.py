@@ -2,6 +2,10 @@
 TruthScore -- Embedding Filter + Cross-encoder Reranking
 Two-stage ranking: cosine similarity (broad) -> cross-encoder (precise).
 Uses LOCAL sentence-transformers models (no HF API calls needed).
+
+When RANKING_SERVICE_URL is set (e.g. http://ranking:8001 in docker-compose),
+the heavy torch work is delegated to the sidecar so all main-app workers share
+a single model pool. Falls back to in-process silently on any HTTP error.
 """
 from pathlib import Path
 from config import *
@@ -10,6 +14,24 @@ from pipeline.helpers import get_source_recency_weight
 
 # Absolute path to models dir — works regardless of working directory
 _MODELS_DIR = Path(__file__).parent.parent / "models"
+
+# Optional sidecar URL — set RANKING_SERVICE_URL=http://ranking:8001 in prod
+_RANKING_URL = os.getenv("RANKING_SERVICE_URL", "").rstrip("/")
+
+
+async def _sidecar_rank(endpoint: str, payload: dict) -> list | None:
+    """POST to ranking sidecar; return sources list or None on any failure."""
+    if not _RANKING_URL:
+        return None
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            r = await client.post(f"{_RANKING_URL}/{endpoint}", json=payload)
+            if r.status_code == 200:
+                return r.json().get("sources")
+    except Exception as e:
+        print(f"  [RANKING] Sidecar {endpoint} failed ({e}) — falling back in-process")
+    return None
 
 _cross_encoder     = None
 _embed_model       = None
@@ -66,10 +88,26 @@ async def rerank_with_crossencoder(
 ) -> list:
     """
     Cross-encoder reranking: scores each (claim, evidence) pair jointly.
-    Falls back to original order if model unavailable.
+    Tries ranking sidecar first (shared model pool), falls back in-process.
     """
     if not sources:
         return sources
+
+    sidecar_result = await _sidecar_rank("rerank", {
+        "claim": claim,
+        "sources": [s.model_dump() if hasattr(s, "model_dump") else dict(s) for s in sources],
+        "top_k": top_k,
+    })
+    if sidecar_result is not None:
+        from models import Source
+        result = []
+        for d in sidecar_result:
+            try:
+                src = Source(**{k: v for k, v in d.items() if k in Source.model_fields})
+            except Exception:
+                src = sources[0].__class__(**d) if sources else Source(**d)
+            result.append(src)
+        return result
 
     encoder = _get_cross_encoder()
     if encoder is None:
@@ -115,12 +153,29 @@ async def rank_by_relevance(claim: str, evidence: list) -> list:
     """
     Rank evidence by semantic similarity using LOCAL sentence-transformers.
     No HuggingFace API calls — uses downloaded models directly.
-    Falls back to keyword scoring if models unavailable.
+    Tries ranking sidecar first; falls back to keyword scoring if unavailable.
     """
     if not evidence:
         return evidence
 
-    lang  = "ro" if any(c in RO_CHARS for c in claim) else "en"
+    lang = "ro" if any(c in RO_CHARS for c in claim) else "en"
+
+    sidecar_result = await _sidecar_rank("embed", {
+        "claim": claim,
+        "sources": [s.model_dump() if hasattr(s, "model_dump") else dict(s) for s in evidence],
+        "lang": lang,
+    })
+    if sidecar_result is not None:
+        from models import Source
+        result = []
+        for d in sidecar_result:
+            try:
+                src = Source(**{k: v for k, v in d.items() if k in Source.model_fields})
+            except Exception:
+                src = evidence[0].__class__(**d) if evidence else Source(**d)
+            result.append(src)
+        return result
+
     model = _get_embed_model(multilingual=(lang == "ro"))
 
     if model is not None:
