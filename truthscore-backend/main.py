@@ -2182,20 +2182,24 @@ async def widget(user_key: str = ""):
 # ── Temporal Truth Drift ──────────────────────────────────────────────────────
 
 @app.get("/claims/timeline")
-async def get_claim_timeline(claim: str, db=Depends(_get_db)):
+async def get_claim_timeline(claim: str, current_user=Depends(get_current_user)):
     """Get the full truth-over-time history for a claim."""
+    from auth import _get_db
     from pipeline.temporal_drift import get_drift_summary
     if not claim or len(claim) < 5:
         raise HTTPException(status_code=422, detail="claim required")
+    db = _get_db()
     summary = await get_drift_summary(db, claim)
     if summary is None:
         return {"has_drift": False, "total_checks": 0, "timeline": []}
     return summary
 
 
-@app.post("/temporal-drift/scan", dependencies=[Depends(require_admin)])
-async def run_drift_scan(db=Depends(_get_db)):
+@app.post("/temporal-drift/scan")
+async def run_drift_scan(current_user=Depends(require_admin)):
     """Re-verify all watched claims older than 30 days. Admin only."""
+    from auth import _get_db
     from pipeline.temporal_drift import scan_watched_for_drift
+    db = _get_db()
     drifted = await scan_watched_for_drift(db)
     return {"drifted_count": len(drifted), "drifted": drifted[:20]}
