@@ -339,6 +339,7 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
     </div>
     <div class="udrop" id="userDropdown">
       <div class="udrop-menu" onclick="event.stopPropagation()">
+        <div class="umitem" onclick="document.getElementById('userDropdown').classList.remove('open');showHistory()" data-i18n="myChecks">🕑 My checks</div>
         <div class="umitem" onclick="document.getElementById('userDropdown').classList.remove('open');showPricing()" data-i18n="upgrade">⭐ Upgrade plan</div>
         <div class="umitem" onclick="document.getElementById('userDropdown').classList.remove('open');openBillingPortal()" data-i18n="billing">💳 Billing</div>
         <div class="umdiv"></div>
@@ -453,6 +454,15 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
   </div>
 </div>
 
+<div class="overlay" id="historyOverlay" onmousedown="if(event.target===this)closeHistory()">
+  <div class="modal" style="max-width:640px">
+    <button class="modal-x" onclick="closeHistory()">✕</button>
+    <div class="modal-title" data-i18n="myChecksTitle">Your fact-check history</div>
+    <div class="modal-sub" data-i18n="myChecksSub">Every claim you've checked — permanent, shareable links.</div>
+    <div id="historyBody" style="max-height:60vh;overflow:auto;margin-top:6px"></div>
+  </div>
+</div>
+
 <script>
 // Relative API base -- dashboard.html is served BY the same FastAPI
 // backend (see main.py's "/" route), so fetch() calls resolve against
@@ -488,6 +498,11 @@ const I18N={
     overallVerdict:'Overall verdict', eachClaim:'Each claim',
     login:'Log in', signupFree:'Free account →',
     upgrade:'⭐ Upgrade plan', billing:'💳 Billing', logout:'↩ Log out',
+    myChecks:'🕑 My checks', myChecksTitle:'Your fact-check history',
+    myChecksSub:"Every claim you've checked — permanent, shareable links.",
+    myChecksEmpty:'No checks yet. Verify a claim and it will appear here.',
+    myChecksLogin:'Sign in to keep a permanent history of your checks.',
+    myChecksOpen:'Open ↗',
     eyebrow:'🔬 40+ sources · 26 domains',
     heroTitle:'Verify any<br/><em>claim</em> with AI',
     heroSub:'Enter any claim and get an evidence-based verdict from authoritative sources.',
@@ -552,6 +567,11 @@ const I18N={
     overallVerdict:'Verdict general', eachClaim:'Fiecare afirmație',
     login:'Autentificare', signupFree:'Cont gratuit →',
     upgrade:'⭐ Upgrade plan', billing:'💳 Facturare', logout:'↩ Deconectare',
+    myChecks:'🕑 Verificările mele', myChecksTitle:'Istoricul verificărilor tale',
+    myChecksSub:'Fiecare afirmație verificată — linkuri permanente, ușor de distribuit.',
+    myChecksEmpty:'Încă nimic. Verifică o afirmație și va apărea aici.',
+    myChecksLogin:'Autentifică-te ca să păstrezi un istoric permanent al verificărilor.',
+    myChecksOpen:'Deschide ↗',
     eyebrow:'🔬 40+ surse · 26 domenii',
     heroTitle:'Verifică orice<br/><em>afirmație</em> cu AI',
     heroSub:'Introdu orice afirmație și primești un verdict bazat pe dovezi din surse autorizate.',
@@ -1399,6 +1419,38 @@ async function renderPlans(){
 }
 function showPricing(){renderPlans();document.getElementById('pricingOverlay').className='overlay show';}
 function closePricing(){document.getElementById('pricingOverlay').className='overlay';}
+function closeHistory(){document.getElementById('historyOverlay').className='overlay';}
+const _HV_COLORS={TRUE:'#22c55e',FALSE:'#ef4444',UNCERTAIN:'#eab308',MIXED:'#eab308'};
+async function showHistory(){
+  const ov=document.getElementById('historyOverlay'), body=document.getElementById('historyBody');
+  ov.className='overlay show';
+  if(!token()){body.innerHTML=`<div style="color:var(--text2);font-size:14px;padding:18px 4px">${t('myChecksLogin')}</div>`;return;}
+  body.innerHTML=`<div style="color:var(--text2);font-size:14px;padding:18px 4px">…</div>`;
+  try{
+    const r=await fetch(`${API}/me/history?limit=50`,{headers:{'Authorization':'Bearer '+token()}});
+    if(!r.ok){body.innerHTML=`<div style="color:var(--text2);font-size:14px;padding:18px 4px">${t('myChecksEmpty')}</div>`;return;}
+    const d=await r.json();
+    const items=(d&&d.items)||[];
+    if(!items.length){body.innerHTML=`<div style="color:var(--text2);font-size:14px;padding:18px 4px">${t('myChecksEmpty')}</div>`;return;}
+    body.innerHTML=items.map(it=>{
+      const v=(it.verdict||'UNCERTAIN').toUpperCase();
+      const col=_HV_COLORS[v]||_HV_COLORS.UNCERTAIN;
+      const lbl=v==='TRUE'?t('TRUE'):v==='FALSE'?t('FALSE'):v==='MIXED'?t('MIXED'):t('UNCERTAIN');
+      const sc=(it.score==null?'':Math.round(it.score));
+      const when=it.created_at?String(it.created_at).slice(0,10):'';
+      return `<div style="display:flex;align-items:center;gap:12px;padding:11px 4px;border-bottom:1px solid var(--border)">
+        <span style="flex-shrink:0;width:8px;height:8px;border-radius:50%;background:${col}"></span>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:14px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(it.claim)}</div>
+          <div style="font-size:11px;color:var(--text2);margin-top:2px">
+            <span style="color:${col};font-weight:700">${esc(lbl)}</span>${sc!==''?' · '+sc+'/100':''}${when?' · '+when:''}
+          </div>
+        </div>
+        <a href="${esc(it.url)}" target="_blank" rel="noopener" style="flex-shrink:0;font-size:12px;color:var(--accent,#7c6cff);text-decoration:none;font-weight:600">${t('myChecksOpen')}</a>
+      </div>`;
+    }).join('');
+  }catch(e){body.innerHTML=`<div style="color:var(--text2);font-size:14px;padding:18px 4px">${t('myChecksEmpty')}</div>`;}
+}
 async function checkout(plan){
   if(!token()){showAuth('register');closePricing();return;}
   try{
