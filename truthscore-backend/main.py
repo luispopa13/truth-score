@@ -287,8 +287,12 @@ def _set_ads_and_quota_headers(response, user, quota_left=None):
     """
     ads_on = (os.getenv("ADS_ENABLED", "true").lower() in ("1", "true", "yes")
               and bool(os.getenv("ADSENSE_CLIENT", "").strip()))
+    # House ads (internal Upgrade-to-Pro promo) have no external dependency, so
+    # free users should see the ad zone even before AdSense is configured; the
+    # frontend picks live-vs-house. Keep it off for paid users.
+    house_on = os.getenv("HOUSE_ADS_ENABLED", "true").lower() in ("1", "true", "yes")
     is_free = (not user) or user.get("plan", "free") == "free"
-    response.headers["X-TruthScore-Show-Ads"] = "1" if (ads_on and is_free) else "0"
+    response.headers["X-TruthScore-Show-Ads"] = "1" if ((ads_on or house_on) and is_free) else "0"
     if quota_left is not None:
         response.headers["X-TruthScore-Quota-Left"] = str(max(0, int(quota_left)))
 
@@ -355,7 +359,93 @@ async def verify(req: VerifyRequest, response: Response,
 
 
 
-@app.post("/analyze-text", response_model=TextAnalysisResponse)
+@app.post("/verify-stream")
+async def verify_stream(req: VerifyRequest, request: Request,
+                        user: dict = Depends(get_current_user)):
+    """Server-Sent Events variant of /verify.
+
+    Emits real-time progress stages while the pipeline runs, then a final
+    `result` event carrying the full VerifyResponse. Quota is enforced up-front
+    so a rejection is a normal HTTP 429 (not an SSE frame). Clients that can't
+    read SSE should keep using POST /verify — this is purely a UX enhancement.
+    """
+    import asyncio as _asyncio, json as _json
+    from fastapi.responses import StreamingResponse
+
+    client_ip = _client_ip(request)
+    rate_info = await enforce_quota(user, req.text, client_ip=client_ip, fp=_client_fp(request))
+    eco = bool(rate_info.get("eco")) if rate_info else False
+
+    # Compute monetization signals now (can't set headers once streaming starts).
+    ads_on = (os.getenv("ADS_ENABLED", "true").lower() in ("1", "true", "yes")
+              and bool(os.getenv("ADSENSE_CLIENT", "").strip()))
+    house_on = os.getenv("HOUSE_ADS_ENABLED", "true").lower() in ("1", "true", "yes")
+    is_free = (not user) or user.get("plan", "free") == "free"
+    show_ads = bool((ads_on or house_on) and is_free)
+    quota_left = None
+    if rate_info:
+        try:
+            quota_left = max(0, int(rate_info.get("limit", 0)) - int(rate_info.get("used", 0)))
+        except Exception:
+            quota_left = None
+
+    async def _sse():
+        def _evt(obj):
+            return f"data: {_json.dumps(obj, ensure_ascii=False)}\n\n"
+        start = time.perf_counter()
+        task = _asyncio.create_task(verify_claim(req, eco=eco))
+        stages = ["classify", "search", "compare", "score"]
+        yield _evt({"stage": stages[0]})
+        idx = 1
+        # Advance synthetic stages while the pipeline runs; the last stage holds
+        # until the real result is ready. Heartbeats keep proxies from buffering.
+        while not task.done():
+            done, _pending = await _asyncio.wait({task}, timeout=2.5)
+            if not done:
+                if idx < len(stages):
+                    yield _evt({"stage": stages[idx]}); idx += 1
+                else:
+                    yield _evt({"heartbeat": True})
+        try:
+            result = await task
+        except HTTPException as he:
+            yield _evt({"event": "error", "detail": str(he.detail), "status": he.status_code}); return
+        except Exception as e:
+            yield _evt({"event": "error", "detail": str(e)[:200]}); return
+
+        duration_ms = round((time.perf_counter() - start) * 1000, 1)
+        try:
+            interaction_id = await log_interaction({
+                "claim":               getattr(result, "claim", req.text)[:500],
+                "topic":               getattr(result, "topic", None),
+                "verdict":             getattr(result, "verdict", None),
+                "score":               getattr(result, "score", None),
+                "confidence":          getattr(result, "confidence", None),
+                "evidence_count":      getattr(result, "evidence_count", None),
+                "cached":              getattr(result, "cached", False),
+                "duration_ms":         duration_ms,
+                "user_id":             user.get("id") if user else None,
+                "user_email":          user.get("email") if user else None,
+                "user_plan":           (user.get("plan") if user else "anonymous"),
+            })
+        except Exception as e:
+            interaction_id = ""
+            print(f"[CASE-STUDY] Logging skipped (non-fatal): {e}")
+
+        result.models_used = []
+        payload = result.model_dump() if hasattr(result, "model_dump") else dict(result)
+        payload["latency_ms"] = duration_ms
+        if interaction_id:
+            payload["_interactionId"] = interaction_id
+        payload["show_ads"] = show_ads
+        if quota_left is not None:
+            payload["quota_left"] = quota_left
+        yield _evt({"event": "result", "data": payload})
+
+    return StreamingResponse(_sse(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no",
+                                      "Connection": "keep-alive"})
 async def analyze_text(req: VerifyRequest, response: Response,
                        request: Request,
                        user: dict = Depends(get_current_user)):
@@ -650,12 +740,22 @@ async def site_config():
     """Public, non-sensitive frontend configuration."""
     adsense_client = os.getenv("ADSENSE_CLIENT", "").strip()
     ads_flag = os.getenv("ADS_ENABLED", "true").lower() in ("1", "true", "yes")
+    try:
+        from utils.abuse import ANON_DAILY_CAP as _anon_cap
+    except Exception:
+        _anon_cap = 5
     return {
         "adsense_client": adsense_client,
         # Ads are only truly enabled when a publisher id is configured;
         # without one there is nothing to serve, so report False in dev.
         "ads_enabled": bool(ads_flag and adsense_client),
         "google_client_id": os.getenv("GOOGLE_CLIENT_ID", ""),
+        # Single source of truth for the anonymous daily cap so the frontend
+        # badge never drifts from the server's real limit.
+        "anon_limit": _anon_cap,
+        # House ad (internal "Upgrade to Pro") shows to free/anon users even
+        # when AdSense has no inventory yet — always on unless explicitly off.
+        "house_ads_enabled": os.getenv("HOUSE_ADS_ENABLED", "true").lower() in ("1", "true", "yes"),
     }
 
 

@@ -101,7 +101,10 @@ function showLoggedIn(user) {
   const planColor = user.plan === "pro" ? "#818cf8" : user.plan === "enterprise" ? "#f59e0b" : "#8080a8";
   const usageEl = document.getElementById("usageInfo");
   if (usageEl) {
-    usageEl.textContent = t('usageToday', {used: user.used_today||0, limit: user.daily_limit||10});
+    const bonus = user.bonus_today || 0;
+    const limit = (user.daily_limit || 10) + bonus;
+    usageEl.textContent = t('usageToday', {used: user.used_today||0, limit})
+      + (bonus > 0 ? ` (+${bonus}🎁)` : "");
     usageEl.style.display = "block";
   }
   const userInfoEl = document.getElementById("userInfo");
@@ -509,7 +512,15 @@ function submitFeedback(correct) {
     predicted_verdict:currentResult.verdict||"UNCERTAIN",
     predicted_score:currentResult.score||50,
     user_says_correct:correct,source_page:"",
-  }});
+  }}, (res)=>{
+    // Surface the gamified bonus and refresh the usage counter so the extra
+    // check shows up immediately (parity with the dashboard).
+    if (res && res.bonus && res.bonus.granted) {
+      const fi = document.getElementById("footerInfo");
+      if (fi) fi.textContent = t('bonusEarned') || "+1 bonus check! 🎁";
+      initAuth();
+    }
+  });
 }
 
 // ── AI DETECT ─────────────────────────────────────────────────

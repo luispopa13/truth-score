@@ -205,6 +205,7 @@ class UserOut(BaseModel):
     daily_limit: int
     used_today: int
     stripe_customer_id: str = ""
+    bonus_today: int = 0   # extra checks earned today via feedback gamification
 
 class GoogleAuthRequest(BaseModel):
     token: str
@@ -542,6 +543,11 @@ async def _current_daily_used(user) -> int:
 async def get_user_out(user):
     plan_name = user.get("plan", "free")
     plan = PLANS.get(plan_name, PLANS["free"])
+    try:
+        from utils.abuse import get_feedback_bonus
+        bonus = await get_feedback_bonus(str(user["_id"]))
+    except Exception:
+        bonus = 0
     return UserOut(
         id=str(user["_id"]),
         email=user["email"],
@@ -550,6 +556,7 @@ async def get_user_out(user):
         daily_limit=plan["daily_limit"],
         used_today=await _current_daily_used(user),
         stripe_customer_id=user.get("stripe_customer_id", ""),
+        bonus_today=bonus,
     )
 
 

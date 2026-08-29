@@ -32,7 +32,7 @@ const TS_I18N = {
     upgrade: '⭐ Upgrade', openDashboard: 'Open dashboard', logoutTitle: 'Log out',
     footerInfo: '🔬 40+ sources · 26 domains', settings: 'Settings →',
     unlimitedNoBanner: '⚡ Unlimited checks, no banner', proArrow: 'Pro →', quotaLeft: 'Checks left today: {n}',
-    usageToday: '{used}/{limit} today',
+    usageToday: '{used}/{limit} today', bonusEarned: '+1 bonus check! 🎁',
     // runtime / errors
     enterClaim: 'Enter a claim.', selectFirst: 'Select text on the page first.',
     noPageAccess: 'Could not access the page.', backendOffline: 'Backend offline',
@@ -111,7 +111,7 @@ const TS_I18N = {
     upgrade: '⭐ Upgrade', openDashboard: 'Deschide dashboard', logoutTitle: 'Deconectare',
     footerInfo: '🔬 40+ surse · 26 domenii', settings: 'Configurare →',
     unlimitedNoBanner: '⚡ Verificări nelimitate, fără acest banner', proArrow: 'Pro →', quotaLeft: 'Verificări rămase azi: {n}',
-    usageToday: '{used}/{limit} azi',
+    usageToday: '{used}/{limit} azi', bonusEarned: '+1 verificare bonus! 🎁',
     enterClaim: 'Introdu o afirmație.', selectFirst: 'Selectează mai întâi text pe pagină.',
     noPageAccess: 'Nu s-a putut accesa pagina.', backendOffline: 'Backend offline',
     fillAll: 'Completează toate câmpurile', genericError: 'Eroare', unknownError: 'Eroare necunoscută.',

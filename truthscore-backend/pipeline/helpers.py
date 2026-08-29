@@ -225,18 +225,48 @@ def _split_cache_put(key: str, claims: list) -> None:
 
 
 async def split_claims(text: str) -> list[str]:
-    """Cached extraction of up to five self-contained verifiable claims."""
+    """Cached extraction of up to five self-contained verifiable claims.
+
+    Two cache tiers: a cross-worker Redis layer (shared across every uvicorn
+    worker / instance) in front of the process-local memo. Redis is best-effort
+    — any failure silently falls back to the local cache + extraction.
+    """
     clean = " ".join((text or "").split()).strip()
     if not clean:
         return []
-    import hashlib
+    import hashlib, json as _json
     key = hashlib.md5(clean.encode("utf-8", "ignore")).hexdigest()
+
+    # Tier 1: process-local (fastest, no network)
     hit = _split_cache_get(key)
     if hit is not None:
-        print("  [SPLIT] cache HIT — no extraction call")
+        print("  [SPLIT] cache HIT (local) — no extraction call")
         return hit
+
+    # Tier 2: Redis (shared across workers/instances)
+    redis = None
+    rkey = f"ts:split:{key}"
+    try:
+        from utils.redis_client import get_async_redis
+        redis = get_async_redis()
+        if redis:
+            raw = await redis.get(rkey)
+            if raw:
+                claims = _json.loads(raw)
+                if isinstance(claims, list):
+                    _split_cache_put(key, claims)   # warm the local tier
+                    print("  [SPLIT] cache HIT (redis) — no extraction call")
+                    return list(claims)
+    except Exception:
+        redis = None
+
     claims = await _split_claims_uncached(clean)
     _split_cache_put(key, claims)
+    if redis:
+        try:
+            await redis.set(rkey, _json.dumps(claims), ex=_SPLIT_TTL_SECONDS)
+        except Exception:
+            pass
     return claims
 
 

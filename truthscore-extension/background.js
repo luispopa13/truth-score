@@ -201,9 +201,13 @@ async function detectClaims(text) {
 async function submitFeedback(data) {
   const settings = await chrome.storage.sync.get("backendUrl");
   const apiBase  = settings.backendUrl || BACKEND_URL;
+  // Auth headers so logged-in users actually earn the feedback bonus
+  // (the +1 check is keyed on the user id, which needs the token).
+  const headers = { "Content-Type": "application/json" };
+  await applyAuthHeaders(headers);
   const res = await fetch(`${apiBase}/feedback`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify(data),
   });
   if (!res.ok) throw new Error(`Feedback ${res.status}`);

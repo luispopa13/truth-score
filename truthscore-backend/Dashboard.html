@@ -403,6 +403,15 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
   <style>
     .ad-slot{display:none;margin:28px auto 10px;max-width:760px;min-height:104px;text-align:center}
     .ad-slot.on{display:block}
+    .house-ad{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 20px;
+      border:1px solid rgba(91,78,255,.28);border-radius:14px;text-align:left;
+      background:linear-gradient(135deg,rgba(91,78,255,.12),rgba(139,92,246,.08))}
+    .house-ad .ha-txt{display:flex;flex-direction:column;gap:3px}
+    .house-ad .ha-txt strong{font-size:14px;color:#e8e8ff}
+    .house-ad .ha-txt span{font-size:12px;color:#a8a8c8}
+    .house-ad .ha-btn{flex-shrink:0;padding:9px 16px;border:none;border-radius:9px;cursor:pointer;
+      font-weight:600;font-size:12.5px;color:#fff;background:linear-gradient(135deg,#5b4eff,#8b5cf6)}
+    .house-ad .ha-btn:hover{filter:brightness(1.1)}
     .ad-ghost{display:flex;align-items:center;justify-content:center;gap:11px;height:100px;
       border:1.5px dashed rgba(255,255,255,.15);border-radius:14px;background:rgba(255,255,255,.015);
       color:#6a6a92;font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.5px;transition:.18s}
@@ -626,20 +635,37 @@ function anonInc(){localStorage.setItem('ts_anon_used',anonUsed()+1)}
 //              future ad zone is visible without an approved account.
 //   • HIDDEN — production without publisher ID: nothing renders at all.
 let _adsCfg=null;
+function renderHouseAd(slot){
+  // Internal "Upgrade to Pro" promo — always has inventory, so free/anon users
+  // never see an empty ad zone even before AdSense is approved. Zero external
+  // network, policy-safe, and it funnels toward the paid plan.
+  slot.dataset.on='house';
+  slot.classList.add('on');
+  const ro=LANG==='ro';
+  slot.innerHTML=`<div class="house-ad">
+    <div class="ha-txt"><strong>${ro?'Treci pe TruthScore Pro':'Go TruthScore Pro'}</strong>
+    <span>${ro?'Verificări nelimitate, fără reclame, rapoarte PDF.':'Unlimited checks, no ads, PDF reports.'}</span></div>
+    <button class="ha-btn" onclick="showPricing()">${ro?'Vezi planuri':'See plans'}</button>
+  </div>`;
+}
 async function ensureAds(showAds){
   const slot=document.getElementById('adSlot');
   if(!slot||slot.dataset.on)return;
   if(!_adsCfg){try{_adsCfg=await(await fetch(`${API}/site-config`)).json();}catch(e){return;}}
-  if(!showAds||!_adsCfg.ads_enabled)return;
+  // Paid tiers never see this zone at all.
+  if(!showAds)return;
   const client=(_adsCfg.adsense_client||'').trim();
   const isDev=/^(localhost|127\.0\.0\.1)$/.test(location.hostname);
 
-  // DEV preview: show the reserved zone even before AdSense approval.
-  if(!client){
-    if(!isDev)return;
-    slot.dataset.on='ghost';
-    slot.classList.add('on');
-    slot.innerHTML=`<div class="ad-ghost"><span class="tg">T</span>ZONĂ RECLAME · SE ACTIVEAZĂ DUPĂ APROBAREA ADSENSE</div>`;
+  // No live AdSense inventory (disabled or no publisher id): fall back to the
+  // internal house ad for free/anon users when enabled.
+  if(!_adsCfg.ads_enabled||!client){
+    if(_adsCfg.house_ads_enabled!==false){renderHouseAd(slot);return;}
+    // DEV preview: show the reserved zone even before AdSense approval.
+    if(isDev){
+      slot.dataset.on='ghost';slot.classList.add('on');
+      slot.innerHTML=`<div class="ad-ghost"><span class="tg">T</span>ZONĂ RECLAME · SE ACTIVEAZĂ DUPĂ APROBAREA ADSENSE</div>`;
+    }
     return;
   }
 
@@ -655,7 +681,7 @@ async function ensureAds(showAds){
   slot.appendChild(ins);
   try{(window.adsbygoogle=window.adsbygoogle||[]).push({});}catch(e){}
 }
-const ANON_LIMIT=3;
+let ANON_LIMIT=5;  // synced from /site-config (anon_limit) on load — server is source of truth
 
 async function initAuth(){
   const t=token();
@@ -697,8 +723,9 @@ function updateUsageBadge(u){
     return;
   }
   badge.className='usage-pill show';
-  const used=u.used_today||0,lim=u.daily_limit||10;
-  txt.textContent=`${used}/${lim} azi`;
+  const bonus=u.bonus_today||0;
+  const used=u.used_today||0,lim=(u.daily_limit||10)+bonus;
+  txt.textContent=`${used}/${lim} azi`+(bonus>0?` (+${bonus}🎁)`:'');
   dot.className='udot'+(used>=lim?' crit':used>=lim*0.8?' warn':'');
 }
 function toggleUserMenu(e){
@@ -743,6 +770,38 @@ async function getBrowserFingerprint(){
     return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('').slice(0,32);
   }catch(e){return '';}
 }
+async function streamVerify(text,headers){
+  // Consume the SSE progress stream from POST /verify-stream. Drives the live
+  // step UI from real pipeline stages and resolves with the final result object
+  // (same shape as POST /verify). Throws {code:429} on quota, or Error otherwise
+  // so runVerify can fall back to the plain endpoint.
+  const resp=await fetch(`${API}/verify-stream`,{method:'POST',headers,body:JSON.stringify({text})});
+  if(resp.status===429){throw {code:429};}
+  if(!resp.ok||!resp.body)throw new Error(`HTTP ${resp.status}`);
+  const reader=resp.body.getReader(),dec=new TextDecoder();
+  let buf='',result=null,errObj=null;
+  const order=['ls1','ls2','ls3','ls4'],stageIdx={classify:0,search:1,compare:2,score:3};
+  const setStage=k=>{const i=stageIdx[k];if(i==null)return;clearInterval(stepTimer);
+    for(let j=0;j<order.length;j++){const el=document.getElementById(order[j]);if(!el)continue;
+      el.className=j<i?'ltxt done':j===i?'ltxt active':'ltxt';}};
+  while(true){
+    const {done,value}=await reader.read();
+    if(done)break;
+    buf+=dec.decode(value,{stream:true});
+    let nl;
+    while((nl=buf.indexOf('\n\n'))>=0){
+      const raw=buf.slice(0,nl);buf=buf.slice(nl+2);
+      const dl=raw.split('\n').find(l=>l.startsWith('data:'));if(!dl)continue;
+      let obj;try{obj=JSON.parse(dl.slice(5).trim());}catch(_){continue;}
+      if(obj.stage)setStage(obj.stage);
+      else if(obj.event==='result')result=obj.data;
+      else if(obj.event==='error')errObj=obj;
+    }
+  }
+  if(errObj){if(errObj.status===429)throw {code:429};throw new Error(errObj.detail||'stream error');}
+  if(!result)throw new Error('no result from stream');
+  return result;
+}
 async function runVerify(){
   const text=document.getElementById('claimInput').value.trim();
   if(!text){showErr(t('enterClaim'));return;}
@@ -765,20 +824,31 @@ async function runVerify(){
     const fp=await getBrowserFingerprint();
     if(fp)headers['X-Browser-Fp']=fp;
     const isParagraph=text.length>220||((text.match(/[.!?]+(?:\s|$)/g)||[]).length>1);
-    const endpoint=isParagraph?'/analyze-text':'/verify';
-    const r=await fetch(`${API}${endpoint}`,{method:'POST',headers,body:JSON.stringify({text})});
-    if(r.status===429){
-      clearInterval(stepTimer);
-      document.getElementById('vLoad').className='loading';
-      document.getElementById('verifyBtn').disabled=false;
-      document.getElementById('limitBanner').className='limit-banner show';
-      if(currentUser)showPricing();else showAuth('register');
-      return;
+    let d,showAds=false;
+    if(isParagraph){
+      const r=await fetch(`${API}/analyze-text`,{method:'POST',headers,body:JSON.stringify({text})});
+      if(r.status===429)throw {code:429};
+      if(!r.ok)throw new Error(`HTTP ${r.status}: ${await r.text()}`);
+      d=await r.json();
+      d._interactionId=r.headers.get('X-TruthScore-Interaction-Id')||'';
+      showAds=r.headers.get('X-TruthScore-Show-Ads')==='1';
+    }else{
+      try{
+        d=await streamVerify(text,headers);   // live progress via SSE
+        showAds=!!d.show_ads;
+      }catch(se){
+        if(se&&se.code===429)throw se;
+        // SSE unavailable/interrupted — fall back to the plain endpoint so a
+        // proxy that buffers event-streams never breaks verification.
+        const r=await fetch(`${API}/verify`,{method:'POST',headers,body:JSON.stringify({text})});
+        if(r.status===429)throw {code:429};
+        if(!r.ok)throw new Error(`HTTP ${r.status}: ${await r.text()}`);
+        d=await r.json();
+        d._interactionId=r.headers.get('X-TruthScore-Interaction-Id')||'';
+        showAds=r.headers.get('X-TruthScore-Show-Ads')==='1';
+      }
     }
-    if(!r.ok)throw new Error(`HTTP ${r.status}: ${await r.text()}`);
-    const d=await r.json();
-    d._interactionId=r.headers.get('X-TruthScore-Interaction-Id')||'';
-    ensureAds(r.headers.get('X-TruthScore-Show-Ads')==='1');
+    ensureAds(showAds);
     clearInterval(stepTimer);
     document.getElementById('vLoad').className='loading';
     if(!currentUser)anonInc();
@@ -797,7 +867,13 @@ async function runVerify(){
   }catch(e){
     clearInterval(stepTimer);
     document.getElementById('vLoad').className='loading';
-    showErr(e.message.includes('fetch')?t('backendOffline'):e.message);
+    if(e&&e.code===429){
+      document.getElementById('verifyBtn').disabled=false;
+      document.getElementById('limitBanner').className='limit-banner show';
+      if(currentUser)showPricing();else showAuth('register');
+      return;
+    }
+    showErr(e.message&&e.message.includes('fetch')?t('backendOffline'):(e.message||'error'));
   }
   document.getElementById('verifyBtn').disabled=false;
 
@@ -891,11 +967,22 @@ function renderScore(d){
       <span class="fb-lbl">${t('verdictCorrect')}</span>
       <button class="fbbtn" id="fbY">👍</button>
       <button class="fbbtn" id="fbN">👎</button>
+      <button class="fbbtn" id="shareBtn" title="${LANG==='ro'?'Copiază linkul':'Copy share link'}">🔗 ${LANG==='ro'?'Distribuie':'Share'}</button>
       ${pdfBtn}
     </div>`;
   setTimeout(()=>{const c=document.getElementById('rc');if(c)c.style.strokeDashoffset=offset;},80);
   document.getElementById('fbY').onclick=()=>sendFb(true,d);
   document.getElementById('fbN').onclick=()=>sendFb(false,d);
+  document.getElementById('shareBtn').onclick=()=>shareResult(d);
+}
+function shareResult(d){
+  const text=(d&&d.claim)||document.getElementById('claimInput').value.trim();
+  if(!text)return;
+  const url=location.origin+'/?claim='+encodeURIComponent(text);
+  const done=()=>toast(LANG==='ro'?'Link copiat!':'Link copied!','ok');
+  if(navigator.share){navigator.share({title:'TruthScore',text:text,url:url}).catch(()=>{});return;}
+  if(navigator.clipboard){navigator.clipboard.writeText(url).then(done).catch(()=>prompt('Copy link:',url));}
+  else{prompt('Copy link:',url);}
 }
 function renderSources(d){
   const sup=d.supporting||[],con=d.contradicting||[],neu=d.neutral_sources||[];
@@ -1366,7 +1453,10 @@ if(new URLSearchParams(location.search).get('pricing')==='1')setTimeout(showPric
 // product yet shouldn't be greeted by an ad slot.
 if(new URLSearchParams(location.search).get('payment')==='success')setTimeout(()=>{toast(t('paymentOk'),'ok');initAuth();},500);
 // Prefetch site-config on load so doGoogleAuth() starts immediately without a round-trip on click
-fetch('/site-config').then(r=>r.json()).then(cfg=>{window._siteConfig=cfg;}).catch(()=>{});
+fetch('/site-config').then(r=>r.json()).then(cfg=>{
+  window._siteConfig=cfg;
+  if(cfg&&Number.isFinite(cfg.anon_limit)){ANON_LIMIT=cfg.anon_limit;updateUsageBadge(currentUser);}
+}).catch(()=>{});
 </script>
 </body>
 </html>
