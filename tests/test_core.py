@@ -197,6 +197,32 @@ def test_verdict_integrity_hash():
     assert verdict_content_hash(src) != h1           # source-URL swap detected
 
 
+def test_image_validation_guards():
+    """The screenshot on-ramp's security boundary: bytes are sniffed by magic
+    number (never trusting the client's Content-Type), oversized/empty/non-image
+    uploads are rejected before the vision model is ever touched. Deterministic —
+    validates the guard, not the OCR (OCR needs a live multimodal model)."""
+    from pipeline.vision import sniff_image_mime, validate_image, MAX_IMAGE_BYTES
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+    jpg = b"\xff\xd8\xff\xe0" + b"\x00" * 32
+    gif = b"GIF89a" + b"\x00" * 32
+    webp = b"RIFF" + b"\x00\x00\x00\x00" + b"WEBP" + b"\x00" * 8
+    assert sniff_image_mime(png) == "image/png"
+    assert sniff_image_mime(jpg) == "image/jpeg"
+    assert sniff_image_mime(gif) == "image/gif"
+    assert sniff_image_mime(webp) == "image/webp"
+    # A spoofed content-type can't smuggle a non-image through — sniff wins.
+    ok, mime, err = validate_image(b"<html>not an image</html>", "image/png")
+    assert ok is False and mime == "" and err
+    # Empty and oversized are rejected.
+    assert validate_image(b"", "image/png")[0] is False
+    assert validate_image(b"\xff\xd8\xff" + b"\x00" * (MAX_IMAGE_BYTES + 10),
+                          "image/jpeg")[0] is False
+    # A real PNG passes and returns the sniffed (trustworthy) mime.
+    ok2, mime2, err2 = validate_image(png, "application/octet-stream")
+    assert ok2 is True and mime2 == "image/png" and err2 == ""
+
+
 if __name__ == "__main__":
     import pytest
     raise SystemExit(pytest.main([__file__, "-x"]))

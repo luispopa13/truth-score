@@ -365,14 +365,16 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
     <div class="err-box" id="errBox"></div>
     <textarea id="claimInput" maxlength="4000" rows="5"
       data-i18n-ph="inputPlaceholder"
-      placeholder="Enter a claim or a paragraph. Each fact is verified separately…"
+      placeholder="Enter a claim or a paragraph — or paste a screenshot (Ctrl+V). Each fact is verified separately…"
       oninput="onInput()"></textarea>
     <div class="input-meta">
-      <span class="hint" data-i18n="ctrlEnter">💡 Ctrl+Enter to verify</span>
+      <span class="hint" data-i18n="ctrlEnter">💡 Ctrl+Enter to verify · paste an image to check a screenshot</span>
       <span class="char-count" id="charCount">0/4000</span>
     </div>
     <div class="btn-row">
       <button class="btn btn-secondary" onclick="nextExample()" data-i18n="example">💡 Example</button>
+      <button class="btn btn-secondary" onclick="document.getElementById('imgInput').click()" data-i18n="checkImage" title="Verify the claims inside a screenshot">🖼️ Check a screenshot</button>
+      <input type="file" id="imgInput" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp" style="display:none" onchange="if(this.files&&this.files[0]){verifyImage(this.files[0]);this.value='';}">
       <button class="btn btn-primary" id="verifyBtn" onclick="runVerify()" data-i18n="verifyNow">🔍 Verify now</button>
     </div>
     <div class="loading" id="vLoad">
@@ -511,9 +513,9 @@ const I18N={
     heroSub:'Enter any claim and get an evidence-based verdict from authoritative sources.',
     limitReached:'You\'ve hit the limit.', limitCreate:'Create an account for 10 free checks/day.',
     seePlans:'See plans →',
-    inputPlaceholder:'Enter a claim or a paragraph. Each fact is verified separately…\n\nE.g.: Romania joined the EU in 2007. Bucharest is the capital of Romania.',
-    ctrlEnter:'💡 Ctrl+Enter to verify', example:'💡 Example', clearCache:'Clear cache',
-    verifyNow:'🔍 Verify now',
+    inputPlaceholder:'Enter a claim or a paragraph — or paste a screenshot (Ctrl+V). Each fact is verified separately…\n\nE.g.: Romania joined the EU in 2007. Bucharest is the capital of Romania.',
+    ctrlEnter:'💡 Ctrl+Enter to verify · paste an image to check a screenshot', example:'💡 Example', clearCache:'Clear cache',
+    verifyNow:'🔍 Verify now', checkImage:'🖼️ Check a screenshot',
     langName:'English',
     verifySteps:'How we got here', stepSplit:'Split the text', stepSplitD:'We extracted each verifiable fact on its own.',
     stepSearch:'Search evidence', stepSearchD:'For each fact we pulled sources from trusted domains (academic, encyclopedic, news).',
@@ -581,9 +583,9 @@ const I18N={
     heroSub:'Introdu orice afirmație și primești un verdict bazat pe dovezi din surse autorizate.',
     limitReached:'Ai atins limita.', limitCreate:'Creează un cont pentru 10 verificări/zi gratuit.',
     seePlans:'Vezi planuri →',
-    inputPlaceholder:'Introdu o afirmație sau un paragraf. Fiecare fapt va fi verificat separat…\n\nEx: România a aderat la UE în 2007. București este capitala României.',
-    ctrlEnter:'💡 Ctrl+Enter pentru verificare', example:'💡 Exemplu', clearCache:'Șterge cache',
-    verifyNow:'🔍 Verifică acum',
+    inputPlaceholder:'Introdu o afirmație sau un paragraf — sau lipește o captură de ecran (Ctrl+V). Fiecare fapt va fi verificat separat…\n\nEx: România a aderat la UE în 2007. București este capitala României.',
+    ctrlEnter:'💡 Ctrl+Enter pentru verificare · lipește o imagine pentru o captură', example:'💡 Exemplu', clearCache:'Șterge cache',
+    verifyNow:'🔍 Verifică acum', checkImage:'🖼️ Verifică o captură',
     langName:'Română',
     verifySteps:'De ce am ajuns aici', stepSplit:'Desfacem textul', stepSplitD:'Am extras fiecare fapt verificabil ca fiind distinct.',
     stepSearch:'Căutăm dovezi', stepSearchD:'Pentru fiecare fapt am adus surse din domenii de încredere (academice, enciclopedice, știri).',
@@ -907,6 +909,55 @@ async function runVerify(){
     showErr(e.message&&e.message.includes('fetch')?t('backendOffline'):(e.message||'error'));
   }
   document.getElementById('verifyBtn').disabled=false;
+}
+
+// Verify the factual claims inside a screenshot. Uploads the image to
+// /verify-image, which OCRs it with a vision model and runs the extracted
+// claims through the same paragraph pipeline — so the response is a
+// TextAnalysisResponse and renders identically to typed paragraph input.
+async function verifyImage(file){
+  if(!file)return;
+  if(!currentUser&&anonUsed()>=ANON_LIMIT){document.getElementById('limitBanner').className='limit-banner show';showAuth('register');return;}
+  if(currentUser&&currentUser.used_today>=currentUser.daily_limit){document.getElementById('limitBanner').className='limit-banner show';showPricing();return;}
+  if(file.size>8*1024*1024){showErr(LANG==='ro'?'Imaginea e prea mare (max 8 MB).':'Image too large (max 8 MB).');return;}
+  hideErr();
+  document.getElementById('resultWrap').className='result-wrap';
+  document.getElementById('vLoad').className='loading show';
+  document.getElementById('verifyBtn').disabled=true;
+  const steps=['ls1','ls2','ls3','ls4'];let si=0;
+  steps.forEach(s=>{const el=document.getElementById(s);if(el)el.className='ltxt';});
+  const s1=document.getElementById('ls1');if(s1)s1.textContent=LANG==='ro'?'Citesc textul din imagine…':'Reading the text in the image…';
+  document.getElementById(steps[0]).className='ltxt active';
+  stepTimer=setInterval(()=>{if(si<steps.length-1){document.getElementById(steps[si]).className='ltxt done';si++;document.getElementById(steps[si]).className='ltxt active';}},5000);
+  try{
+    const headers={};
+    if(token())headers['Authorization']='Bearer '+token();
+    const fp=await getBrowserFingerprint();
+    if(fp)headers['X-Browser-Fp']=fp;
+    const form=new FormData();form.append('file',file,file.name||'screenshot.png');
+    const r=await fetch(`${API}/verify-image`,{method:'POST',headers,body:form});
+    if(r.status===429)throw {code:429};
+    if(r.status===422){const j=await r.json().catch(()=>({}));throw new Error(j.detail||(LANG==='ro'?'Nu am găsit nicio afirmație verificabilă în imagine.':'No verifiable claim found in the image.'));}
+    if(!r.ok)throw new Error(`HTTP ${r.status}: ${await r.text()}`);
+    const d=await r.json();
+    d._interactionId=r.headers.get('X-TruthScore-Interaction-Id')||'';
+    ensureAds(r.headers.get('X-TruthScore-Show-Ads')==='1');
+    clearInterval(stepTimer);
+    document.getElementById('vLoad').className='loading';
+    if(!currentUser)anonInc();
+    if(currentUser)currentUser.used_today=(currentUser.used_today||0)+1;
+    updateUsageBadge(currentUser);
+    lastResult=d;
+    if(Array.isArray(d.results))renderTextAnalysis(d);else renderAll(d);
+  }catch(e){
+    clearInterval(stepTimer);
+    document.getElementById('vLoad').className='loading';
+    if(e&&e.code===429){document.getElementById('limitBanner').className='limit-banner show';if(currentUser)showPricing();else showAuth('register');document.getElementById('verifyBtn').disabled=false;return;}
+    showErr(e.message&&e.message.includes('fetch')?t('backendOffline'):(e.message||'error'));
+  }
+  const s1b=document.getElementById('ls1');if(s1b)s1b.textContent=t('ls1');
+  document.getElementById('verifyBtn').disabled=false;
+}
 
 function renderTextAnalysis(d){
   const summary={...d,topic:'general',supporting:[],contradicting:[],neutral_sources:[],
@@ -948,9 +999,17 @@ function showParagraphClaim(index){
   const r=lastResult?.results?.[index];if(!r)return;
   renderAll(r);
 }
-
-}
 document.getElementById('claimInput').addEventListener('keydown',e=>{if(e.key==='Enter'&&e.ctrlKey)runVerify();});
+// Paste a screenshot anywhere on the page → verify the claims inside it.
+document.addEventListener('paste',e=>{
+  const items=(e.clipboardData&&e.clipboardData.items)||[];
+  for(const it of items){
+    if(it.type&&it.type.indexOf('image')===0){
+      const f=it.getAsFile();
+      if(f){e.preventDefault();verifyImage(f);return;}
+    }
+  }
+});
 
 function renderAll(d){
   renderScore(d);renderSources(d);renderExplain(d);renderSub(d);

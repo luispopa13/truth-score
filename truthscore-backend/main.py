@@ -18,7 +18,7 @@ from pipeline.helpers import split_claims
 import time
 import json
 from typing import Optional as _Optional
-from fastapi import Response
+from fastapi import Response, UploadFile, File
 from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel
 from pipeline.case_study import log_interaction
@@ -526,7 +526,15 @@ async def analyze_text(req: VerifyRequest, response: Response,
                        request: Request,
                        user: dict = Depends(get_current_user)):
     """Extract and independently verify every factual claim in a paragraph."""
-    text = req.text.strip()
+    return await _analyze_text_core(req.text.strip(), response, request, user)
+
+
+async def _analyze_text_core(text: str, response: Response, request: Request,
+                             user: dict) -> TextAnalysisResponse:
+    """Shared engine for paragraph verification: quota → claim split → per-claim
+    verify → authority-weighted aggregate. Reused verbatim by /analyze-text
+    (typed input) and /verify-image (OCR'd screenshot input) so both paths get
+    identical scoring, quota accounting, and response shape."""
     client_ip = _client_ip(request)
     fp = _client_fp(request)
 
@@ -646,6 +654,34 @@ async def analyze_text(req: VerifyRequest, response: Response,
         quota_consumed=quota_consumed,
         quota_left=quota_left,
     )
+
+
+@app.post("/verify-image", response_model=TextAnalysisResponse)
+async def verify_image(response: Response, request: Request,
+                       file: UploadFile = File(...),
+                       user: dict = Depends(get_current_user)):
+    """Verify the claims in a SCREENSHOT. The frictionless on-ramp: a user
+    uploads/pastes an image of a viral post, chat forward, or headline; we OCR
+    the text with a vision model, extract the factual claims, and run them
+    through the identical paragraph pipeline — same scoring, sources, quota, and
+    shareable verdict. The image path validates bytes before touching the model
+    (magic-byte sniff + size cap) so we never feed un-sniffed input to Gemini."""
+    from pipeline.vision import validate_image, extract_text_from_image, MAX_IMAGE_BYTES
+
+    # Bounded read: stop at the cap + 1 byte so an oversized upload can't exhaust
+    # memory before validate_image() rejects it.
+    data = await file.read(MAX_IMAGE_BYTES + 1)
+    ok, mime, err = validate_image(data or b"", file.content_type or "")
+    if not ok:
+        raise HTTPException(status_code=422, detail=err)
+
+    text = await extract_text_from_image(data, mime)
+    if not text.strip():
+        raise HTTPException(
+            status_code=422,
+            detail="No readable factual claim was found in the image.")
+
+    return await _analyze_text_core(text, response, request, user)
 
 
 @app.post("/detect-claims")
