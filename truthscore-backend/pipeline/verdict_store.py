@@ -79,6 +79,9 @@ _cache: "OrderedDict[str, dict]" = OrderedDict()
 _mongo_collection = None
 _mongo_init_tried = False
 
+# Credibility-db handle, set at startup via set_credibility_db().
+_cred_db = None
+
 
 def _try_init_mongo():
     global _mongo_collection, _mongo_init_tried
@@ -96,6 +99,16 @@ def _try_init_mongo():
         print(f"[VERDICT-STORE] MongoDB mirror enabled (db={db_name})")
     except Exception as e:
         print(f"[VERDICT-STORE] MongoDB mirror disabled ({e}) -- using JSONL only")
+
+
+def set_credibility_db(db) -> None:
+    """Wire up the MongoDB handle used by source-credibility tracking.
+
+    Call once at startup (e.g. from the FastAPI lifespan).  Idempotent:
+    the first non-None value wins so multiple call sites don't clobber each other.
+    """
+    global _cred_db
+    _cred_db = _cred_db or db
 
 
 def new_verdict_id() -> str:
@@ -166,6 +179,20 @@ async def save_verdict(payload: dict, user_id: str = "") -> str | None:
     for key in ("supporting", "contradicting", "neutral_sources"):
         if payload.get(key):
             stamp_sources_with_hashes(payload[key])
+
+    # Track source credibility (non-blocking, best-effort)
+    if _cred_db is not None:
+        try:
+            from pipeline.source_credibility import update_domain_stats
+            all_sources = []
+            for key in ("supporting", "contradicting", "neutral_sources"):
+                all_sources.extend(payload.get(key) or [])
+            if all_sources:
+                asyncio.create_task(
+                    update_domain_stats(_cred_db, all_sources, payload.get("verdict", ""))
+                )
+        except Exception:
+            pass
 
     line = json.dumps(record, ensure_ascii=False, default=str)
     async with _write_lock:

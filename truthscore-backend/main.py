@@ -217,6 +217,18 @@ async def _warmup_models():
     except Exception as e:
         print(f"[STARTUP] Health report skipped (non-fatal): {e}")
 
+    # Seed the daily challenge pool + wire source-credibility DB (best-effort).
+    try:
+        from auth import get_db
+        db = get_db()
+        from api.challenge import seed_challenges
+        await seed_challenges(db)
+        from pipeline.verdict_store import set_credibility_db
+        set_credibility_db(db)
+        print("[STARTUP] Challenges seeded + credibility DB wired.")
+    except Exception as e:
+        print(f"[STARTUP] Challenge/credibility init skipped (non-fatal): {e}")
+
     # Flip the readiness gate — the process can now serve traffic.
     global _READY
     _READY = True
@@ -401,6 +413,16 @@ async def verify(req: VerifyRequest, response: Response,
             response.headers["X-TruthScore-Verdict-Id"] = _vid
     except Exception as e:
         print(f"[VERDICT-STORE] save skipped (non-fatal): {e}")
+
+    # Trending tracker (best-effort): every distinct check bumps the claim's
+    # public counter so /trending can surface what's hot right now.
+    try:
+        from auth import get_db
+        from pipeline.trending import record_check
+        await record_check(get_db(), result.claim, result.verdict,
+                           result.score, result.topic)
+    except Exception as e:
+        print(f"[TRENDING] record skipped (non-fatal): {e}")
 
     # Internal telemetry records model choices before this point. Public clients
     # receive no provider/model metadata, which also keeps the API contract clean.
@@ -1697,8 +1719,8 @@ async def watch_claim(req: WatchRequest, user=Depends(require_user)):
     if not claim:
         raise HTTPException(400, "claim required")
     try:
-        from auth import _get_db
-        db = _get_db()
+        from auth import get_db
+        db = get_db()
         col = db["watched_claims"]
         existing = await col.find_one({"user_id": user["id"], "claim": claim})
         if existing:
@@ -1720,8 +1742,8 @@ async def watch_claim(req: WatchRequest, user=Depends(require_user)):
 async def list_watched(user=Depends(require_user)):
     """List all watched claims for the user."""
     try:
-        from auth import _get_db
-        db = _get_db()
+        from auth import get_db
+        db = get_db()
         col = db["watched_claims"]
         docs = await col.find({"user_id": user["id"]}).sort("created_at", -1).to_list(100)
         for d in docs:
@@ -1734,14 +1756,136 @@ async def list_watched(user=Depends(require_user)):
 async def unwatch_claim(watch_id: str, user=Depends(require_user)):
     """Remove a claim from watch list."""
     try:
-        from auth import _get_db
+        from auth import get_db
         from bson import ObjectId
-        db = _get_db()
+        db = get_db()
         col = db["watched_claims"]
         result = await col.delete_one({"_id": ObjectId(watch_id), "user_id": user["id"]})
         return {"deleted": result.deleted_count > 0}
     except Exception as e:
         raise HTTPException(500, str(e))
+
+
+# ── Trending claims (public) ──────────────────────────────
+@app.get("/trending")
+async def trending(limit: int = 10):
+    """Most-checked claims right now. Public — no auth."""
+    try:
+        from auth import get_db
+        from pipeline.trending import get_trending
+        db = get_db()
+        items = await get_trending(db, limit=limit)
+        return {"items": items}
+    except Exception as e:
+        print(f"[TRENDING] endpoint failed (non-fatal): {e}")
+        return {"items": []}
+
+
+@app.get("/public-stats")
+async def public_stats():
+    """Aggregate public stats for the accuracy/trust page."""
+    try:
+        from auth import get_db
+        from pipeline.trending import get_public_stats
+        db = get_db()
+        return await get_public_stats(db)
+    except Exception:
+        return {"total_checks": 0, "total_false": 0, "total_true": 0,
+                "total_uncertain": 0, "top_topics": []}
+
+
+# ── URL fact-check ────────────────────────────────────────
+class UrlCheckRequest(BaseModel):
+    url: str
+
+@app.post("/check-url")
+async def check_url_endpoint(req: UrlCheckRequest, current_user=Depends(get_current_user)):
+    """Fetch a URL, extract text, and fact-check its claims."""
+    from auth import get_db
+    from api.url_checker import check_url
+    db = get_db()
+    return await check_url(req.url, db, user=current_user)
+
+
+# ── Entity profile (public) ───────────────────────────────
+@app.get("/entity/{name}")
+async def entity_profile(name: str):
+    """Public reliability profile for a named entity (person/company/etc.)."""
+    try:
+        from auth import get_db
+        from pipeline.entity_memory import get_entity_profile
+        db = get_db()
+        prof = await get_entity_profile(db, name)
+        if not prof:
+            raise HTTPException(404, "No profile for this entity")
+        prof.pop("_id", None)
+        return prof
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(404, "No profile for this entity")
+
+
+# ── Source credibility (public) ───────────────────────────
+@app.get("/source-credibility")
+async def source_credibility_top(limit: int = 20):
+    """Top reliable source domains, ranked by accumulated reliability score."""
+    try:
+        from auth import get_db
+        from pipeline.source_credibility import get_top_sources
+        db = get_db()
+        return {"sources": await get_top_sources(db, limit=limit)}
+    except Exception:
+        return {"sources": []}
+
+
+# ── Daily challenge (public) ──────────────────────────────
+@app.get("/challenge")
+async def daily_challenge():
+    """Today's fact-checking challenge — guess the verdict."""
+    from auth import get_db
+    from api.challenge import get_daily_challenge
+    db = get_db()
+    return await get_daily_challenge(db)
+
+
+class ChallengeAnswerRequest(BaseModel):
+    id: str
+    guess: str
+
+@app.post("/challenge/answer")
+async def answer_daily_challenge(req: ChallengeAnswerRequest):
+    from auth import get_db
+    from api.challenge import answer_challenge
+    db = get_db()
+    return await answer_challenge(db, req.id, req.guess)
+
+
+# ── Webhooks (authenticated) ──────────────────────────────
+class WebhookCreateRequest(BaseModel):
+    url: str
+    events: list[str] = ["verdict_change"]
+
+@app.post("/webhooks")
+async def create_webhook_endpoint(req: WebhookCreateRequest, user=Depends(require_user)):
+    from auth import get_db
+    from api.webhooks import create_webhook
+    db = get_db()
+    return await create_webhook(db, user["id"], req.url, req.events)
+
+@app.get("/webhooks")
+async def list_webhooks_endpoint(user=Depends(require_user)):
+    from auth import get_db
+    from api.webhooks import list_webhooks
+    db = get_db()
+    return {"webhooks": await list_webhooks(db, user["id"])}
+
+@app.delete("/webhooks/{webhook_id}")
+async def delete_webhook_endpoint(webhook_id: str, user=Depends(require_user)):
+    from auth import get_db
+    from api.webhooks import delete_webhook
+    db = get_db()
+    return {"deleted": await delete_webhook(db, user["id"], webhook_id)}
 
 
 async def _resolve_api_key(request) -> dict | None:
@@ -1751,8 +1895,8 @@ async def _resolve_api_key(request) -> dict | None:
         return None
     key_hash = _hashlib.sha256(api_key.encode()).hexdigest()
     try:
-        from auth import _get_db
-        db = _get_db()
+        from auth import get_db
+        db = get_db()
         col = db["api_keys"]
         doc = await col.find_one({"key_hash": key_hash, "active": True})
         if not doc:
@@ -1771,8 +1915,8 @@ async def verdict_history(verdict_id: str):
     try:
         from pipeline.verdict_store import load_verdict
         from bson import ObjectId
-        from auth import _get_db
-        db = _get_db()
+        from auth import get_db
+        db = get_db()
         col = db["verdict_history"]
         docs = await col.find({"verdict_id": verdict_id}).sort("checked_at", 1).to_list(50)
         for d in docs:
@@ -1787,8 +1931,8 @@ async def verdict_history(verdict_id: str):
 async def _record_verdict_history(verdict_id: str, verdict: str, score: int, claim: str):
     """Append a snapshot to the verdict history collection. Called from /verify."""
     try:
-        from auth import _get_db
-        db = _get_db()
+        from auth import get_db
+        db = get_db()
         col = db["verdict_history"]
         await col.insert_one({
             "verdict_id": verdict_id,
@@ -1846,8 +1990,8 @@ async def publisher_ranking(limit: int = 30):
     Returns publishers sorted by reliability score (weighted by appearance count).
     """
     try:
-        from auth import _get_db
-        db = _get_db()
+        from auth import get_db
+        db = get_db()
         col = db["verdicts"]
         # Aggregate: for each source domain, count appearances and average score
         pipeline_agg = [
@@ -1933,8 +2077,8 @@ async def digest_subscribe(req: DigestSubscribeRequest):
     if not email or "@" not in email:
         raise HTTPException(400, "Valid email required")
     try:
-        from auth import _get_db
-        db = _get_db()
+        from auth import get_db
+        db = get_db()
         col = db["digest_subscribers"]
         existing = await col.find_one({"email": email})
         if existing:
@@ -1958,8 +2102,8 @@ async def digest_unsubscribe(req: DigestSubscribeRequest):
     if not email:
         raise HTTPException(400, "email required")
     try:
-        from auth import _get_db
-        db = _get_db()
+        from auth import get_db
+        db = get_db()
         await db["digest_subscribers"].update_one({"email": email}, {"$set": {"active": False}})
         return {"status": "unsubscribed"}
     except Exception as e:
@@ -1970,8 +2114,8 @@ async def digest_unsubscribe(req: DigestSubscribeRequest):
 async def digest_send(user=Depends(require_admin)):
     """Admin: trigger daily digest send."""
     from email_digest import run_digest
-    from auth import _get_db
-    db = _get_db()
+    from auth import get_db
+    db = get_db()
     result = await run_digest(db)
     return result
 
@@ -1982,8 +2126,8 @@ async def digest_send(user=Depends(require_admin)):
 async def news_scanner_run(user=Depends(require_admin)):
     """Admin: run the news scanner to auto-verify today's headlines."""
     from news_scanner import run_scan
-    from auth import _get_db
-    db = _get_db()
+    from auth import get_db
+    db = get_db()
     import asyncio as _asyncio
     _asyncio.create_task(run_scan(db))
     return {"status": "started"}
@@ -1992,9 +2136,9 @@ async def news_scanner_run(user=Depends(require_admin)):
 @app.get("/today")
 async def today_checks():
     """Return today's auto-verified claims from the news scanner."""
-    from auth import _get_db
+    from auth import get_db
     from datetime import datetime, timezone
-    db = _get_db()
+    db = get_db()
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     doc = await db["daily_checks"].find_one({"date": today})
     if not doc:
@@ -2023,8 +2167,8 @@ async def bookmarklet():
 async def my_accuracy(user=Depends(require_user)):
     """Return the user's personal accuracy alignment score."""
     try:
-        from auth import _get_db
-        db = _get_db()
+        from auth import get_db
+        db = get_db()
         col = db["feedback"]
         fb_docs = await col.find({"user_id": user["id"]}).sort("created_at", -1).to_list(200)
         if not fb_docs:
@@ -2184,11 +2328,11 @@ async def widget(user_key: str = ""):
 @app.get("/claims/timeline")
 async def get_claim_timeline(claim: str, current_user=Depends(get_current_user)):
     """Get the full truth-over-time history for a claim."""
-    from auth import _get_db
+    from auth import get_db
     from pipeline.temporal_drift import get_drift_summary
     if not claim or len(claim) < 5:
         raise HTTPException(status_code=422, detail="claim required")
-    db = _get_db()
+    db = get_db()
     summary = await get_drift_summary(db, claim)
     if summary is None:
         return {"has_drift": False, "total_checks": 0, "timeline": []}
@@ -2198,8 +2342,8 @@ async def get_claim_timeline(claim: str, current_user=Depends(get_current_user))
 @app.post("/temporal-drift/scan")
 async def run_drift_scan(current_user=Depends(require_admin)):
     """Re-verify all watched claims older than 30 days. Admin only."""
-    from auth import _get_db
+    from auth import get_db
     from pipeline.temporal_drift import scan_watched_for_drift
-    db = _get_db()
+    db = get_db()
     drifted = await scan_watched_for_drift(db)
     return {"drifted_count": len(drifted), "drifted": drifted[:20]}

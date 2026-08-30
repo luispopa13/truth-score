@@ -355,6 +355,8 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
       <span class="udot" id="usageDot"></span>
       <span id="usageText">— / —</span>
     </div>
+    <button class="hbtn hbtn-ghost" onclick="openTrending()" title="Trending claims">🔥</button>
+    <button class="hbtn hbtn-ghost" onclick="openChallenge()" title="Daily challenge">🎯</button>
     <div id="guestBtns" style="display:flex;gap:8px">
       <button class="hbtn hbtn-ghost" onclick="showAuth('login')" data-i18n="login">Log in</button>
       <button class="hbtn hbtn-solid" onclick="showAuth('register')" data-i18n="signupFree">Free account →</button>
@@ -400,6 +402,15 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
 
   <div class="verify-card">
     <div class="err-box" id="errBox"></div>
+    <div style="display:flex;gap:6px;margin-bottom:10px">
+      <button class="fbbtn" id="tabText" onclick="setInputTab('text')" style="font-size:11px;background:rgba(91,78,255,.15);border-color:#5b4eff;color:#818cf8">✍️ Text</button>
+      <button class="fbbtn" id="tabUrl" onclick="setInputTab('url')" style="font-size:11px">🔗 URL</button>
+      <button class="fbbtn" id="tabImg" onclick="document.getElementById('imgInput').click()" style="font-size:11px">📷 Image</button>
+    </div>
+    <div id="urlInputRow" style="display:none;margin-bottom:10px">
+      <input id="urlInput" class="finput" type="url" placeholder="https://example.com/article" style="width:100%;padding:10px 14px;font-size:14px"/>
+      <button class="btn" id="urlCheckBtn" onclick="runUrlCheck()" style="margin-top:8px;width:100%">Check URL</button>
+    </div>
     <textarea id="claimInput" maxlength="4000" rows="5"
       data-i18n-ph="inputPlaceholder"
       placeholder="Enter a claim or a paragraph — or paste a screenshot (Ctrl+V). Each fact is verified separately…"
@@ -571,6 +582,29 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
 </div>
 
 <div id="liveDebateOverlay" class="overlay" onclick="if(event.target===this)closeLiveDebate()" style="padding:20px;overflow-y:auto"></div>
+
+<div class="overlay" id="trendingOverlay" onmousedown="if(event.target===this)closeTrending()">
+  <div class="modal" style="max-width:640px;width:100%">
+    <button class="modal-x" onclick="closeTrending()">✕</button>
+    <div class="modal-title">🔥 Trending Claims</div>
+    <div class="modal-sub">Most-checked claims right now</div>
+    <div id="trendingList" style="display:flex;flex-direction:column;gap:8px;margin-top:16px;max-height:420px;overflow-y:auto"></div>
+  </div>
+</div>
+
+<div class="overlay" id="entityOverlay" onmousedown="if(event.target===this)closeEntityProfile()">
+  <div class="modal" style="max-width:580px;width:100%">
+    <button class="modal-x" onclick="closeEntityProfile()">✕</button>
+    <div id="entityContent"></div>
+  </div>
+</div>
+
+<div class="overlay" id="challengeOverlay" onmousedown="if(event.target===this)closeChallenge()">
+  <div class="modal" style="max-width:520px;width:100%">
+    <button class="modal-x" onclick="closeChallenge()">✕</button>
+    <div id="challengeContent"></div>
+  </div>
+</div>
 
 <script>
 // Relative API base -- dashboard.html is served BY the same FastAPI
@@ -1826,7 +1860,7 @@ function renderExplain(d){
     <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">🧠 Entity Memory</div>
     <div style="display:flex;flex-direction:column;gap:6px">
     ${d.entity_profiles.map(e=>`<div style="font-size:11px;color:var(--text2);display:flex;align-items:center;gap:8px">
-      <span style="font-weight:600;color:var(--text)">${esc(e.name)}</span>
+      <span style="font-weight:600;color:var(--text);cursor:pointer;text-decoration:underline;text-decoration-style:dotted" onclick="openEntityProfile(${JSON.stringify(e.name)})">${esc(e.name)}</span>
       <span style="opacity:.5">${esc(e.type)}</span>
       <span>${e.claim_count} claims checked</span>
       <span style="color:${e.accuracy_pct>=60?'#10b981':e.accuracy_pct>=40?'#f59e0b':'#ef4444'}">${e.accuracy_pct}% accurate</span>
@@ -2318,6 +2352,147 @@ fetch('/site-config').then(r=>r.json()).then(cfg=>{
   window._siteConfig=cfg;
   if(cfg&&Number.isFinite(cfg.anon_limit)){ANON_LIMIT=cfg.anon_limit;updateUsageBadge(currentUser);}
 }).catch(()=>{});
+
+// ── Feature 1: Trending overlay ──────────────────────────────────────────────
+function openTrending(){document.getElementById('trendingOverlay').className='overlay show';loadTrending();}
+function closeTrending(){document.getElementById('trendingOverlay').className='overlay';}
+async function loadTrending(){
+  const list=document.getElementById('trendingList');
+  list.innerHTML='<div style="opacity:.5;font-size:13px;padding:8px">Loading…</div>';
+  try{
+    const r=await fetch('/trending');
+    const d=await r.json();
+    const items=(d.items||d||[]);
+    if(!items.length){list.innerHTML='<div style="opacity:.5;font-size:13px;padding:8px">No trending claims yet.</div>';return;}
+    list.innerHTML=items.map(it=>{
+      const vc=it.last_verdict==='TRUE'?'#22c55e':it.last_verdict==='FALSE'?'#ef4444':'#eab308';
+      return `<div style="padding:10px 12px;border-radius:10px;border:1px solid var(--border2);cursor:pointer;background:var(--bg3)" onclick="document.getElementById('claimInput').value=${JSON.stringify(it.claim)};closeTrending();onInput()">
+        <div style="font-size:13px;color:var(--text);line-height:1.5;margin-bottom:4px">${esc(it.claim)}</div>
+        <div style="display:flex;gap:8px;align-items:center;font-size:11px;font-family:monospace">
+          <span style="color:${vc};font-weight:700">${it.last_verdict||'?'}</span>
+          <span style="color:var(--text2)">${it.last_score||0}/100</span>
+          <span style="color:var(--text2)">🔥 ${it.check_count||1} checks</span>
+          <span style="color:var(--text2)">${it.topic||'general'}</span>
+        </div>
+      </div>`;
+    }).join('');
+  }catch(e){list.innerHTML=`<div style="color:var(--red);font-size:13px">${esc(e.message)}</div>`;}
+}
+
+// ── Feature 2: URL checker tab ───────────────────────────────────────────────
+function setInputTab(tab){
+  document.getElementById('tabText').style.background=tab==='text'?'rgba(91,78,255,.15)':'';
+  document.getElementById('tabText').style.borderColor=tab==='text'?'#5b4eff':'';
+  document.getElementById('tabText').style.color=tab==='text'?'#818cf8':'';
+  document.getElementById('tabUrl').style.background=tab==='url'?'rgba(91,78,255,.15)':'';
+  document.getElementById('tabUrl').style.borderColor=tab==='url'?'#5b4eff':'';
+  document.getElementById('tabUrl').style.color=tab==='url'?'#818cf8':'';
+  document.getElementById('urlInputRow').style.display=tab==='url'?'block':'none';
+  const ta=document.getElementById('claimInput');if(ta)ta.style.display=tab==='url'?'none':'';
+  const vb=document.getElementById('verifyBtn');if(vb)vb.style.display=tab==='url'?'none':'';
+}
+async function runUrlCheck(){
+  const url=(document.getElementById('urlInput').value||'').trim();
+  if(!url){showErr('Enter a URL');return;}
+  const btn=document.getElementById('urlCheckBtn');
+  btn.disabled=true;btn.textContent='Checking…';
+  hideErr();
+  document.getElementById('resultWrap').className='result-wrap show';
+  document.getElementById('vLoad').className='loading show';
+  try{
+    const hdr={'Content-Type':'application/json'};
+    if(token())hdr['Authorization']='Bearer '+token();
+    const r=await fetch('/check-url',{method:'POST',headers:hdr,body:JSON.stringify({url})});
+    if(!r.ok){const e=await r.json();throw new Error(e.detail||r.status);}
+    const d=await r.json();
+    lastResult=d;
+    document.getElementById('vLoad').className='loading';
+    renderScore(d);renderExplain(d);renderSub(d);renderSources(d);
+    document.querySelector('.result-tabs button')?.click();
+  }catch(e){document.getElementById('vLoad').className='loading';showErr(e.message);}
+  btn.disabled=false;btn.textContent='Check URL';
+}
+
+// ── Feature 3: Entity profile overlay ───────────────────────────────────────
+function closeEntityProfile(){document.getElementById('entityOverlay').className='overlay';}
+async function openEntityProfile(name){
+  document.getElementById('entityOverlay').className='overlay show';
+  const c=document.getElementById('entityContent');
+  c.innerHTML=`<div class="modal-title">${esc(name)}</div><div style="opacity:.5;font-size:13px;padding:8px 0">Loading profile…</div>`;
+  try{
+    const r=await fetch('/entity/'+encodeURIComponent(name));
+    if(!r.ok)throw new Error('Not found');
+    const d=await r.json();
+    const acc=d.accuracy_pct||50;
+    const accColor=acc>=70?'#22c55e':acc>=40?'#eab308':'#ef4444';
+    c.innerHTML=`
+      <div class="modal-title">👤 ${esc(d.name||name)}</div>
+      <div style="display:flex;gap:12px;margin:12px 0;flex-wrap:wrap">
+        <div style="padding:8px 14px;border-radius:8px;background:var(--bg3);text-align:center">
+          <div style="font-size:22px;font-weight:700;color:${accColor}">${acc}%</div>
+          <div style="font-size:10px;color:var(--text2)">ACCURACY</div>
+        </div>
+        <div style="padding:8px 14px;border-radius:8px;background:var(--bg3);text-align:center">
+          <div style="font-size:22px;font-weight:700">${d.claim_count||0}</div>
+          <div style="font-size:10px;color:var(--text2)">CLAIMS</div>
+        </div>
+        <div style="padding:8px 14px;border-radius:8px;background:rgba(239,68,68,.1);text-align:center">
+          <div style="font-size:22px;font-weight:700;color:#ef4444">${d.false_count||0}</div>
+          <div style="font-size:10px;color:var(--text2)">FALSE</div>
+        </div>
+      </div>
+      ${d.pattern_notes?`<div style="font-size:12px;color:var(--text2);padding:10px;border-radius:8px;background:rgba(255,255,255,.04);margin-bottom:12px;border-left:3px solid #5b4eff">💡 ${esc(d.pattern_notes)}</div>`:''}
+      <div style="font-size:12px;font-weight:600;margin-bottom:8px;color:var(--text2)">Recent Claims</div>
+      ${(d.recent_verdicts||[]).map(v=>{
+        const vc=v.verdict==='TRUE'?'#22c55e':v.verdict==='FALSE'?'#ef4444':'#eab308';
+        return `<div style="padding:8px 10px;border-radius:7px;border:1px solid var(--border2);margin-bottom:6px;font-size:12px;cursor:pointer" onclick="document.getElementById('claimInput').value=${JSON.stringify(v.claim)};closeEntityProfile();onInput()">
+          <span style="color:${vc};font-weight:700;margin-right:8px">${v.verdict}</span>${esc(v.claim)}
+        </div>`;
+      }).join('')}`;
+  }catch(e){c.innerHTML=`<div class="modal-title">${esc(name)}</div><div style="color:var(--text2);font-size:13px;padding:8px 0">No profile data yet for this entity.</div>`;}
+}
+
+// ── Feature 4: Daily challenge overlay ──────────────────────────────────────
+function closeChallenge(){document.getElementById('challengeOverlay').className='overlay';}
+let _challengeId=null;
+async function openChallenge(){
+  document.getElementById('challengeOverlay').className='overlay show';
+  const c=document.getElementById('challengeContent');
+  c.innerHTML=`<div class="modal-title">🎯 Daily Challenge</div><div style="opacity:.5;font-size:13px;padding:8px 0">Loading…</div>`;
+  try{
+    const r=await fetch('/challenge');
+    if(!r.ok)throw new Error('No challenge available');
+    const d=await r.json();
+    _challengeId=d.id;
+    c.innerHTML=`
+      <div class="modal-title">🎯 Daily Challenge</div>
+      <div style="font-size:13px;color:var(--text2);margin-bottom:20px">What do you think — is this claim TRUE or FALSE?</div>
+      <div style="padding:16px;border-radius:10px;background:var(--bg3);border:1px solid var(--border2);font-size:15px;font-weight:600;line-height:1.5;margin-bottom:24px">"${esc(d.claim)}"</div>
+      <div style="display:flex;gap:10px;justify-content:center">
+        <button class="form-btn" style="background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.3);color:#22c55e;flex:1" onclick="submitChallenge('TRUE')">✅ TRUE</button>
+        <button class="form-btn" style="background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.3);color:#ef4444;flex:1" onclick="submitChallenge('FALSE')">❌ FALSE</button>
+        <button class="form-btn" style="background:rgba(234,179,8,.15);border:1px solid rgba(234,179,8,.3);color:#eab308;flex:1" onclick="submitChallenge('UNCERTAIN')">⚠️ UNCERTAIN</button>
+      </div>
+      <div id="challengeResult" style="margin-top:16px"></div>`;
+  }catch(e){c.innerHTML=`<div class="modal-title">🎯 Daily Challenge</div><div style="color:var(--text2);font-size:13px;padding:8px 0">No challenge available today.</div>`;}
+}
+async function submitChallenge(guess){
+  if(!_challengeId)return;
+  document.querySelectorAll('#challengeContent .form-btn').forEach(b=>b.disabled=true);
+  try{
+    const r=await fetch('/challenge/answer',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:_challengeId,guess})});
+    const d=await r.json();
+    const res=document.getElementById('challengeResult');
+    if(!res)return;
+    const vc=d.verdict==='TRUE'?'#22c55e':d.verdict==='FALSE'?'#ef4444':'#eab308';
+    res.innerHTML=`
+      <div style="padding:14px;border-radius:10px;background:${d.correct?'rgba(34,197,94,.08)':'rgba(239,68,68,.08)'};border:1px solid ${d.correct?'rgba(34,197,94,.3)':'rgba(239,68,68,.3)'}">
+        <div style="font-size:16px;font-weight:700;margin-bottom:6px">${d.correct?'✅ Correct!':'❌ Wrong!'}</div>
+        <div style="font-size:13px;color:var(--text2)">Verdict: <strong style="color:${vc}">${d.verdict}</strong> (${d.score}/100)</div>
+        <div style="font-size:12px;color:var(--text2);margin-top:6px;line-height:1.5">${esc(d.explanation||'')}</div>
+      </div>`;
+  }catch(e){toast('Error: '+e.message,'err');}
+}
 </script>
 </body>
 </html>

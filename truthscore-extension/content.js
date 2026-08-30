@@ -2,6 +2,33 @@
 if (typeof window.__tsLoaded === 'undefined') {
 window.__tsLoaded = true;
 
+// ── Auto-highlight CSS ────────────────────────────────────────────
+(function() {
+  const style = document.createElement('style');
+  style.id = 'ts-auto-highlight-styles';
+  style.textContent = `
+    .ts-auto-claim {
+      border-left: 3px solid rgba(91, 78, 255, 0.4) !important;
+      padding-left: 8px !important;
+      cursor: pointer !important;
+      transition: border-color 0.2s !important;
+    }
+    .ts-auto-claim:hover {
+      border-left-color: rgba(91, 78, 255, 0.9) !important;
+    }
+    .ts-auto-claim.ts-verified-true {
+      border-left-color: rgba(34, 197, 94, 0.6) !important;
+    }
+    .ts-auto-claim.ts-verified-false {
+      border-left-color: rgba(239, 68, 68, 0.7) !important;
+    }
+    .ts-auto-claim.ts-verified-uncertain {
+      border-left-color: rgba(234, 179, 8, 0.6) !important;
+    }
+  `;
+  document.head.appendChild(style);
+})();
+
 // TruthScore Content Script v5 — clean
 let bubble = null, panel = null, hideTimer = null;
 let scanActive = false, summaryPanel = null;
@@ -56,6 +83,7 @@ chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === "SHOW_INLINE_CHECK") { hideBubble(); showPanel(msg.text, null); }
   if (msg.type === "SCAN_PAGE")          { runFullScan(); }
   if (msg.type === "CLEAR_HIGHLIGHTS")   { clearAll(); }
+  if (msg.type === 'TOGGLE_AUTO_HIGHLIGHT') { if (msg.enabled) autoScanPage(); else clearAutoHighlights(); }
 });
 
 // ── Bubble ────────────────────────────────────────────────────
@@ -258,6 +286,13 @@ function showPanel(text, anchorRect) {
     document.querySelectorAll("."+HIGHLIGHT_CLASS).forEach(m => {
       if (m.dataset.claim && text.startsWith(m.dataset.claim.slice(0,50)))
         applyVerdict(m, res.verdict, res.score);
+    });
+    const autoVerdictClass = 'ts-verified-' + (res.verdict || 'uncertain').toLowerCase();
+    document.querySelectorAll('.ts-auto-claim').forEach(el => {
+      if (el.dataset.tsText && text.startsWith(el.dataset.tsText.slice(0, 50))) {
+        el.classList.remove('ts-verified-true', 'ts-verified-false', 'ts-verified-uncertain');
+        el.classList.add(autoVerdictClass);
+      }
     });
   });
 }
@@ -495,6 +530,40 @@ async function _passiveAutoScan() {
     await sleep(600);
   }
   hideIndicator();
+}
+
+// ── Auto-highlight on page load ───────────────────────────────────
+async function autoScanPage() {
+  const elements = Array.from(document.querySelectorAll('p, li, blockquote, h2, h3'))
+    .filter(el => {
+      const len = el.textContent.trim().length;
+      return len >= 20 && len <= 300 && !el.classList.contains('ts-auto-claim');
+    })
+    .slice(0, 10);
+
+  for (const el of elements) {
+    const segment = el.textContent.trim();
+    try {
+      const res = await safeMsg({ type: 'DETECT_CLAIMS', text: segment });
+      const claims = res?.claims || [];
+      if (claims.length > 0) {
+        el.classList.add('ts-auto-claim');
+        el.dataset.tsText = segment.slice(0, 300);
+        el.addEventListener('click', function(e) {
+          if (e.target.closest('#ts-panel,#ts-bubble,#ts-summary')) return;
+          e.stopPropagation();
+          showPanel(el.dataset.tsText, el.getBoundingClientRect());
+        });
+      }
+    } catch { /* skip silently */ }
+  }
+}
+
+function clearAutoHighlights() {
+  document.querySelectorAll('.ts-auto-claim').forEach(el => {
+    el.classList.remove('ts-auto-claim', 'ts-verified-true', 'ts-verified-false', 'ts-verified-uncertain');
+    delete el.dataset.tsText;
+  });
 }
 
 // ── Pre-share intercept ───────────────────────────────────────────
