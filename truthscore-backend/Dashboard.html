@@ -389,6 +389,23 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
       <span class="uname" id="userName">User</span>
       <span class="uplan" id="userPlan">FREE</span>
     </div>
+    <script>
+    /* Anti-flicker: if a token exists, paint the logged-in header NOW (during
+       parse) from the cached profile — so the guest buttons never flash while
+       /auth/me loads. initAuth() reconciles with the server right after. */
+    (function(){try{
+      if(!localStorage.getItem('ts_token'))return;
+      var g=document.getElementById('guestBtns'); if(g)g.style.display='none';
+      var chip=document.getElementById('userChip'); if(!chip)return;
+      chip.className='user-chip show';
+      var u=null; try{u=JSON.parse(localStorage.getItem('ts_user')||'null');}catch(e){}
+      if(u){
+        document.getElementById('userAvatar').textContent=(u.name||u.email||'U')[0].toUpperCase();
+        document.getElementById('userName').textContent=u.name||(u.email||'').split('@')[0]||'…';
+        document.getElementById('userPlan').textContent=(u.plan||'free').toUpperCase();
+      }
+    }catch(e){}})();
+    </script>
     <div class="udrop" id="userDropdown">
       <div class="udrop-menu" onclick="event.stopPropagation()">
         <div class="umitem" onclick="document.getElementById('userDropdown').classList.remove('open');showHistory()" data-i18n="myChecks">🕑 My checks</div>
@@ -691,7 +708,7 @@ const I18N={
     tabSources:'📚 Sources', tabAnalysis:'🔍 Analysis', tabSub:'🔀 Sub-claims',
     ls1:'Analyzing claim…', ls2:'Searching evidence across 40+ sources…',
     ls3:'Filtering and comparing sources…', ls4:'Computing final TruthScore…',
-    pricing:'Pricing', privacy:'Privacy', forPublishers:'For publishers',
+    pricing:'Pricing', privacy:'Privacy', terms:'Terms', refund:'Refund', forPublishers:'For publishers',
     TRUE:'TRUE', FALSE:'FALSE', UNCERTAIN:'UNCERTAIN', MIXED:'MIXED',
     confHigh:'🟢 High confidence', confMed:'🟡 Medium', confLow:'🔴 Low',
     calVeryHigh:'Very confident', calHigh:'Confident',
@@ -776,7 +793,7 @@ const I18N={
     tabSources:'📚 Surse', tabAnalysis:'🔍 Analiză', tabSub:'🔀 Sub-claims',
     ls1:'Analiză afirmație…', ls2:'Căutare dovezi în 40+ surse…',
     ls3:'Filtrare și comparare surse…', ls4:'Calcul TruthScore final…',
-    pricing:'Prețuri', privacy:'Confidențialitate', forPublishers:'Pentru publisheri',
+    pricing:'Prețuri', privacy:'Confidențialitate', terms:'Termeni', refund:'Rambursare', forPublishers:'Pentru publisheri',
     TRUE:'ADEVĂRAT', FALSE:'FALS', UNCERTAIN:'INCERT', MIXED:'MIXT',
     confHigh:'🟢 Confidență ridicată', confMed:'🟡 Medie', confLow:'🔴 Scăzută',
     calVeryHigh:'Foarte sigur', calHigh:'Sigur',
@@ -1057,12 +1074,21 @@ let ANON_LIMIT=5;  // synced from /site-config (anon_limit) on load — server i
 async function initAuth(){
   const t=token();
   if(!t){renderGuest();updateUsageBadge(null);return;}
+  // Optimistic: a token exists, so show the logged-in UI IMMEDIATELY from the
+  // cached profile (no guest flash while /auth/me loads). Reconcile below.
+  let cached=null;try{cached=JSON.parse(localStorage.getItem('ts_user')||'null');}catch(_){}
+  if(cached){currentUser=cached;renderUser(cached);updateUsageBadge(cached);}
+  else{const g=document.getElementById('guestBtns');if(g)g.style.display='none';}
   try{
     const r=await fetch(`${API}/auth/me`,{headers:{'Authorization':'Bearer '+t}});
-    if(!r.ok){localStorage.removeItem('ts_token');renderGuest();return;}
+    if(!r.ok){localStorage.removeItem('ts_token');localStorage.removeItem('ts_user');currentUser=null;renderGuest();return;}
     currentUser=await r.json();
     renderUser(currentUser);updateUsageBadge(currentUser);
-  }catch(e){renderGuest();}
+  }catch(e){
+    // Network hiccup: keep the optimistic logged-in state if we had a cached
+    // profile; only fall back to guest when we have nothing to show.
+    if(!cached)renderGuest();
+  }
 }
 
 function renderGuest(){
@@ -1072,10 +1098,13 @@ function renderGuest(){
   updateUsageBadge(null);
 }
 function renderUser(u){
+  // Cache the profile so the next page load can render the logged-in UI
+  // synchronously (no guest flash while /auth/me round-trips).
+  try{localStorage.setItem('ts_user',JSON.stringify(u));}catch(_){}
   document.getElementById('guestBtns').style.display='none';
   document.getElementById('userChip').className='user-chip show';
   document.getElementById('userAvatar').textContent=(u.name||u.email||'U')[0].toUpperCase();
-  document.getElementById('userName').textContent=u.name||u.email.split('@')[0];
+  document.getElementById('userName').textContent=u.name||(u.email||'').split('@')[0]||'…';
   document.getElementById('userPlan').textContent=(u.plan||'free').toUpperCase();
   document.getElementById('userDropdown').className='udrop show';
 }
@@ -2373,7 +2402,7 @@ async function doLogin(){
   }catch(e){authErr(t('backendOffline'));btn.disabled=false;btn.textContent=t('loginBtn');}
 }
 function authErr(msg){const e=document.getElementById('authErr');if(e){e.textContent='⚠️ '+msg;e.className='form-err show';}}
-function doLogout(){localStorage.removeItem('ts_token');currentUser=null;renderGuest();document.getElementById('userDropdown').classList.remove('open');}
+function doLogout(){localStorage.removeItem('ts_token');localStorage.removeItem('ts_user');currentUser=null;renderGuest();document.getElementById('userDropdown').classList.remove('open');}
 let _plansCache=null;
 async function renderPlans(){
   const grid=document.getElementById('plansGrid');
