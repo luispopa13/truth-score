@@ -870,6 +870,42 @@ let exIdx=0,lastResult=null,stepTimer=null,currentUser=null;
 const token=()=>localStorage.getItem('ts_token');
 function _getCookie(name){return(document.cookie.split(';').map(c=>c.trim()).find(c=>c.startsWith(name+'='))||'').split('=')[1]||'';}
 
+// ── Device fingerprint (sent as X-Browser-Fp header) ─────────
+// Canvas + WebGL + screen + timezone → SHA-256 → stable 64-char hex.
+// Backend takes MAX(ip_quota, fp_quota) so rotating either one alone doesn't help.
+let _browserFp = '';
+(async function _initFp(){
+  try{
+    const parts=[];
+    parts.push(navigator.language||'');
+    parts.push(screen.width+'x'+screen.height+'x'+screen.colorDepth);
+    parts.push(Intl.DateTimeFormat().resolvedOptions().timeZone||'');
+    parts.push(navigator.hardwareConcurrency||'');
+    parts.push(navigator.platform||'');
+    // Canvas fingerprint
+    try{
+      const cv=document.createElement('canvas');cv.width=200;cv.height=50;
+      const ctx=cv.getContext('2d');
+      ctx.textBaseline='top';ctx.font='14px Arial';
+      ctx.fillStyle='#f60';ctx.fillRect(125,1,62,20);
+      ctx.fillStyle='#069';ctx.fillText('TruthScore🔍',2,15);
+      ctx.fillStyle='rgba(102,204,0,0.7)';ctx.fillText('TruthScore🔍',4,17);
+      parts.push(cv.toDataURL().slice(-50));
+    }catch(e){}
+    // WebGL renderer
+    try{
+      const gl=document.createElement('canvas').getContext('webgl');
+      if(gl){const ext=gl.getExtension('WEBGL_debug_renderer_info');
+        if(ext)parts.push(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)||'');}
+    }catch(e){}
+    const raw=parts.join('|');
+    const buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(raw));
+    _browserFp=[...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('');
+  }catch(e){_browserFp=Math.random().toString(36).slice(2);}
+})();
+function _fp(){return _browserFp||'';}
+function _addFp(headers){if(_fp())headers['X-Browser-Fp']=_fp();return headers;}
+
 // ── Incognito / Private browsing detection ──────────────────
 (function detectIncognito(){
   const block = ()=>{
@@ -1016,6 +1052,7 @@ function onInput(){
     try{
       const hdr={'Content-Type':'application/json'};
       if(token())hdr['Authorization']='Bearer '+token();
+      _addFp(hdr);
       const r=await fetch(`${API}/detect-claims`,{method:'POST',headers:hdr,body:JSON.stringify({text:v.trim()})});
       if(!r.ok){prev.innerHTML='';return;}
       const {claims=[]}=await r.json();
@@ -1104,6 +1141,7 @@ async function runVerify(){
   try{
     const headers={'Content-Type':'application/json'};
     if(token())headers['Authorization']='Bearer '+token();
+    _addFp(headers);
     const fp=await getBrowserFingerprint();
     if(fp)headers['X-Browser-Fp']=fp;
     const isParagraph=text.length>220||((text.match(/[.!?]+(?:\s|$)/g)||[]).length>1)||(text.match(/,\s+[a-zA-ZÀ-ÖÙ-ÿ]/g)||[]).length>=2||(text.match(/[.!?][A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ]/g)||[]).length>=1;
