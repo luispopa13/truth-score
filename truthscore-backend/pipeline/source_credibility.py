@@ -247,7 +247,9 @@ def _rating_label(score: float) -> tuple[str, str]:
 
 def render_source_page(doc: dict, base_url: str) -> str:
     """Generate a self-contained SEO HTML page for one source domain."""
+    import html as _html
     domain = doc.get("domain", doc.get("_id", ""))
+    domain_h = _html.escape(domain)
     score = float(doc.get("reliability_score", 50))
     total = int(doc.get("total_sources", 0))
     sup = int(doc.get("supporting_count", 0))
@@ -256,11 +258,11 @@ def render_source_page(doc: dict, base_url: str) -> str:
     fc = int(doc.get("factcheck_count", 0))
     ac = int(doc.get("academic_count", 0))
     updated_at = (doc.get("last_updated") or "")[:10]
-    page_url = f"{base_url}/source/{domain}"
+    page_url = f"{base_url}/source/{domain_h}"
 
     label, color = _rating_label(score)
     iscore = round(score)
-    og_desc = f"{domain} reliability: {label} ({iscore}/100), based on {total:,} appearances as a source in TruthScore fact-checks."
+    og_desc = _html.escape(f"{domain} reliability: {label} ({iscore}/100), based on {total:,} appearances as a source in TruthScore fact-checks.")
 
     def _bar(name: str, val: int, c: str) -> str:
         pct = round(val / max(total, 1) * 100)
@@ -283,16 +285,16 @@ def render_source_page(doc: dict, base_url: str) -> str:
             "worstRating": 0,
             "ratingCount": total,
         },
-    }, ensure_ascii=False)
+    }, ensure_ascii=False).replace("</", "<\\/")
 
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{domain} — Source Reliability | TruthScore</title>
+<title>{domain_h} — Source Reliability | TruthScore</title>
 <meta name="description" content="{og_desc}">
-<meta property="og:title" content="{domain} — {label} ({iscore}/100)">
+<meta property="og:title" content="{domain_h} — {label} ({iscore}/100)">
 <meta property="og:description" content="{og_desc}">
 <meta property="og:url" content="{page_url}">
 <meta property="og:type" content="website">
@@ -337,7 +339,7 @@ footer a{{color:#6b7280}}
     <span class="nav-tag">Source Reliability</span>
   </nav>
 
-  <h1>{domain}</h1>
+  <h1>{domain_h}</h1>
   <div class="subttl">Credibility profile derived from real fact-check evidence</div>
 
   <div class="rating-card">

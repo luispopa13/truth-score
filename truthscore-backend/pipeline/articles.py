@@ -134,6 +134,7 @@ async def list_article_slugs_for_sitemap(db, limit: int = 5000) -> list[dict]:
 # ── HTML page renderer ──────────────────────────────────────
 
 def render_article_page(doc: dict, base_url: str) -> str:
+    import html as _html
     slug = doc.get("_id", "")
     url = doc.get("url", "")
     domain = doc.get("domain", "")
@@ -143,7 +144,12 @@ def render_article_page(doc: dict, base_url: str) -> str:
     claims = doc.get("claims") or []
     check_count = int(doc.get("check_count", 1))
     updated_at = (doc.get("updated_at") or "")[:10]
-    page_url = f"{base_url}/article/{slug}"
+    page_url = f"{base_url}/article/{_html.escape(slug)}"
+
+    # HTML-escaped copies for the visible/attribute contexts (raw kept for JSON-LD).
+    title_h = _html.escape(title)
+    url_h = _html.escape(url)
+    domain_h = _html.escape(domain)
 
     vlabel = _verdict_label(verdict)
     vcolor = _verdict_color(verdict)
@@ -155,14 +161,15 @@ def render_article_page(doc: dict, base_url: str) -> str:
         cvc = _verdict_color(cv)
         cs = int(c.get("score", 50))
         ce = {"TRUE": "✅", "FALSE": "❌"}.get(cv, "⚠️")
-        expl = (c.get("explanation") or "")[:300]
+        expl = _html.escape((c.get("explanation") or "")[:300])
+        claim_txt = _html.escape(c.get("claim", ""))
         expl_html = f'<p class="c-expl">{expl}</p>' if expl else ""
         return f"""<div class="claim-card">
   <div class="claim-head">
     <span class="c-chip" style="background:{cvc}">{ce} {cv}</span>
     <span class="c-score" style="color:{_score_color(cs)}">{cs}/100</span>
   </div>
-  <p class="c-text">{c.get('claim','')}</p>
+  <p class="c-text">{claim_txt}</p>
   {expl_html}
 </div>"""
 
@@ -182,19 +189,19 @@ def render_article_page(doc: dict, base_url: str) -> str:
             "bestRating": 100, "worstRating": 0, "alternateName": vlabel,
         },
         "itemReviewed": {"@type": "CreativeWork", "url": url, "name": title[:200]},
-    }, ensure_ascii=False)
+    }, ensure_ascii=False).replace("</", "<\\/")
 
-    domain_link = f'<a class="src-domain" href="{base_url}/source/{domain}">{domain}</a>' if domain else ""
+    domain_link = f'<a class="src-domain" href="{base_url}/source/{domain_h}">{domain_h}</a>' if domain else ""
 
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{title[:90]} — TruthScore Fact Check</title>
-<meta name="description" content="{og_desc}">
-<meta property="og:title" content="{vemoji} {title[:80]} — TruthScore">
-<meta property="og:description" content="{og_desc}">
+<title>{title_h[:90]} — TruthScore Fact Check</title>
+<meta name="description" content="{_html.escape(og_desc)}">
+<meta property="og:title" content="{vemoji} {title_h[:80]} — TruthScore">
+<meta property="og:description" content="{_html.escape(og_desc)}">
 <meta property="og:url" content="{page_url}">
 <meta property="og:type" content="article">
 <meta property="og:site_name" content="TruthScore">
@@ -239,8 +246,8 @@ footer a{{color:#6b7280}}
     <span class="nav-tag">Article Fact Check</span>
   </nav>
 
-  <h1>{title}</h1>
-  <div class="src-line">Source: <a href="{url}" target="_blank" rel="noopener nofollow">{url[:80]}</a> {("· " + domain_link) if domain_link else ""}</div>
+  <h1>{title_h}</h1>
+  <div class="src-line">Source: <a href="{url_h}" target="_blank" rel="noopener nofollow">{url_h[:80]}</a> {("· " + domain_link) if domain_link else ""}</div>
 
   <div class="verdict-row">
     <span class="v-chip">{vemoji} {vlabel}</span>

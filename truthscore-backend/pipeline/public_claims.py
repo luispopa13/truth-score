@@ -113,6 +113,7 @@ async def list_slugs_for_sitemap(db, limit: int = 5000) -> list[dict]:
 
 def render_claim_page(doc: dict, base_url: str) -> str:
     """Generate a fully self-contained SEO HTML page for a claim."""
+    import html as _html
     slug = doc.get("_id", "")
     claim = doc.get("claim", "")
     verdict = doc.get("verdict", "UNCERTAIN")
@@ -122,7 +123,12 @@ def render_claim_page(doc: dict, base_url: str) -> str:
     check_count = int(doc.get("check_count", 1))
     updated_at = (doc.get("updated_at") or "")[:10]
     sources = doc.get("sources") or []
-    page_url = f"{base_url}/claim/{slug}"
+    page_url = f"{base_url}/claim/{_html.escape(slug)}"
+
+    # HTML-escaped copies for visible/attribute contexts (raw kept for JSON-LD).
+    claim_h = _html.escape(claim)
+    explanation_h = _html.escape(explanation)
+    topic_h = _html.escape(topic)
 
     vlabel = _verdict_label(verdict)
     vcolor = _verdict_color(verdict)
@@ -137,15 +143,15 @@ def render_claim_page(doc: dict, base_url: str) -> str:
                ("SUPPORTING", "SUPPORTS", "SUPPORT", "CONTRADICTING", "CONTRADICTS", "CONTRADICT")]
 
     def _src_html(s: dict, color: str) -> str:
-        pub = s.get("publisher") or ""
-        title = (s.get("title") or "")[:90]
-        snippet = (s.get("snippet") or "")[:200]
-        url = s.get("url") or "#"
+        pub = _html.escape(s.get("publisher") or "")
+        title = _html.escape((s.get("title") or "")[:90])
+        snippet = _html.escape((s.get("snippet") or "")[:200])
+        url = _html.escape(s.get("url") or "#")
         ci = s.get("claim_index", -1)
-        badge = f'<span class="ci-badge">sub-claim #{ci + 1}</span>' if ci >= 0 else ""
+        badge = f'<span class="ci-badge">sub-claim #{int(ci) + 1}</span>' if isinstance(ci, int) and ci >= 0 else ""
         snip_html = f'<p class="snip">"{snippet}"</p>' if snippet else ""
         return f"""<div class="src-card" style="border-left:3px solid {color}">
-  <a href="{url}" target="_blank" rel="noopener noreferrer" class="src-title">{title or pub or url}</a>
+  <a href="{url}" target="_blank" rel="noopener noreferrer nofollow" class="src-title">{title or pub or url}</a>
   {snip_html}
   <span class="src-pub">{pub}</span>{badge}
 </div>"""
@@ -161,8 +167,10 @@ def render_claim_page(doc: dict, base_url: str) -> str:
         cards = "".join(_src_html(s, "#6b7280") for s in neutral[:6])
         src_sections += f'<h3 class="src-grp-hd">Sources</h3><div class="src-group">{cards}</div>'
 
-    topic_meta = f" | {topic}" if topic else ""
-    og_desc = f"{verdict_emoji} {vlabel} (score {score}/100) — {explanation[:140]}" if explanation else f"{verdict_emoji} {vlabel} — score {score}/100"
+    og_desc = _html.escape(
+        f"{verdict_emoji} {vlabel} (score {score}/100) — {explanation[:140]}"
+        if explanation else f"{verdict_emoji} {vlabel} — score {score}/100"
+    )
 
     # JSON-LD ClaimReview (Google rich result for fact-checks)
     import json as _json
@@ -184,22 +192,22 @@ def render_claim_page(doc: dict, base_url: str) -> str:
             "@type": "Claim",
             "name": claim,
         },
-    }, ensure_ascii=False)
+    }, ensure_ascii=False).replace("</", "<\\/")
 
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{claim[:100]} — TruthScore Fact Check</title>
+<title>{claim_h[:100]} — TruthScore Fact Check</title>
 <meta name="description" content="{og_desc}">
-<meta property="og:title" content="{verdict_emoji} {claim[:90]} — TruthScore">
+<meta property="og:title" content="{verdict_emoji} {claim_h[:90]} — TruthScore">
 <meta property="og:description" content="{og_desc}">
 <meta property="og:url" content="{page_url}">
 <meta property="og:type" content="article">
 <meta property="og:site_name" content="TruthScore">
 <meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="{verdict_emoji} {claim[:90]}">
+<meta name="twitter:title" content="{verdict_emoji} {claim_h[:90]}">
 <meta name="twitter:description" content="{og_desc}">
 <link rel="canonical" href="{page_url}">
 <script type="application/ld+json">{jsonld}</script>
@@ -241,10 +249,10 @@ footer{{margin-top:40px;text-align:center;font-size:12px;color:#4b5563}}
   <nav class="nav">
     <a class="logo" href="{base_url}">TruthScore</a>
     <span class="nav-tag">Fact Check</span>
-    {"<span class='nav-tag'>"+topic+"</span>" if topic else ""}
+    {"<span class='nav-tag'>"+topic_h+"</span>" if topic else ""}
   </nav>
 
-  <h1>{claim}</h1>
+  <h1>{claim_h}</h1>
 
   <div class="verdict-row">
     <span class="v-chip">{verdict_emoji} {vlabel}</span>
@@ -258,10 +266,10 @@ footer{{margin-top:40px;text-align:center;font-size:12px;color:#4b5563}}
   <div class="meta">
     <span>Checked {check_count:,} time{"s" if check_count != 1 else ""}</span>
     {"<span>Last updated: " + updated_at + "</span>" if updated_at else ""}
-    {"<span>Topic: " + topic + "</span>" if topic else ""}
+    {"<span>Topic: " + topic_h + "</span>" if topic else ""}
   </div>
 
-  {"<div class='explanation'>" + explanation + "</div>" if explanation else ""}
+  {"<div class='explanation'>" + explanation_h + "</div>" if explanation else ""}
 
   {src_sections if sources else ""}
 
