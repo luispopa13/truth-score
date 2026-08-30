@@ -22,7 +22,7 @@ import hashlib as _hashlib
 from datetime import datetime, timezone
 from typing import Optional as _Optional
 from fastapi import Response, UploadFile, File
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse, HTMLResponse
 from pydantic import BaseModel
 from pipeline.case_study import log_interaction
 from pipeline.verdict_store import save_verdict, load_verdict
@@ -423,6 +423,30 @@ async def verify(req: VerifyRequest, response: Response,
                            result.score, result.topic)
     except Exception as e:
         print(f"[TRENDING] record skipped (non-fatal): {e}")
+
+    # Public claim page (best-effort): upsert a permanent SEO-indexed page
+    # for this claim at /claim/{slug}.
+    try:
+        from auth import get_db
+        from pipeline.public_claims import upsert_public_claim
+        all_src = [
+            *(result.supporting or []),
+            *(result.contradicting or []),
+            *(result.neutral_sources or []),
+        ]
+        _slug = await upsert_public_claim(
+            get_db(),
+            claim=result.claim,
+            verdict=result.verdict,
+            score=result.score,
+            sources=[s.model_dump() if hasattr(s, "model_dump") else s for s in all_src],
+            explanation=getattr(result, "aggregate_reason", "") or "",
+            topic=result.topic or "",
+        )
+        if _slug:
+            response.headers["X-TruthScore-Claim-Slug"] = _slug
+    except Exception as e:
+        print(f"[PUBLIC-CLAIMS] upsert skipped (non-fatal): {e}")
 
     # Internal telemetry records model choices before this point. Public clients
     # receive no provider/model metadata, which also keeps the API contract clean.
@@ -1859,6 +1883,36 @@ async def answer_daily_challenge(req: ChallengeAnswerRequest):
     from api.challenge import answer_challenge
     db = get_db()
     return await answer_challenge(db, req.id, req.guess)
+
+
+# ── Public Claim Pages (SEO-indexed) ─────────────────────
+@app.get("/claim/{slug}", response_class=HTMLResponse)
+async def public_claim_page(slug: str):
+    """Serve a permanent, Google-indexed fact-check page for a claim."""
+    from auth import get_db
+    from pipeline.public_claims import get_public_claim, render_claim_page
+    doc = await get_public_claim(get_db(), slug)
+    if not doc:
+        raise HTTPException(404, "Claim not found")
+    return HTMLResponse(render_claim_page(doc, PUBLIC_BASE_URL))
+
+
+@app.get("/sitemap.xml", response_class=PlainTextResponse)
+async def sitemap_xml():
+    """XML sitemap listing all public claim pages for Google Search Console."""
+    from auth import get_db
+    from pipeline.public_claims import list_slugs_for_sitemap
+    slugs = await list_slugs_for_sitemap(get_db(), limit=5000)
+    lines = ['<?xml version="1.0" encoding="UTF-8"?>',
+             '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+             f'  <url><loc>{PUBLIC_BASE_URL}/</loc><priority>1.0</priority></url>']
+    for row in slugs:
+        loc = f"{PUBLIC_BASE_URL}/claim/{row['_id']}"
+        lastmod = (row.get("updated_at") or "")[:10]
+        mod_tag = f"<lastmod>{lastmod}</lastmod>" if lastmod else ""
+        lines.append(f"  <url><loc>{loc}</loc>{mod_tag}<priority>0.8</priority></url>")
+    lines.append("</urlset>")
+    return PlainTextResponse("\n".join(lines), media_type="application/xml")
 
 
 # ── Webhooks (authenticated) ──────────────────────────────
