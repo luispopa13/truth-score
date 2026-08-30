@@ -2466,6 +2466,22 @@ async def service_worker():
 
 @app.get("/widget.js")
 async def widget(user_key: str = ""):
+    # Resolve API key → user → plan; widget requires Pro or higher
+    if user_key:
+        try:
+            from auth import get_db
+            import hashlib as _hl
+            db = get_db()
+            doc = await db.api_keys.find_one({"key_hash": _hl.sha256(user_key.encode()).hexdigest(), "active": True})
+            if doc:
+                u = await db.users.find_one({"_id": __import__("bson").ObjectId(doc["user_id"])})
+                plan_name = (u or {}).get("plan", "free")
+                from auth import _get_plans
+                if not _get_plans().get(plan_name, {}).get("widget", False):
+                    from fastapi.responses import PlainTextResponse as _PTR
+                    return _PTR("console.error('[TruthScore] Widget requires Pro plan or higher.');", media_type="application/javascript")
+        except Exception:
+            pass
     return await widget_script(user_key)
 
 
