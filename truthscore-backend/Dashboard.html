@@ -316,18 +316,32 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
 .footer-links a{color:var(--text2);text-decoration:none;transition:color .15s}
 .footer-links a:hover{color:var(--text)}
 @media(max-width:768px){
-  header{padding:0 20px}
-  main{padding:40px 16px 60px}
-  .hero-title{letter-spacing:-1px}
+  header{padding:0 14px}
+  main{padding:32px 12px 60px}
+  .hero-title{letter-spacing:-1px;font-size:clamp(22px,6vw,36px)}
   .result-wrap.active{grid-template-columns:1fr}
   .score-card{position:static}
-  footer{padding:18px 20px}
+  footer{padding:18px 16px}
+  .verify-card{padding:16px}
+  .tab-row{gap:4px}
+  .tab{padding:7px 10px;font-size:12px}
+  .score-num{font-size:clamp(32px,10vw,64px)}
+  .fb-row{gap:4px}
+  .fbbtn{padding:6px 8px;font-size:15px}
+  .modal{max-width:calc(100vw - 24px)!important;margin:12px!important;max-height:88vh;overflow-y:auto}
 }
 @media(max-width:480px){
-  .verify-card{padding:20px}
+  .verify-card{padding:14px}
   .plans-grid{grid-template-columns:1fr}
   .btn-row{flex-wrap:wrap}
   .btn-primary{order:-1;width:100%}
+  .hero-sub{font-size:13px}
+  .src{padding:8px 10px}
+  .src-title{font-size:12px}
+  .result-wrap.active{gap:12px}
+  .score-card{padding:16px}
+  textarea{font-size:16px!important} /* Prevents iOS zoom on focus */
+  input[type=text],input[type=email],input[type=password]{font-size:16px!important}
 }
 /* ── Feature: Live claim preview ── */
 .claim-preview{margin:8px 0 0;display:flex;flex-wrap:wrap;gap:6px;align-items:flex-start;min-height:0}
@@ -357,6 +371,7 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
     </div>
     <button class="hbtn hbtn-ghost" onclick="openTrending()" title="Trending claims">🔥</button>
     <button class="hbtn hbtn-ghost" onclick="openChallenge()" title="Daily challenge">🎯</button>
+    <button class="hbtn hbtn-ghost" id="pushBtn" onclick="togglePushNotifications()" title="Enable push notifications" style="display:none">🔔</button>
     <div id="guestBtns" style="display:flex;gap:8px">
       <button class="hbtn hbtn-ghost" onclick="showAuth('login')" data-i18n="login">Log in</button>
       <button class="hbtn hbtn-solid" onclick="showAuth('register')" data-i18n="signupFree">Free account →</button>
@@ -1690,15 +1705,31 @@ function renderScore(d){
 function shareResult(d){
   const text=(d&&d.claim)||document.getElementById('claimInput').value.trim();
   if(!text)return;
-  // Prefer the permanent verdict permalink (the shareable, unfurling snapshot).
-  // Fall back to a prefilled re-check link only when no verdict id was returned.
+  // Prefer public claim page slug for SEO sharing, then verdict permalink, then re-check link
+  const slug=(d&&d._claimSlug)||(lastResult&&lastResult._claimSlug)||'';
   const vid=(d&&d._verdictId)||(lastResult&&lastResult._verdictId)||'';
-  const url=vid?(location.origin+'/v/'+vid)
+  const url=slug?(location.origin+'/claim/'+slug)
+              :vid?(location.origin+'/v/'+vid)
               :(location.origin+'/?claim='+encodeURIComponent(text));
-  const done=()=>toast(LANG==='ro'?'Link copiat!':'Link copied!','ok');
-  if(navigator.share){navigator.share({title:'TruthScore',text:text,url:url}).catch(()=>{});return;}
-  if(navigator.clipboard){navigator.clipboard.writeText(url).then(done).catch(()=>prompt('Copy link:',url));}
-  else{prompt('Copy link:',url);}
+  const verdict=(d&&d.verdict)||'';
+  const score=(d&&d.score)||0;
+  const emoji=verdict==='TRUE'?'✅':verdict==='FALSE'?'❌':'⚠️';
+  const shareText=`${emoji} "${text.slice(0,100)}" — ${verdict} (${score}/100) via TruthScore`;
+  // Show share menu
+  const existing=document.getElementById('ts-share-menu');
+  if(existing){existing.remove();return;}
+  const btn=document.getElementById('shareBtn');
+  const rect=btn?btn.getBoundingClientRect():{top:200,left:200,bottom:220};
+  const menu=document.createElement('div');
+  menu.id='ts-share-menu';
+  Object.assign(menu.style,{position:'fixed',top:(rect.bottom+4)+'px',left:Math.min(rect.left,window.innerWidth-200)+'px',background:'#1a1a2e',border:'1px solid #2a2a3e',borderRadius:'10px',padding:'8px',zIndex:'9998',minWidth:'180px',boxShadow:'0 8px 32px rgba(0,0,0,.5)'});
+  const item=(icon,label,action)=>{const b=document.createElement('button');b.textContent=icon+' '+label;Object.assign(b.style,{display:'block',width:'100%',background:'none',border:'none',color:'#e2e8f0',padding:'8px 12px',cursor:'pointer',fontSize:'13px',textAlign:'left',borderRadius:'6px'});b.onmouseenter=()=>b.style.background='#2a2a3e';b.onmouseleave=()=>b.style.background='none';b.onclick=()=>{menu.remove();action();};return b;};
+  menu.appendChild(item('💬','WhatsApp',()=>window.open('https://api.whatsapp.com/send?text='+encodeURIComponent(shareText+' '+url),'_blank')));
+  menu.appendChild(item('🐦','Twitter / X',()=>window.open('https://twitter.com/intent/tweet?text='+encodeURIComponent(shareText)+'&url='+encodeURIComponent(url),'_blank')));
+  menu.appendChild(item('🔗','Copy link',()=>{if(navigator.clipboard){navigator.clipboard.writeText(url).then(()=>toast(LANG==='ro'?'Link copiat!':'Link copied!','ok'));}else{prompt('Copy:',url);}}));
+  if(navigator.share)menu.appendChild(item('📤','Share…',()=>navigator.share({title:'TruthScore',text:shareText,url}).catch(()=>{})));
+  document.body.appendChild(menu);
+  setTimeout(()=>document.addEventListener('click',function h(e){if(!menu.contains(e.target)){menu.remove();document.removeEventListener('click',h);}},{once:false}),100);
 }
 function renderSources(d){
   const sup=d.supporting||[],con=d.contradicting||[],neu=d.neutral_sources||[];
@@ -2475,7 +2506,28 @@ async function openChallenge(){
         <button class="form-btn" style="background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.3);color:#ef4444;flex:1" onclick="submitChallenge('FALSE')">❌ FALSE</button>
         <button class="form-btn" style="background:rgba(234,179,8,.15);border:1px solid rgba(234,179,8,.3);color:#eab308;flex:1" onclick="submitChallenge('UNCERTAIN')">⚠️ UNCERTAIN</button>
       </div>
-      <div id="challengeResult" style="margin-top:16px"></div>`;
+      <div id="challengeResult" style="margin-top:16px"></div>
+      <div id="challengeLeaderboard" style="margin-top:20px"></div>`;
+  // Load leaderboard in background
+  fetch('/challenge/leaderboard').then(r=>r.json()).then(data=>{
+    const lb=document.getElementById('challengeLeaderboard');
+    if(!lb||!data.leaderboard||!data.leaderboard.length)return;
+    const rows=data.leaderboard.map(u=>`<tr>
+      <td style="padding:6px 8px;color:#6b7280;font-size:12px">#${u.rank}</td>
+      <td style="padding:6px 8px;font-size:13px;color:#e2e8f0">${esc(u.name)}</td>
+      <td style="padding:6px 8px;font-size:13px;color:#22c55e;text-align:right">${u.correct}</td>
+      <td style="padding:6px 8px;font-size:12px;color:#6b7280;text-align:right">${u.accuracy}%</td>
+    </tr>`).join('');
+    lb.innerHTML=`<div style="font-size:12px;font-weight:600;color:#6b7280;letter-spacing:1px;margin-bottom:8px">🏆 LEADERBOARD</div>
+    <table style="width:100%;border-collapse:collapse;background:#1a1a2e;border-radius:8px;overflow:hidden">
+      <thead><tr style="background:#2a2a3e">
+        <th style="padding:6px 8px;font-size:11px;color:#6b7280;text-align:left">#</th>
+        <th style="padding:6px 8px;font-size:11px;color:#6b7280;text-align:left">User</th>
+        <th style="padding:6px 8px;font-size:11px;color:#6b7280;text-align:right">✓</th>
+        <th style="padding:6px 8px;font-size:11px;color:#6b7280;text-align:right">Acc</th>
+      </tr></thead><tbody>${rows}</tbody>
+    </table>`;
+  }).catch(()=>{});
   }catch(e){c.innerHTML=`<div class="modal-title">🎯 Daily Challenge</div><div style="color:var(--text2);font-size:13px;padding:8px 0">No challenge available today.</div>`;}
 }
 async function submitChallenge(guess){
@@ -2495,6 +2547,96 @@ async function submitChallenge(guess){
       </div>`;
   }catch(e){toast('Error: '+e.message,'err');}
 }
+
+// ── Push Notifications ─────────────────────────────────────────
+let _pushSubscription = null;
+async function initPushButton(){
+  if(!('serviceWorker' in navigator) || !('PushManager' in window))return;
+  const btn = document.getElementById('pushBtn');
+  if(!btn)return;
+  btn.style.display = '';
+  // Check if already subscribed
+  try{
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if(sub){ _pushSubscription = sub; btn.textContent = '🔕'; btn.title = 'Disable push notifications'; }
+    else { btn.textContent = '🔔'; btn.title = 'Enable push notifications'; }
+  }catch(e){}
+}
+async function togglePushNotifications(){
+  try{
+    const reg = await navigator.serviceWorker.ready;
+    if(_pushSubscription){
+      await _pushSubscription.unsubscribe();
+      _pushSubscription = null;
+      const btn = document.getElementById('pushBtn');
+      if(btn){btn.textContent='🔔';btn.title='Enable push notifications';}
+      toast('Push notifications disabled','ok');
+      if(token()) fetch('/push/subscribe?endpoint='+encodeURIComponent(_pushSubscription?.endpoint||''),{method:'DELETE',headers:{'Authorization':'Bearer '+token()}}).catch(()=>{});
+      return;
+    }
+    const permResult = await Notification.requestPermission();
+    if(permResult !== 'granted'){ toast('Notifications blocked in browser settings','err'); return; }
+    // Get VAPID public key
+    const kr = await fetch('/push/vapid-key');
+    const {public_key} = await kr.json();
+    if(!public_key){ toast('Push not configured on server','err'); return; }
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: _urlBase64ToUint8Array(public_key),
+    });
+    _pushSubscription = sub;
+    const btn = document.getElementById('pushBtn');
+    if(btn){btn.textContent='🔕';btn.title='Disable push notifications';}
+    // Send subscription to backend
+    if(token()){
+      await fetch('/push/subscribe',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token()},body:JSON.stringify({subscription:sub.toJSON()})});
+    }
+    toast('Push notifications enabled! You\'ll be notified when watched claims change.','ok');
+  }catch(e){ toast('Could not enable notifications: '+e.message,'err'); }
+}
+function _urlBase64ToUint8Array(b64){
+  const pad=b64.length%4===0?b64:b64+'='.repeat(4-b64.length%4);
+  const raw=atob(pad.replace(/-/g,'+').replace(/_/g,'/'));
+  return Uint8Array.from([...raw].map(c=>c.charCodeAt(0)));
+}
+// Init push button once SW is ready
+if('serviceWorker' in navigator) navigator.serviceWorker.ready.then(()=>initPushButton()).catch(()=>{});
+
+// ── Onboarding modal (shows once to first-time visitors) ───────
+(function(){
+  if(localStorage.getItem('ts_onboarded'))return;
+  const steps=[
+    {icon:'🔍',title:'Paste any claim',desc:'Type or paste any statement — a news headline, a fact you heard, a political claim. TruthScore handles any language.'},
+    {icon:'📡',title:'AI searches real sources',desc:'We search academic papers, news databases, Wikipedia, and government sources in seconds — then score each piece of evidence.'},
+    {icon:'✅',title:'Get a verdict with proof',desc:'See TRUE / FALSE / UNCERTAIN with a 0–100 score, the exact sources used, and a public link you can share.'},
+  ];
+  let step=0;
+  const ov=document.createElement('div');
+  ov.id='ts-onboard-overlay';
+  Object.assign(ov.style,{position:'fixed',inset:'0',background:'rgba(0,0,0,.7)',zIndex:'10000',display:'flex',alignItems:'center',justifyContent:'center',padding:'16px'});
+  function render(){
+    const s=steps[step];
+    ov.innerHTML=`<div style="background:#1a1a2e;border-radius:16px;padding:32px 28px;max-width:440px;width:100%;border:1px solid #2a2a3e;text-align:center">
+      <div style="font-size:48px;margin-bottom:12px">${s.icon}</div>
+      <div style="font-size:11px;color:#6b7280;letter-spacing:2px;margin-bottom:8px">STEP ${step+1} OF ${steps.length}</div>
+      <h2 style="font-size:20px;font-weight:700;color:#f1f5f9;margin-bottom:10px">${s.title}</h2>
+      <p style="font-size:14px;color:#94a3b8;line-height:1.6;margin-bottom:24px">${s.desc}</p>
+      <div style="display:flex;gap:8px;justify-content:center;margin-bottom:16px">
+        ${steps.map((_,i)=>`<div style="width:8px;height:8px;border-radius:50%;background:${i===step?'#a78bfa':'#2a2a3e'}"></div>`).join('')}
+      </div>
+      ${step<steps.length-1
+        ?`<button onclick="window._onboardNext()" style="width:100%;padding:12px;background:#6d28d9;color:#fff;border:none;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer">Next →</button>`
+        :`<button onclick="window._onboardDone()" style="width:100%;padding:12px;background:#6d28d9;color:#fff;border:none;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer">Start fact-checking →</button>`
+      }
+      <div style="margin-top:12px"><button onclick="window._onboardDone()" style="background:none;border:none;color:#6b7280;font-size:13px;cursor:pointer">Skip</button></div>
+    </div>`;
+  }
+  window._onboardNext=()=>{step++;render();};
+  window._onboardDone=()=>{ov.remove();localStorage.setItem('ts_onboarded','1');};
+  render();
+  document.body.appendChild(ov);
+})();
 
 // ── Cookie consent ──────────────────────────────────────────────
 (function(){

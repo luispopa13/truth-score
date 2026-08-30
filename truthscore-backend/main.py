@@ -15,6 +15,7 @@ from pipeline.aggregate import aggregate_score, sub_claim_weight
 from pipeline.helpers import split_claims
 
 # User case study logging (MSc thesis evaluation data collection) -- new, self-contained
+import asyncio
 import time
 import json
 import secrets as _secrets
@@ -423,6 +424,17 @@ async def verify(req: VerifyRequest, response: Response,
                            result.score, result.topic)
     except Exception as e:
         print(f"[TRENDING] record skipped (non-fatal): {e}")
+
+    # Push notifications to claim watchers (best-effort)
+    try:
+        from auth import get_db
+        from api.push_notifications import notify_claim_watchers
+        _slug = getattr(result, '_claimSlug', '') or ''
+        asyncio.create_task(notify_claim_watchers(
+            get_db(), result.claim, result.verdict, _slug
+        ))
+    except Exception as e:
+        print(f"[PUSH] notify watchers skipped: {e}")
 
     # Public claim page (best-effort): upsert a permanent SEO-indexed page
     # for this claim at /claim/{slug}.
@@ -1970,11 +1982,54 @@ class ChallengeAnswerRequest(BaseModel):
     guess: str
 
 @app.post("/challenge/answer")
-async def answer_daily_challenge(req: ChallengeAnswerRequest):
+async def answer_daily_challenge(req: ChallengeAnswerRequest, user=Depends(get_current_user)):
     from auth import get_db
-    from api.challenge import answer_challenge
+    from api.challenge import answer_challenge, submit_challenge_score
     db = get_db()
-    return await answer_challenge(db, req.id, req.guess)
+    result = await answer_challenge(db, req.id, req.guess)
+    # Record score for logged-in users
+    if user:
+        try:
+            await submit_challenge_score(db, user["id"], req.id, result.get("correct", False))
+        except Exception:
+            pass
+    return result
+
+
+@app.get("/challenge/leaderboard")
+async def challenge_leaderboard(limit: int = 10):
+    """Top 10 users by correct challenge answers."""
+    try:
+        from auth import get_db
+        from api.challenge import get_leaderboard
+        return {"leaderboard": await get_leaderboard(get_db(), limit=min(limit, 50))}
+    except Exception:
+        return {"leaderboard": []}
+
+
+# ── Web Push Notifications ────────────────────────────────
+@app.get("/push/vapid-key")
+async def push_vapid_key():
+    """Return the VAPID public key for Web Push subscription."""
+    from api.push_notifications import get_vapid_public_key
+    return {"public_key": get_vapid_public_key()}
+
+class PushSubscribeRequest(BaseModel):
+    subscription: dict
+
+@app.post("/push/subscribe")
+async def push_subscribe(req: PushSubscribeRequest, user=Depends(require_user)):
+    from auth import get_db
+    from api.push_notifications import subscribe
+    ok = await subscribe(get_db(), user["id"], req.subscription)
+    return {"ok": ok}
+
+@app.delete("/push/subscribe")
+async def push_unsubscribe(endpoint: str, user=Depends(require_user)):
+    from auth import get_db
+    from api.push_notifications import unsubscribe
+    ok = await unsubscribe(get_db(), endpoint, user["id"])
+    return {"ok": ok}
 
 
 # ── Public Claim Pages (SEO-indexed) ─────────────────────
@@ -1987,6 +2042,49 @@ async def public_claim_page(slug: str):
     if not doc:
         raise HTTPException(404, "Claim not found")
     return HTMLResponse(render_claim_page(doc, PUBLIC_BASE_URL))
+
+
+@app.get("/claim/{slug}/og.svg", response_class=PlainTextResponse)
+async def claim_og_svg(slug: str):
+    """SVG share card for a claim — used as OG image for social sharing."""
+    from auth import get_db
+    from pipeline.public_claims import get_public_claim
+    doc = await get_public_claim(get_db(), slug)
+    if not doc:
+        raise HTTPException(404, "Claim not found")
+
+    claim = (doc.get("claim") or "")[:120]
+    verdict = doc.get("verdict", "UNCERTAIN")
+    score = int(doc.get("score", 50))
+
+    vcolors = {"TRUE": "#22c55e", "FALSE": "#ef4444"}
+    vcolor = vcolors.get(verdict, "#f59e0b")
+    vemoji = {"TRUE": "✅", "FALSE": "❌"}.get(verdict, "⚠️")
+    scolor = "#22c55e" if score >= 70 else ("#f59e0b" if score >= 40 else "#ef4444")
+
+    # Wrap claim text at ~45 chars per line, max 3 lines
+    import textwrap
+    lines = textwrap.wrap(claim, 45)[:3]
+    claim_svg_lines = "".join(
+        f'<text x="40" y="{180 + i*38}" font-size="22" fill="#e2e8f0" font-family="system-ui,sans-serif">{l}</text>'
+        for i, l in enumerate(lines)
+    )
+    bar_w = int(score * 5.2)  # 520px max width for score bar
+
+    svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="600" height="320" viewBox="0 0 600 320">
+  <rect width="600" height="320" fill="#0f0f17" rx="16"/>
+  <rect x="0" y="0" width="4" height="320" fill="{vcolor}" rx="2"/>
+  <text x="40" y="60" font-size="14" fill="#6b7280" font-family="system-ui,sans-serif" font-weight="600" letter-spacing="2">TRUTHSCORE FACT CHECK</text>
+  <text x="40" y="110" font-size="14" fill="#9ca3af" font-family="system-ui,sans-serif">Claim:</text>
+  {claim_svg_lines}
+  <rect x="40" y="{220 + len(lines)*38}" width="{bar_w}" height="8" fill="{scolor}" rx="4"/>
+  <rect x="40" y="{220 + len(lines)*38}" width="520" height="8" fill="#2a2a3e" rx="4"/>
+  <text x="40" y="{220 + len(lines)*38 + 8}" dominant-baseline="auto" font-size="14" fill="{scolor}" font-family="system-ui,sans-serif" font-weight="700" dy="24">{score}/100</text>
+  <rect x="430" y="60" width="130" height="44" fill="{vcolor}22" rx="22"/>
+  <text x="495" y="89" font-size="20" fill="{vcolor}" font-family="system-ui,sans-serif" font-weight="800" text-anchor="middle">{vemoji} {verdict}</text>
+  <text x="40" y="305" font-size="12" fill="#4b5563" font-family="system-ui,sans-serif">truthscore.app</text>
+</svg>'''
+    return PlainTextResponse(svg, media_type="image/svg+xml")
 
 
 @app.get("/sitemap.xml", response_class=PlainTextResponse)

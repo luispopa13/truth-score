@@ -25,3 +25,22 @@ self.addEventListener('fetch', e => {
     fetch(e.request).catch(() => caches.match(OFFLINE_URL))
   );
 });
+
+self.addEventListener('push', function(e) {
+  let data = {title: 'TruthScore', body: 'New fact-check update', url: '/'};
+  try { data = e.data ? JSON.parse(e.data.text()) : data; } catch(_) {}
+  e.waitUntil(
+    self.registration.showNotification(data.title, {
+      body: data.body,
+      icon: '/static/icon-192.png',
+      badge: '/static/icon-192.png',
+      data: { url: data.url },
+      actions: [{ action: 'open', title: 'Open' }]
+    })
+  );
+});
+self.addEventListener('notificationclick', function(e) {
+  e.notification.close();
+  const url = (e.notification.data && e.notification.data.url) || '/';
+  e.waitUntil(clients.openWindow(url));
+});

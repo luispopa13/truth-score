@@ -146,3 +146,60 @@ async def answer_challenge(db, challenge_id: str, guess: str) -> dict:
     except Exception as e:
         print(f"[CHALLENGE] answer_challenge error: {e}")
         raise
+
+
+async def submit_challenge_score(db, user_id: str, challenge_id: str, correct: bool) -> bool:
+    """Record a challenge attempt for leaderboard tracking."""
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        today = date.today().isoformat()
+        await db.challenge_scores.update_one(
+            {"user_id": user_id, "date": today},
+            {
+                "$set": {"updated_at": now, "date": today, "user_id": user_id},
+                "$inc": {"attempts": 1, "correct": 1 if correct else 0},
+                "$setOnInsert": {"created_at": now},
+            },
+            upsert=True,
+        )
+        return True
+    except Exception as e:
+        print(f"[CHALLENGE] submit_score error: {e}")
+        return False
+
+
+async def get_leaderboard(db, limit: int = 10) -> list:
+    """Top users by total correct answers (all time)."""
+    try:
+        pipeline = [
+            {"$group": {"_id": "$user_id", "correct": {"$sum": "$correct"}, "attempts": {"$sum": "$attempts"}}},
+            {"$match": {"attempts": {"$gte": 1}}},
+            {"$sort": {"correct": -1}},
+            {"$limit": limit},
+        ]
+        docs = await db.challenge_scores.aggregate(pipeline).to_list(length=limit)
+        # Enrich with user display name from users collection
+        result = []
+        for i, d in enumerate(docs):
+            try:
+                from bson import ObjectId
+                u = await db.users.find_one({"_id": ObjectId(d["_id"])}, {"name": 1, "email": 1})
+                name = (u or {}).get("name") or (u or {}).get("email", "Anonymous")
+                # Mask email for privacy: show only first 2 chars + domain
+                if "@" in name and name == (u or {}).get("email", ""):
+                    parts = name.split("@")
+                    name = parts[0][:2] + "***@" + parts[1]
+            except Exception:
+                name = "Anonymous"
+            pct = round(d["correct"] / max(d["attempts"], 1) * 100)
+            result.append({
+                "rank": i + 1,
+                "name": name,
+                "correct": d["correct"],
+                "attempts": d["attempts"],
+                "accuracy": pct,
+            })
+        return result
+    except Exception as e:
+        print(f"[CHALLENGE] leaderboard error: {e}")
+        return []
