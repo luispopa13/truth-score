@@ -2495,6 +2495,16 @@ async function submitChallenge(guess){
       </div>`;
   }catch(e){toast('Error: '+e.message,'err');}
 }
+
+// ── Cookie consent ──────────────────────────────────────────────
+(function(){
+  if(localStorage.getItem('ts_cookie_ok'))return;
+  const b=document.createElement('div');
+  b.id='cookie-banner';
+  b.innerHTML=`<span>TruthScore uses cookies for authentication and analytics. <a href="/privacy" target="_blank" style="color:#a78bfa">Privacy Policy</a> · <a href="/terms" target="_blank" style="color:#a78bfa">Terms</a></span><button onclick="document.getElementById('cookie-banner').remove();localStorage.setItem('ts_cookie_ok','1')" style="background:#6d28d9;color:#fff;border:none;border-radius:6px;padding:6px 14px;cursor:pointer;font-size:13px;font-weight:600;white-space:nowrap">OK</button>`;
+  Object.assign(b.style,{position:'fixed',bottom:'0',left:'0',right:'0',background:'#1a1a2e',borderTop:'1px solid #2a2a3e',padding:'12px 20px',display:'flex',alignItems:'center',justifyContent:'space-between',gap:'12px',zIndex:'9999',fontSize:'13px',color:'#94a3b8',flexWrap:'wrap'});
+  document.body.appendChild(b);
+})();
 </script>
 </body>
 </html>

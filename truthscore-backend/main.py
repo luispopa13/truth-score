@@ -1511,6 +1511,61 @@ async def privacy_policy():
     return HTMLResponse(_PRIVACY_HTML)
 
 
+_TERMS_HTML = """<!doctype html><html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Terms of Service — TruthScore</title>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f0f17;color:#e2e8f0;max-width:760px;margin:0 auto;padding:40px 20px}
+h1{color:#a78bfa;margin-bottom:8px}h2{color:#c4b5fd;margin-top:32px}p,li{line-height:1.7;color:#cbd5e1}
+a{color:#a78bfa}nav{margin-bottom:32px;padding-bottom:16px;border-bottom:1px solid #2a2a3e}
+footer{margin-top:60px;padding-top:16px;border-top:1px solid #2a2a3e;font-size:13px;color:#4b5563}</style>
+</head><body>
+<nav><a href="/">← TruthScore</a></nav>
+<h1>Terms of Service</h1>
+<p><strong>Last updated: 2026-01-01</strong></p>
+
+<h2>1. Acceptance</h2>
+<p>By using TruthScore ("Service"), you agree to these Terms. If you disagree, do not use the Service.</p>
+
+<h2>2. Description of Service</h2>
+<p>TruthScore is an AI-assisted fact-checking platform. It analyzes claims using publicly available sources and large language models. Results are informational and should not be treated as legal, medical, or financial advice.</p>
+
+<h2>3. Accuracy Disclaimer</h2>
+<p>TruthScore uses AI and automated retrieval. Verdicts may be incorrect. Always verify critical information with authoritative sources. TruthScore does not guarantee the accuracy of any fact-check result.</p>
+
+<h2>4. User Accounts</h2>
+<p>You are responsible for maintaining the security of your account. You must not use the Service to spread misinformation, harass others, or violate applicable laws.</p>
+
+<h2>5. Free Tier</h2>
+<p>Free accounts receive a limited number of fact-checks per day. Limits may change with reasonable notice.</p>
+
+<h2>6. Paid Plans</h2>
+<p>Paid subscriptions are billed through Stripe. Cancellation takes effect at the end of the billing period. No refunds for partial periods unless required by law.</p>
+
+<h2>7. Intellectual Property</h2>
+<p>TruthScore retains all rights to the platform. You retain rights to your submitted claims. By submitting a claim, you grant TruthScore a non-exclusive license to display it on public claim pages for indexing purposes.</p>
+
+<h2>8. Termination</h2>
+<p>We may suspend accounts that violate these terms, abuse the API, or engage in fraudulent behavior.</p>
+
+<h2>9. Limitation of Liability</h2>
+<p>TruthScore is provided "as is". To the maximum extent permitted by law, we are not liable for any damages arising from use of the Service.</p>
+
+<h2>10. Changes</h2>
+<p>We may update these terms. Continued use after changes constitutes acceptance.</p>
+
+<h2>11. Contact</h2>
+<p>Questions: <a href="mailto:hello@truthscore.app">hello@truthscore.app</a></p>
+
+<footer><a href="/privacy">Privacy Policy</a> · <a href="/">TruthScore</a></footer>
+</body></html>"""
+
+
+@app.get("/terms", include_in_schema=False)
+async def terms_of_service():
+    """Public Terms of Service page (required by Stripe & Google OAuth)."""
+    return HTMLResponse(_TERMS_HTML)
+
+
 # ── Auth endpoints ────────────────────────────────────────
 
 @app.post("/auth/register")
@@ -1586,6 +1641,43 @@ class GoogleExchangeRequest(BaseModel):
 @app.post("/auth/google/exchange")
 async def auth_google_exchange(req: GoogleExchangeRequest):
     return await google_exchange(req.code, req.code_verifier, req.redirect_uri)
+
+
+# ── Email verification & password reset endpoints ─────────────
+
+@app.get("/auth/verify-email")
+async def verify_email_endpoint(token: str):
+    from auth import verify_email_token
+    ok = await verify_email_token(token)
+    if not ok:
+        raise HTTPException(400, "Link invalid sau deja folosit")
+    return HTMLResponse("""<!DOCTYPE html><html><head><meta charset=UTF-8>
+    <title>Email verificat</title>
+    <style>body{font-family:sans-serif;background:#0f0f17;color:#e2e8f0;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
+    .box{text-align:center;padding:40px;background:#1e1e2e;border-radius:16px;max-width:400px}
+    h1{color:#22c55e;margin-bottom:12px}a{color:#a78bfa}</style></head>
+    <body><div class="box"><h1>&#10003; Email verificat!</h1>
+    <p>Contul tău TruthScore este acum verificat.</p>
+    <p><a href="/">Mergi la TruthScore &rarr;</a></p></div></body></html>""")
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+@app.post("/auth/forgot-password")
+async def forgot_password_endpoint(req: ForgotPasswordRequest):
+    from auth import forgot_password
+    await forgot_password(req.email)
+    return {"ok": True, "message": "Dacă emailul există, vei primi un link de resetare."}
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    password: str
+
+@app.post("/auth/reset-password")
+async def reset_password_endpoint(req: ResetPasswordRequest):
+    from auth import reset_password
+    await reset_password(req.token, req.password)
+    return {"ok": True, "message": "Parola a fost schimbată cu succes."}
 
 
 # ── Payment endpoints ─────────────────────────────────────

@@ -2,7 +2,7 @@
 TruthScore Authentication & User Management
 MongoDB + JWT + Rate Limiting + Stripe Plans
 """
-import os, time, hashlib
+import os, time, hashlib, secrets, asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from dotenv import load_dotenv
@@ -71,7 +71,7 @@ DB_NAME      = os.getenv("MONGODB_DB", "truthscore")
 # so even if a user maxes out their free quota every day the cost is
 # negligible compared to upgrade conversion rate.
 _PLAN_DAILY = {
-    "free":       int(os.getenv("PLAN_FREE_DAILY", "10")),
+    "free":       int(os.getenv("PLAN_FREE_DAILY", "3")),
     "pro":        int(os.getenv("PLAN_PRO_DAILY", "200")),
     "business":   int(os.getenv("PLAN_BUSINESS_DAILY", "800")),
     "enterprise": int(os.getenv("PLAN_ENTERPRISE_DAILY", "9999")),
@@ -169,8 +169,8 @@ security  = HTTPBearer(auto_error=False)
 # ── MongoDB ────────────────────────────────────────────────────
 _client: Optional[AsyncIOMotorClient] = None
 
-# Connection-pool settings — tuned for 1000 concurrent users
-_MONGO_POOL_SIZE = int(os.getenv("MONGO_POOL_SIZE", "100"))
+# Connection-pool settings — 25 per worker × 4 workers = 100 total (fits M2's 200-connection limit)
+_MONGO_POOL_SIZE = int(os.getenv("MONGO_POOL_SIZE", "25"))
 
 
 def get_db():
@@ -278,6 +278,7 @@ async def register_user(data: UserRegister, client_ip: str = "") -> dict:
     if existing:
         raise HTTPException(status_code=400, detail="Email deja înregistrat")
     
+    _email_token = secrets.token_urlsafe(32)
     user = {
         "email":       data.email.lower(),
         "password":    hash_password(data.password),
@@ -287,11 +288,25 @@ async def register_user(data: UserRegister, client_ip: str = "") -> dict:
         "stripe_customer_id": "",
         "stripe_subscription_id": "",
         "usage":       {},  # {"2025-01-01": 5, ...}
+        "email_verified": False,
+        "email_token": _email_token,
     }
     result = await db.users.insert_one(user)
     user_id = str(result.inserted_id)
     token = create_token(user_id)
     await _register_session(user_id, token)
+    try:
+        _base = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
+        _link = f"{_base}/auth/verify-email?token={_email_token}"
+        _html = (
+            f"<p>Bun venit la TruthScore!</p>"
+            f"<p>Verifică adresa de email apăsând linkul de mai jos:</p>"
+            f'<p><a href="{_link}">{_link}</a></p>'
+        )
+        from utils.mailer import send_email as _send_email
+        asyncio.create_task(_send_email(data.email.lower(), "Verifică adresa de email — TruthScore", _html))
+    except Exception as _e:
+        print(f"[AUTH] Verification email skipped (non-fatal): {_e}")
     return {"token": token, "user_id": user_id}
 
 async def login_user(data: UserLogin) -> dict:
@@ -899,3 +914,67 @@ async def google_exchange(code: str, code_verifier: str, redirect_uri: str):
     except Exception as e:
         print(f"[GOOGLE-OAUTH] exchange error: {type(e).__name__}: {str(e)[:300]}")
         raise HTTPException(500, "Google sign-in failed. Please try again.")
+
+
+# ── Email verification & password reset ───────────────────────────
+
+async def verify_email_token(token: str) -> bool:
+    """Mark the account email_verified=True if the token matches. Returns True on success."""
+    db = get_db()
+    user = await db.users.find_one({"email_token": token})
+    if not user:
+        return False
+    await db.users.update_one(
+        {"_id": user["_id"]},
+        {"$set": {"email_verified": True}, "$unset": {"email_token": ""}},
+    )
+    return True
+
+
+async def forgot_password(email: str) -> bool:
+    """Generate a password-reset token and email the link. Always returns True (no email leak)."""
+    db = get_db()
+    user = await db.users.find_one({"email": email.lower()})
+    if user:
+        reset_token = secrets.token_urlsafe(32)
+        reset_expires = datetime.now(timezone.utc) + timedelta(hours=1)
+        await db.users.update_one(
+            {"_id": user["_id"]},
+            {"$set": {"reset_token": reset_token, "reset_token_expires": reset_expires}},
+        )
+        try:
+            _base = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
+            _link = f"{_base}/auth/reset-password?token={reset_token}"
+            _html = (
+                f"<p>Ai solicitat resetarea parolei TruthScore.</p>"
+                f"<p>Apasă linkul de mai jos (valabil 1 oră):</p>"
+                f'<p><a href="{_link}">{_link}</a></p>'
+                f"<p>Dacă nu ai solicitat acest lucru, ignoră acest email.</p>"
+            )
+            from utils.mailer import send_email as _send_email
+            asyncio.create_task(_send_email(email.lower(), "Resetare parolă — TruthScore", _html))
+        except Exception as _e:
+            print(f"[AUTH] Password reset email skipped (non-fatal): {_e}")
+    return True
+
+
+async def reset_password(token: str, new_password: str) -> bool:
+    """Apply a password reset if the token is valid and not expired."""
+    db = get_db()
+    now = datetime.now(timezone.utc)
+    user = await db.users.find_one({
+        "reset_token": token,
+        "reset_token_expires": {"$gt": now},
+    })
+    if not user:
+        raise HTTPException(400, "Token invalid sau expirat")
+    new_hash = hash_password(new_password)
+    await db.users.update_one(
+        {"_id": user["_id"]},
+        {
+            "$set": {"password": new_hash},
+            "$unset": {"reset_token": "", "reset_token_expires": ""},
+            "$inc": {"token_version": 1},
+        },
+    )
+    return True
