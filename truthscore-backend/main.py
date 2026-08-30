@@ -2384,7 +2384,7 @@ async def verdict_history(verdict_id: str):
         for d in docs:
             d["id"] = str(d.pop("_id", ""))
         # Also return the current verdict
-        current = load_verdict(verdict_id)
+        current = await load_verdict(verdict_id)
         return {"verdict_id": verdict_id, "history": docs, "current": current}
     except Exception as e:
         raise HTTPException(500, str(e))

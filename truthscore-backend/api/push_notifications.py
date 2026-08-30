@@ -106,7 +106,7 @@ async def notify_claim_watchers(db, claim_text: str, verdict: str, slug: str = "
         body = f"Verdict: {verdict}"
 
         total = 0
-        async for watch_doc in db["watches"].find({"claim": claim_text}):
+        async for watch_doc in db["watched_claims"].find({"claim": claim_text}):
             try:
                 uid = watch_doc.get("user_id", "")
                 if uid:
