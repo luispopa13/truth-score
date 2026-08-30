@@ -507,6 +507,8 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
   <div class="footer-links">
     <a href="#" onclick="showPricing();return false" data-i18n="pricing">Pricing</a>
     <a href="/privacy" data-i18n="privacy">Privacy</a>
+    <a href="/terms" data-i18n="terms">Terms</a>
+    <a href="/refund" data-i18n="refund">Refunds</a>
     <a href="mailto:hello@truthscore.app?subject=TruthScore%20for%20publishers" data-i18n="forPublishers">For publishers</a>
     <select id="langSwitch" onchange="setLang(this.value)" style="background:transparent;border:1px solid var(--border2);color:var(--text2);border-radius:8px;padding:3px 8px;font-size:12px;cursor:pointer">
       <option value="en">English</option>
@@ -993,6 +995,7 @@ function anonInc(){localStorage.setItem('ts_anon_used',anonUsed()+1)}
 //              future ad zone is visible without an approved account.
 //   • HIDDEN — production without publisher ID: nothing renders at all.
 let _adsCfg=null;
+let _adsWanted=false;  // set true once ads are wanted (free tier, post-verify); lets consent upgrade to live ads
 function renderHouseAd(slot){
   // Internal "Upgrade to Pro" promo — always has inventory, so free/anon users
   // never see an empty ad zone even before AdSense is approved. Zero external
@@ -1012,6 +1015,7 @@ async function ensureAds(showAds){
   if(!_adsCfg){try{_adsCfg=await(await fetch(`${API}/site-config`)).json();}catch(e){return;}}
   // Paid tiers never see this zone at all.
   if(!showAds)return;
+  _adsWanted=true;  // remember, so we can upgrade to live ads if consent is granted later
   const client=(_adsCfg.adsense_client||'').trim();
   const isDev=/^(localhost|127\.0\.0\.1)$/.test(location.hostname);
 
@@ -1024,6 +1028,15 @@ async function ensureAds(showAds){
       slot.dataset.on='ghost';slot.classList.add('on');
       slot.innerHTML=`<div class="ad-ghost"><span class="tg">T</span>ZONĂ RECLAME · SE ACTIVEAZĂ DUPĂ APROBAREA ADSENSE</div>`;
     }
+    return;
+  }
+
+  // GDPR: Google AdSense sets third-party advertising cookies, which require
+  // PRIOR opt-in consent. Until the user accepts, show only the first-party
+  // house ad (no external script, no tracking). If they accept later, the
+  // consent handler clears the slot and re-runs ensureAds to load live ads.
+  if(localStorage.getItem('ts_consent')!=='all'){
+    if(_adsCfg.house_ads_enabled!==false)renderHouseAd(slot);
     return;
   }
 
@@ -2996,14 +3009,40 @@ if('serviceWorker' in navigator) navigator.serviceWorker.ready.then(()=>initPush
   document.body.appendChild(ov);
 })();
 
-// ── Cookie consent ──────────────────────────────────────────────
+// ── Cookie consent (GDPR: prior opt-in for non-essential/ad cookies) ──
 (function(){
-  if(localStorage.getItem('ts_cookie_ok'))return;
+  // ts_consent: 'all' = essential + analytics/ads · 'essential' = necessary only.
+  if(localStorage.getItem('ts_consent'))return;
+  const ro=(typeof LANG!=='undefined'?LANG:(navigator.language||'')).toLowerCase().startsWith('ro');
+  const T=ro?{
+    msg:'Folosim cookie-uri esențiale pentru autentificare și, cu acordul tău, cookie-uri de analiză și publicitate.',
+    accept:'Accept toate',reject:'Doar esențiale',priv:'Confidențialitate',terms:'Termeni'
+  }:{
+    msg:'We use essential cookies for authentication and, with your consent, analytics & advertising cookies.',
+    accept:'Accept all',reject:'Essential only',priv:'Privacy',terms:'Terms'
+  };
+  const lp=ro?'?lang=ro':'';
   const b=document.createElement('div');
   b.id='cookie-banner';
-  b.innerHTML=`<span>TruthScore uses cookies for authentication and analytics. <a href="/privacy" target="_blank" style="color:#a78bfa">Privacy Policy</a> · <a href="/terms" target="_blank" style="color:#a78bfa">Terms</a></span><button onclick="document.getElementById('cookie-banner').remove();localStorage.setItem('ts_cookie_ok','1')" style="background:#6d28d9;color:#fff;border:none;border-radius:6px;padding:6px 14px;cursor:pointer;font-size:13px;font-weight:600;white-space:nowrap">OK</button>`;
+  b.innerHTML=`<span style="flex:1 1 240px">${T.msg} <a href="/privacy${lp}" target="_blank" style="color:#a78bfa">${T.priv}</a> · <a href="/terms${lp}" target="_blank" style="color:#a78bfa">${T.terms}</a></span>
+    <span style="display:flex;gap:8px;flex-wrap:wrap">
+      <button id="ck-rej" style="background:transparent;color:#94a3b8;border:1px solid #2a2a3e;border-radius:6px;padding:6px 14px;cursor:pointer;font-size:13px;font-weight:600;white-space:nowrap">${T.reject}</button>
+      <button id="ck-acc" style="background:#6d28d9;color:#fff;border:none;border-radius:6px;padding:6px 14px;cursor:pointer;font-size:13px;font-weight:600;white-space:nowrap">${T.accept}</button>
+    </span>`;
   Object.assign(b.style,{position:'fixed',bottom:'0',left:'0',right:'0',background:'#1a1a2e',borderTop:'1px solid #2a2a3e',padding:'12px 20px',display:'flex',alignItems:'center',justifyContent:'space-between',gap:'12px',zIndex:'9999',fontSize:'13px',color:'#94a3b8',flexWrap:'wrap'});
+  function close(choice){
+    localStorage.setItem('ts_consent',choice);
+    b.remove();
+    if(choice==='all'&&_adsWanted){
+      // Consent granted after ads were deferred — clear the house ad and load live ads.
+      const s=document.getElementById('adSlot');
+      if(s){delete s.dataset.on;s.classList.remove('on');s.innerHTML='';}
+      if(typeof ensureAds==='function')ensureAds(true);
+    }
+  }
   document.body.appendChild(b);
+  document.getElementById('ck-acc').onclick=()=>close('all');
+  document.getElementById('ck-rej').onclick=()=>close('essential');
 })();
 </script>
 </body>

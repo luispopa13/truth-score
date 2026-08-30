@@ -296,6 +296,24 @@ SOURCE_AUTHORITY_WEIGHTS = {
     "tabloid":   0.25,  # cancan.ro / TMZ / The Sun -- rumor-grade, barely trusted
 }
 
+# ── Company / legal identity (fill in AFTER SRL/PFA registration) ──
+# Populates the Terms, Privacy and Refund/Withdrawal pages. Until the firm
+# is registered these stay as visible "[COMPLETEAZĂ …]" placeholders so the
+# site never ships with fake company data. After ONRC, set the env vars
+# (COMPANY_NAME, COMPANY_CUI, …) once and every legal page updates itself.
+COMPANY = {
+    "name":          os.getenv("COMPANY_NAME",          "[DENUMIRE SRL / PFA]"),
+    "cui":           os.getenv("COMPANY_CUI",           "[CUI / CIF]"),
+    "reg":           os.getenv("COMPANY_REG",           "[Nr. Reg. Com. J../..../20..]"),
+    "address":       os.getenv("COMPANY_ADDRESS",       "[Sediu social, România]"),
+    "email":         os.getenv("COMPANY_EMAIL",         "hello@truthscore.app"),
+    "privacy_email": os.getenv("COMPANY_PRIVACY_EMAIL", "privacy@truthscore.app"),
+    "country":       os.getenv("COMPANY_COUNTRY",       "România"),
+    # True once the real identity is filled in — used to hide the
+    # "not yet registered" banner on the legal pages.
+    "registered":    bool(os.getenv("COMPANY_CUI", "").strip()),
+}
+
 # ── Config ────────────────────────────────────────────────────
 GOOGLE_FC_URL = "https://factchecktools.googleapis.com/v1alpha1/claims:search"
 RO_CHARS      = set("ăâîșțĂÂÎȘȚ")
