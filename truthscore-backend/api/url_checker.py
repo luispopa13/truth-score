@@ -139,6 +139,7 @@ async def check_url(url: str, db, user=None) -> dict:
 
     # ── 5. Run the analysis pipeline ─────────────────────────────────────
     try:
+        import asyncio
         from pipeline.helpers import split_claims
         from pipeline.verify import verify_claim
         from models import VerifyRequest
@@ -148,17 +149,37 @@ async def check_url(url: str, db, user=None) -> dict:
         # Cap at 5 claims to control cost / latency
         claims_to_verify = claims[:5]
 
-        verified: list[dict] = []
-        for claim_text in claims_to_verify:
+        async def _verify_one(claim_text: str):
             try:
                 req = VerifyRequest(text=claim_text[:4000])
                 result = await verify_claim(req)
-                verified.append(result.model_dump())
+                return result.model_dump()
             except Exception as _claim_err:
                 # One failing claim must not abort the whole URL check
                 print(f"  [URL-CHECK] claim failed: {_claim_err}")
+                return None
+
+        # Verify every claim concurrently — the whole URL check is now bounded
+        # by the slowest single claim, not the sum of all of them.
+        settled = await asyncio.gather(
+            *(_verify_one(c) for c in claims_to_verify),
+            return_exceptions=True,
+        )
+        verified = [r for r in settled if isinstance(r, dict)]
 
         verdict, score = _aggregate(verified)
+
+        # ── 6. Persist article as a public SEO page + build share text ────
+        slug, share_text = "", ""
+        try:
+            from pipeline.articles import upsert_article, make_share_text
+            share_text = make_share_text(title, verdict, score, url)
+            if db is not None:
+                slug = await upsert_article(
+                    db, url, title, verdict, score, verified, text_preview=text,
+                )
+        except Exception as _store_err:
+            print(f"  [URL-CHECK] store error: {_store_err}")
 
         return {
             "url":          url,
@@ -168,6 +189,8 @@ async def check_url(url: str, db, user=None) -> dict:
             "results":      verified,
             "verdict":      verdict,
             "score":        score,
+            "slug":         slug,
+            "share_text":   share_text,
         }
 
     except HTTPException:

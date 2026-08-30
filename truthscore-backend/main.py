@@ -523,8 +523,17 @@ async def verify(req: VerifyRequest, response: Response,
             print(f"[PUBLIC-CLAIMS] upsert skipped (non-fatal): {e}")
 
     # Run all bookkeeping in parallel — headers are set before we return
+    async def _do_streak():
+        try:
+            if user and user.get("id"):
+                from auth import touch_streak
+                st = await touch_streak(user["id"])
+                response.headers["X-TruthScore-Streak"] = str(st.get("streak", 0))
+        except Exception as e:
+            print(f"[STREAK] update skipped (non-fatal): {e}")
+
     await asyncio.gather(
-        _do_log(), _do_save(), _do_trending(), _do_push(), _do_upsert(),
+        _do_log(), _do_save(), _do_trending(), _do_push(), _do_upsert(), _do_streak(),
         return_exceptions=True,
     )
 
@@ -2252,6 +2261,21 @@ async def source_credibility_top(limit: int = 20):
         return {"sources": []}
 
 
+# ── Per-domain source page (public, SEO-indexed) ──────────
+@app.get("/source/{domain}", response_class=HTMLResponse)
+async def source_domain_page(domain: str):
+    """Permanent, Google-indexed reliability profile for one source domain."""
+    from auth import get_db
+    from pipeline.source_credibility import extract_domain, get_domain_score, render_source_page
+    norm = extract_domain(domain)
+    if not norm:
+        raise HTTPException(404, "Unknown source")
+    doc = await get_domain_score(get_db(), norm)
+    if not doc:
+        raise HTTPException(404, "No credibility data for this source yet")
+    return HTMLResponse(render_source_page(doc, PUBLIC_BASE_URL))
+
+
 # ── Daily challenge (public) ──────────────────────────────
 @app.get("/challenge")
 async def daily_challenge():
@@ -2276,6 +2300,11 @@ async def answer_daily_challenge(req: ChallengeAnswerRequest, user=Depends(get_c
     if user:
         try:
             await submit_challenge_score(db, user["id"], req.id, result.get("correct", False))
+        except Exception:
+            pass
+        try:
+            from auth import touch_streak
+            result["streak"] = await touch_streak(user["id"])
         except Exception:
             pass
     return result
@@ -2327,6 +2356,18 @@ async def public_claim_page(slug: str):
     if not doc:
         raise HTTPException(404, "Claim not found")
     return HTMLResponse(render_claim_page(doc, PUBLIC_BASE_URL))
+
+
+# ── Public Article Pages (SEO-indexed URL fact-checks) ────
+@app.get("/article/{slug}", response_class=HTMLResponse)
+async def public_article_page(slug: str):
+    """Serve a permanent, Google-indexed fact-check page for a checked URL."""
+    from auth import get_db
+    from pipeline.articles import get_article, render_article_page
+    doc = await get_article(get_db(), slug)
+    if not doc:
+        raise HTTPException(404, "Article not found")
+    return HTMLResponse(render_article_page(doc, PUBLIC_BASE_URL))
 
 
 @app.get("/claim/{slug}/og.svg", response_class=PlainTextResponse)
@@ -2647,6 +2688,15 @@ async def digest_send(user=Depends(require_admin)):
     db = get_db()
     result = await run_digest(db)
     return result
+
+
+@app.post("/digest/send-weekly-lies")
+async def digest_send_weekly_lies(user=Depends(require_admin)):
+    """Admin: trigger the 'Top 5 Lies of the Week' digest send."""
+    from email_digest import run_weekly_lies_digest
+    from auth import get_db
+    db = get_db()
+    return await run_weekly_lies_digest(db)
 
 
 # ── News Scanner ───────────────────────────────────────────────────

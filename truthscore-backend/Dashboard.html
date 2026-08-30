@@ -2732,8 +2732,35 @@ async function runUrlCheck(){
     document.getElementById('vLoad').className='loading';
     renderScore(d);renderExplain(d);renderSub(d);renderSources(d);
     document.querySelector('.result-tabs button')?.click();
+    if(d.share_text){showShareBox(d.share_text, d.slug);}
   }catch(e){document.getElementById('vLoad').className='loading';showErr(e.message);}
   btn.disabled=false;btn.textContent='Check URL';
+}
+
+// Shareable copy box for URL fact-checks (viral loop)
+function showShareBox(text, slug){
+  let box=document.getElementById('shareBox');
+  const host=document.getElementById('resultWrap');
+  if(!box){
+    box=document.createElement('div');
+    box.id='shareBox';
+    box.style.cssText='margin-top:14px;padding:14px;border-radius:10px;background:var(--bg3);border:1px solid var(--border)';
+    host.appendChild(box);
+  }
+  const link=slug?(location.origin+'/article/'+slug):'';
+  const full=text+(link?('\n'+link):'');
+  box.innerHTML=`
+    <div style="font-size:12px;color:var(--text2);margin-bottom:8px">📣 Share this result</div>
+    <div style="font-size:13px;color:var(--text);line-height:1.5;margin-bottom:10px">${esc(text)}</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn-ghost" id="shareCopyBtn" style="font-size:12px;padding:6px 12px">📋 Copy</button>
+      ${link?`<a class="btn-ghost" href="${esc(link)}" target="_blank" style="font-size:12px;padding:6px 12px;text-decoration:none">🔗 Open page</a>`:''}
+      <a class="btn-ghost" href="https://twitter.com/intent/tweet?text=${encodeURIComponent(full)}" target="_blank" style="font-size:12px;padding:6px 12px;text-decoration:none">𝕏 Post</a>
+    </div>`;
+  document.getElementById('shareCopyBtn').onclick=()=>{
+    navigator.clipboard?.writeText(full);
+    document.getElementById('shareCopyBtn').textContent='✅ Copied';
+  };
 }
 
 // ── Feature 3: Entity profile overlay ───────────────────────────────────────
@@ -2829,11 +2856,13 @@ async function submitChallenge(guess){
     const res=document.getElementById('challengeResult');
     if(!res)return;
     const vc=d.verdict==='TRUE'?'#22c55e':d.verdict==='FALSE'?'#ef4444':'#eab308';
+    const st=d.streak&&d.streak.streak?`<div style="font-size:13px;margin-top:8px;color:#f59e0b;font-weight:600">🔥 ${d.streak.streak}-day streak${d.streak.streak_best&&d.streak.streak_best>d.streak.streak?` · best ${d.streak.streak_best}`:''}</div>`:'';
     res.innerHTML=`
       <div style="padding:14px;border-radius:10px;background:${d.correct?'rgba(34,197,94,.08)':'rgba(239,68,68,.08)'};border:1px solid ${d.correct?'rgba(34,197,94,.3)':'rgba(239,68,68,.3)'}">
         <div style="font-size:16px;font-weight:700;margin-bottom:6px">${d.correct?'✅ Correct!':'❌ Wrong!'}</div>
         <div style="font-size:13px;color:var(--text2)">Verdict: <strong style="color:${vc}">${d.verdict}</strong> (${d.score}/100)</div>
         <div style="font-size:12px;color:var(--text2);margin-top:6px;line-height:1.5">${esc(d.explanation||'')}</div>
+        ${st}
       </div>`;
   }catch(e){toast('Error: '+e.message,'err');}
 }

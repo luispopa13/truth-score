@@ -150,3 +150,70 @@ async def run_digest(db) -> dict:
         {"$set": {"last_sent": datetime.now(timezone.utc).isoformat()}}
     )
     return {"sent": sent, "failed": failed, "claims_count": len(claims)}
+
+
+# ── Weekly "Top 5 Lies of the Week" ──────────────────────────
+
+async def get_top_lies(db, limit: int = 5, days: int = 7) -> list[dict]:
+    """Most-checked FALSE claims from the last `days` days, worst score first."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    col = db["verdicts"]
+    try:
+        docs = await col.find(
+            {"created_at": {"$gte": cutoff}, "verdict": {"$in": ["FALSE", "MOSTLY_FALSE"]}},
+            {"claim": 1, "verdict": 1, "score": 1, "explanation": 1, "_id": 1}
+        ).sort([("check_count", -1), ("score", 1)]).limit(limit).to_list(limit)
+        for d in docs:
+            d["id"] = str(d.pop("_id", ""))
+        return docs
+    except Exception:
+        return []
+
+
+async def send_lies_digest_to(email: str, claims: list[dict]) -> bool:
+    api_key = os.getenv("SENDGRID_API_KEY", "")
+    if not api_key:
+        print("[digest] SENDGRID_API_KEY not set — skipping send")
+        return False
+    subject = f"🚨 Top 5 Lies of the Week — TruthScore · {datetime.now(timezone.utc).strftime('%b %d')}"
+    payload = {
+        "personalizations": [{"to": [{"email": email}]}],
+        "from": {"email": FROM_EMAIL, "name": "TruthScore"},
+        "subject": subject,
+        "content": [
+            {"type": "text/plain", "value": build_text(claims)},
+            {"type": "text/html", "value": build_html(claims)},
+        ],
+    }
+    async with httpx.AsyncClient(timeout=15) as client:
+        r = await client.post(
+            SENDGRID_URL,
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json=payload,
+        )
+        return r.status_code in (200, 202)
+
+
+async def run_weekly_lies_digest(db) -> dict:
+    """Send the 'Top 5 Lies of the Week' email to all active subscribers."""
+    claims = await get_top_lies(db, limit=5, days=7)
+    if not claims:
+        return {"sent": 0, "skipped": 0, "reason": "no false claims this week"}
+    col = db["digest_subscribers"]
+    subscribers = await col.find({"active": True}).to_list(10000)
+    sent = 0
+    failed = 0
+    for sub in subscribers:
+        email = sub.get("email", "")
+        if not email:
+            continue
+        ok = await send_lies_digest_to(email, claims)
+        if ok:
+            sent += 1
+        else:
+            failed += 1
+    await col.update_many(
+        {"active": True},
+        {"$set": {"last_weekly_sent": datetime.now(timezone.utc).isoformat()}}
+    )
+    return {"sent": sent, "failed": failed, "claims_count": len(claims)}

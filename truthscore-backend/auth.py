@@ -269,6 +269,8 @@ class UserOut(BaseModel):
     bonus_today: int = 0
     ref_code: str = ""
     trial_active: bool = False
+    streak: int = 0
+    streak_best: int = 0
 
 class GoogleAuthRequest(BaseModel):
     token: str
@@ -358,6 +360,9 @@ async def register_user(data: UserRegister, client_ip: str = "") -> dict:
         "ref_code":    _ref_code,
         "trial_until": _trial_until,
         "bonus_checks": 0,
+        "streak": 0,
+        "streak_best": 0,
+        "last_active_date": "",
     }
     result = await db.users.insert_one(user)
     user_id = str(result.inserted_id)
@@ -707,7 +712,59 @@ async def get_user_out(user):
         bonus_today=bonus + referral_bonus,
         ref_code=user.get("ref_code", ""),
         trial_active=trial_active,
+        streak=int(user.get("streak", 0)),
+        streak_best=int(user.get("streak_best", 0)),
     )
+
+
+async def touch_streak(user_id: str) -> dict:
+    """Record daily activity and update the user's consecutive-day streak.
+
+    Called on any meaningful action (a fact-check, a challenge answer). Idempotent
+    within a single UTC day. Returns {streak, streak_best, advanced} where
+    `advanced` is True only on the first activity of a new day.
+    """
+    from bson import ObjectId
+    try:
+        db = get_db()
+        try:
+            oid = ObjectId(str(user_id))
+        except Exception:
+            return {"streak": 0, "streak_best": 0, "advanced": False}
+        user = await db.users.find_one({"_id": oid})
+        if not user:
+            return {"streak": 0, "streak_best": 0, "advanced": False}
+
+        today = datetime.now(timezone.utc).date()
+        last = user.get("last_active_date") or ""
+        streak = int(user.get("streak", 0))
+        best = int(user.get("streak_best", 0))
+
+        if last == today.isoformat():
+            return {"streak": streak, "streak_best": best, "advanced": False}
+
+        last_date = None
+        if last:
+            try:
+                last_date = datetime.fromisoformat(last).date()
+            except Exception:
+                last_date = None
+
+        if last_date is not None and (today - last_date).days == 1:
+            streak += 1
+        else:
+            streak = 1  # first ever, or a gap broke the chain
+
+        best = max(best, streak)
+        await db.users.update_one(
+            {"_id": oid},
+            {"$set": {"streak": streak, "streak_best": best,
+                      "last_active_date": today.isoformat()}},
+        )
+        return {"streak": streak, "streak_best": best, "advanced": True}
+    except Exception as e:
+        print(f"[AUTH] touch_streak error (non-fatal): {e}")
+        return {"streak": 0, "streak_best": 0, "advanced": False}
 
 
 async def upgrade_user_plan(user_id: str, plan: str, stripe_customer_id: str = "", subscription_id: str = ""):
