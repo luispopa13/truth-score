@@ -11,6 +11,7 @@
 <meta name="apple-mobile-web-app-title" content="TruthScore">
 <title>TruthScore — AI Fact Checker</title>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<script defer data-domain="truthscore.app" src="https://plausible.io/js/script.tagged-events.js"></script>
 <link rel="stylesheet" href="/tokens.css"/>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -403,6 +404,7 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
     <div class="hero-eyebrow" data-i18n="eyebrow">🔬 40+ sources · 26 domains</div>
     <h1 class="hero-title" data-i18n-html="heroTitle">Verify any<br/><em>claim</em> with AI</h1>
     <p class="hero-sub" data-i18n="heroSub">Enter any claim and get an evidence-based verdict from authoritative sources.</p>
+    <div id="publicStats" style="display:flex;gap:20px;justify-content:center;flex-wrap:wrap;margin-top:14px;font-size:13px;color:var(--text2)"></div>
   </div>
 
   <div id="bookmarkletBanner" style="display:none;background:rgba(108,99,255,.08);border:1px solid rgba(108,99,255,.25);border-radius:10px;padding:10px 16px;margin:0 0 14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
@@ -517,10 +519,26 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
   <div class="modal pricing-modal">
     <button class="modal-x" onclick="closePricing()">✕</button>
     <div class="modal-title" data-i18n="pricingTitle2">Planuri & Prețuri</div>
-    <div class="modal-sub" style="margin-bottom:22px" data-i18n="pricingSub2">Simplu și transparent. Cancel oricând.</div>
-    <!-- Cards are rendered dynamically from GET /plans by renderPlans() so the
-         prices/limits shown can never drift from the backend PLANS source. -->
+    <div class="modal-sub" data-i18n="pricingSub2">Simplu și transparent. Cancel oricând.</div>
+    <div style="display:flex;align-items:center;justify-content:center;gap:10px;margin:14px 0 20px">
+      <span id="billingMonthlyLabel" style="font-size:13px;font-weight:600;color:var(--text)">Lunar</span>
+      <button id="billingToggle" onclick="_toggleBilling()" style="position:relative;width:44px;height:24px;background:#6d28d9;border:none;border-radius:12px;cursor:pointer;transition:background .2s">
+        <span id="billingKnob" style="position:absolute;left:3px;top:3px;width:18px;height:18px;background:#fff;border-radius:50%;transition:left .2s"></span>
+      </button>
+      <span id="billingAnnualLabel" style="font-size:13px;color:var(--text2)">Anual <span style="background:#22c55e;color:#fff;font-size:10px;font-weight:700;padding:1px 5px;border-radius:4px;margin-left:3px">-33%</span></span>
+    </div>
     <div class="plans-grid" id="plansGrid"></div>
+    <div style="margin-top:18px;padding:14px 16px;background:rgba(109,40,217,.1);border-radius:10px;border:1px solid rgba(109,40,217,.2)">
+      <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:6px">🎁 Invită un prieten, primești 5 verificări gratuite</div>
+      <div id="refLinkWrap" style="display:none">
+        <div style="font-size:12px;color:var(--text2);margin-bottom:6px">Link-ul tău de referral:</div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input id="refLinkInput" readonly style="flex:1;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:6px;padding:6px 10px;font-size:12px;color:var(--text);min-width:0" value=""/>
+          <button onclick="_copyRefLink()" style="background:#6d28d9;color:#fff;border:none;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px;white-space:nowrap">Copiază</button>
+        </div>
+      </div>
+      <div id="refLoginMsg" style="font-size:12px;color:var(--text2)">Autentifică-te pentru a-ți vedea link-ul de referral.</div>
+    </div>
   </div>
 </div>
 
@@ -850,6 +868,27 @@ const TOPIC_LABELS={medical:'Medicine',biology:'Biology',chemistry:'Chemistry',p
 const EXAMPLES=['Vaccines cause autism.','Romania joined the EU in 2007.','The Great Wall of China is visible from space.','The angles of a triangle sum to 180°.','The number π is irrational.','Pure water has a pH of 7 at 25°C.','Shakespeare wrote Hamlet.','CO2 contributes to global warming.'];
 let exIdx=0,lastResult=null,stepTimer=null,currentUser=null;
 const token=()=>localStorage.getItem('ts_token');
+function _getCookie(name){return(document.cookie.split(';').map(c=>c.trim()).find(c=>c.startsWith(name+'='))||'').split('=')[1]||'';}
+
+// ── Incognito / Private browsing detection ──────────────────
+(function detectIncognito(){
+  const block = ()=>{
+    if(document.getElementById('_incognito_blocked')) return;
+    const d=document.createElement('div');d.id='_incognito_blocked';
+    d.style.cssText='position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:#0d0d1a;padding:40px';
+    d.innerHTML='<div style="max-width:480px;text-align:center;color:#e5e7eb"><div style="font-size:48px;margin-bottom:20px">🔒</div><h2 style="font-size:24px;font-weight:700;margin-bottom:12px;color:#fff">TruthScore nu funcționează în modul incognito</h2><p style="font-size:15px;color:#9ca3af;line-height:1.6;margin-bottom:24px">Pentru a folosi TruthScore ai nevoie de o sesiune normală de browser. Modul privat blochează autentificarea și istoricul verificărilor.</p><a href="/" target="_blank" style="display:inline-block;background:#6d28d9;color:#fff;padding:12px 28px;border-radius:10px;text-decoration:none;font-weight:600;font-size:15px">Deschide în browser normal</a></div>';
+    document.body.appendChild(d);
+  };
+  // Method 1: localStorage must work
+  try{localStorage.setItem('__ts_priv__','1');localStorage.removeItem('__ts_priv__');}
+  catch(e){block();return;}
+  // Method 2: storage quota — incognito typically < 120MB in Chrome
+  if(navigator.storage && navigator.storage.estimate){
+    navigator.storage.estimate().then(q=>{
+      if(q.quota && q.quota < 100*1024*1024) block();
+    }).catch(()=>{});
+  }
+})();
 function anonUsed(){return parseInt(localStorage.getItem('ts_anon_used')||'0')}
 function anonInc(){localStorage.setItem('ts_anon_used',anonUsed()+1)}
 
@@ -1050,6 +1089,7 @@ async function runVerify(){
   if(!text){showErr(t('enterClaim'));return;}
   if(!currentUser&&anonUsed()>=ANON_LIMIT){document.getElementById('limitBanner').className='limit-banner show';showAuth('register');return;}
   if(currentUser&&currentUser.used_today>=currentUser.daily_limit){document.getElementById('limitBanner').className='limit-banner show';showPricing();return;}
+  plausibleEvent('verify_claim', {plan: currentUser?.plan||'anon'});
   hideErr();
   document.getElementById('resultWrap').className='result-wrap';
   document.getElementById('vLoad').className='loading show';
@@ -2086,6 +2126,12 @@ async function doRegister(){
     if(!r.ok){authErr(d.detail||t('genericError'));btn.disabled=false;btn.textContent=t('createBtn');return;}
     localStorage.setItem('ts_token',d.token);
     closeAuth();await initAuth();
+    plausibleEvent('register');
+    const _refCode = new URLSearchParams(location.search).get('ref') || _getCookie('ts_ref');
+    if(_refCode){
+      fetch(`${API}/auth/apply-referral`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+d.token},body:JSON.stringify({ref_code:_refCode})})
+        .then(r=>r.json()).then(rd=>{if(rd.bonus_checks)toast('🎁 Ai primit 5 verificări gratuite ca bonus de referral!','ok');}).catch(()=>{});
+    }
   }catch(e){authErr(t('backendOffline'));btn.disabled=false;btn.textContent=t('createBtn');}
 }
 async function doLogin(){
@@ -2119,8 +2165,10 @@ async function renderPlans(){
   order.forEach(key=>{
     const p=plans[key];if(!p)return;
     const card=document.createElement('div');
-    card.className='plan'+(key==='pro'?' featured':'');
-    if(key==='pro'){const b=document.createElement('div');b.className='plan-badge';b.textContent='⭐ '+t('mostPopular');card.appendChild(b);}
+    card.className='plan'+(key==='pro'||key==='annual_pro'?' featured':'');
+    card.dataset.planKey = key;
+    if(key==='pro'||key==='annual_pro'){const b=document.createElement('div');b.className='plan-badge';b.textContent='⭐ '+t('mostPopular');card.appendChild(b);}
+    if(p.saves_percent){const s=document.createElement('div');s.className='plan-badge';s.style.cssText='top:32px;background:#22c55e';s.textContent=`Economisești ${p.saves_percent}%`;card.appendChild(s);}
     const nm=document.createElement('div');nm.className='plan-name';nm.textContent=p.name||key;card.appendChild(nm);
     const pr=document.createElement('div');pr.className='plan-price';
     const sup=document.createElement('sup');sup.textContent='€';pr.appendChild(sup);
@@ -2156,8 +2204,76 @@ async function renderPlans(){
     grid.appendChild(card);
   });
 }
-function showPricing(){renderPlans();document.getElementById('pricingOverlay').className='overlay show';}
+function showPricing(){_plansCache=null;renderPlans().then(_applyBillingFilter);_refreshRefLink();document.getElementById('pricingOverlay').className='overlay show';plausibleEvent('open_pricing');}
 function closePricing(){document.getElementById('pricingOverlay').className='overlay';}
+
+// ── Annual billing toggle ─────────────────────────────────────
+let _billingAnnual = false;
+function _applyBillingFilter(){
+  const grid = document.getElementById('plansGrid');
+  if(!grid) return;
+  grid.querySelectorAll('.plan').forEach(card => {
+    const key = card.dataset.planKey || '';
+    if(key === 'free' || key === 'enterprise') return;
+    const isAnnual = key.startsWith('annual_');
+    card.style.display = (_billingAnnual ? isAnnual : !isAnnual) ? '' : 'none';
+  });
+}
+function _toggleBilling(){
+  _billingAnnual = !_billingAnnual;
+  const knob = document.getElementById('billingKnob');
+  const ml = document.getElementById('billingMonthlyLabel');
+  const al = document.getElementById('billingAnnualLabel');
+  if(knob) knob.style.left = _billingAnnual ? '23px' : '3px';
+  if(ml) ml.style.color = _billingAnnual ? 'var(--text2)' : 'var(--text)';
+  if(al) al.style.color = _billingAnnual ? 'var(--text)' : 'var(--text2)';
+  if(!_plansCache){ renderPlans().then(_applyBillingFilter); } else { _applyBillingFilter(); }
+}
+
+// ── Referral link ─────────────────────────────────────────────
+function _refreshRefLink(){
+  const wrap = document.getElementById('refLinkWrap');
+  const msg = document.getElementById('refLoginMsg');
+  const inp = document.getElementById('refLinkInput');
+  if(!wrap||!msg||!inp) return;
+  if(currentUser && currentUser.ref_code){
+    const link = location.origin + '/refer/' + currentUser.ref_code;
+    inp.value = link;
+    wrap.style.display = '';
+    msg.style.display = 'none';
+  } else {
+    wrap.style.display = 'none';
+    msg.style.display = '';
+  }
+}
+function _copyRefLink(){
+  const inp = document.getElementById('refLinkInput');
+  if(!inp) return;
+  navigator.clipboard.writeText(inp.value).then(()=>toast('Link copiat!','ok')).catch(()=>{inp.select();document.execCommand('copy');toast('Link copiat!','ok');});
+  plausibleEvent('copy_referral_link');
+}
+
+// ── Social proof stats ────────────────────────────────────────
+(async function loadPublicStats(){
+  try{
+    const r = await fetch('/stats/public');
+    if(!r.ok) return;
+    const d = await r.json();
+    const el = document.getElementById('publicStats');
+    if(!el) return;
+    const fmt = n => n >= 1000 ? (n/1000).toFixed(1)+'k' : String(n);
+    const items = [];
+    if(d.total_checks > 0) items.push(`✅ <strong>${fmt(d.total_checks)}</strong> claims verified`);
+    if(d.total_users > 0) items.push(`👥 <strong>${fmt(d.total_users)}</strong> users`);
+    if(d.unique_claims > 0) items.push(`🔍 <strong>${fmt(d.unique_claims)}</strong> unique claims`);
+    el.innerHTML = items.map(i=>`<span style="white-space:nowrap">${i}</span>`).join('');
+  }catch(e){}
+})();
+
+// ── Plausible event helper ────────────────────────────────────
+function plausibleEvent(name, props){
+  try{if(window.plausible) window.plausible(name, {props: props||{}});}catch(e){}
+}
 function closeHistory(){document.getElementById('historyOverlay').className='overlay';}
 const _HV_COLORS={TRUE:'#22c55e',FALSE:'#ef4444',UNCERTAIN:'#eab308',MIXED:'#eab308'};
 async function openAccuracyScore(){
@@ -2318,6 +2434,7 @@ async function showHistory(){
 }
 async function checkout(plan){
   if(!token()){showAuth('register');closePricing();return;}
+  plausibleEvent('checkout_start', {plan});
   try{
     const r=await fetch(`${API}/stripe/checkout`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token()},body:JSON.stringify({plan})});
     const d=await r.json();

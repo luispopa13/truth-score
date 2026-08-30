@@ -71,11 +71,16 @@ DB_NAME      = os.getenv("MONGODB_DB", "truthscore")
 # so even if a user maxes out their free quota every day the cost is
 # negligible compared to upgrade conversion rate.
 _PLAN_DAILY = {
-    "free":       int(os.getenv("PLAN_FREE_DAILY", "3")),
-    "pro":        int(os.getenv("PLAN_PRO_DAILY", "200")),
-    "business":   int(os.getenv("PLAN_BUSINESS_DAILY", "800")),
-    "enterprise": int(os.getenv("PLAN_ENTERPRISE_DAILY", "9999")),
+    "free":            int(os.getenv("PLAN_FREE_DAILY", "3")),
+    "pro":             int(os.getenv("PLAN_PRO_DAILY", "200")),
+    "annual_pro":      int(os.getenv("PLAN_PRO_DAILY", "200")),
+    "business":        int(os.getenv("PLAN_BUSINESS_DAILY", "800")),
+    "annual_business": int(os.getenv("PLAN_BUSINESS_DAILY", "800")),
+    "enterprise":      int(os.getenv("PLAN_ENTERPRISE_DAILY", "9999")),
 }
+# New users get this many checks/day during trial (first 7 days)
+_TRIAL_DAILY   = int(os.getenv("PLAN_TRIAL_DAILY", "10"))
+_TRIAL_DAYS    = int(os.getenv("TRIAL_DAYS", "7"))
 
 # After this many checks in a day, routing switches to eco mode (cheap
 # models, no paid search) — protects margin from heavy-day users without
@@ -83,17 +88,21 @@ _PLAN_DAILY = {
 # Pro because paragraphs let power users burn hundreds of fresh claims/day;
 # at €29.99 the absolute-worst case must still land near break-even.
 _ECO_AFTER = {
-    "free":       999999,
-    "pro":        int(os.getenv("PRO_ECO_AFTER", "100")),
-    "business":   int(os.getenv("BUSINESS_ECO_AFTER", "350")),
-    "enterprise": 999999,
+    "free":            999999,
+    "pro":             int(os.getenv("PRO_ECO_AFTER", "100")),
+    "annual_pro":      int(os.getenv("PRO_ECO_AFTER", "100")),
+    "business":        int(os.getenv("BUSINESS_ECO_AFTER", "350")),
+    "annual_business": int(os.getenv("BUSINESS_ECO_AFTER", "350")),
+    "enterprise":      999999,
 }
 
 _PLAN_PRICES = {
-    "free":       0,
-    "pro":        9.99,
-    "business":   29.99,
-    "enterprise": 199,
+    "free":            0,
+    "pro":             9.99,
+    "annual_pro":      79.99,
+    "business":        29.99,
+    "annual_business": 239.88,
+    "enterprise":      199,
 }
 
 # Canonical per-plan feature matrix. This is the ONE definition — utils/
@@ -102,14 +111,18 @@ _PLAN_PRICES = {
 # fallback. `api_keys` = max concurrent API keys; `models` is advisory (routing
 # is decided by eco-mode + pick_model, not this list).
 _PLAN_FEATURES = {
-    "free":       {"batch": False, "pdf": False, "widget": False, "seats": 1,
-                   "api_quota": 0,    "api_keys": 1,   "models": ["eco"]},
-    "pro":        {"batch": True,  "pdf": True,  "widget": True,  "seats": 1,
-                   "api_quota": 0,    "api_keys": 5,   "models": ["gemini", "groq"]},
-    "business":   {"batch": True,  "pdf": True,  "widget": True,  "seats": 3,
-                   "api_quota": 5000, "api_keys": 20,  "models": ["gemini", "groq", "gpt4o-mini"]},
-    "enterprise": {"batch": True,  "pdf": True,  "widget": True,  "seats": 0,
-                   "api_quota": -1,   "api_keys": 100, "models": ["all"]},   # seats 0 = custom
+    "free":            {"batch": False, "pdf": False, "widget": False, "seats": 1,
+                        "api_quota": 0,    "api_keys": 1,   "models": ["eco"]},
+    "pro":             {"batch": True,  "pdf": True,  "widget": True,  "seats": 1,
+                        "api_quota": 0,    "api_keys": 5,   "models": ["gemini", "groq"]},
+    "annual_pro":      {"batch": True,  "pdf": True,  "widget": True,  "seats": 1,
+                        "api_quota": 0,    "api_keys": 5,   "models": ["gemini", "groq"]},
+    "business":        {"batch": True,  "pdf": True,  "widget": True,  "seats": 3,
+                        "api_quota": 5000, "api_keys": 20,  "models": ["gemini", "groq", "gpt4o-mini"]},
+    "annual_business": {"batch": True,  "pdf": True,  "widget": True,  "seats": 3,
+                        "api_quota": 5000, "api_keys": 20,  "models": ["gemini", "groq", "gpt4o-mini"]},
+    "enterprise":      {"batch": True,  "pdf": True,  "widget": True,  "seats": 0,
+                        "api_quota": -1,   "api_keys": 100, "models": ["all"]},
 }
 
 
@@ -121,8 +134,10 @@ def _get_plans():
             "batch_limit": 0, "pdf": False, "widget": False,
             "price_id": None,
             "features": _PLAN_FEATURES["free"],
-            "ads": True,           # free tier is ad-supported on dashboard
+            "ads": True,
             "bonus_via_feedback": True,
+            "trial_daily": _TRIAL_DAILY,
+            "trial_days": _TRIAL_DAYS,
         },
         "pro": {
             "name": "Pro", "price": _PLAN_PRICES["pro"],
@@ -133,17 +148,36 @@ def _get_plans():
             "ads": False,
             "eco_after_daily": _ECO_AFTER["pro"],
         },
+        "annual_pro": {
+            "name": "Pro Annual", "price": _PLAN_PRICES["annual_pro"],
+            "daily_limit": _PLAN_DAILY["annual_pro"],
+            "batch_limit": 50, "pdf": True, "widget": True,
+            "price_id": os.getenv("STRIPE_PRO_ANNUAL_PRICE_ID", ""),
+            "features": _PLAN_FEATURES["annual_pro"],
+            "ads": False,
+            "eco_after_daily": _ECO_AFTER["annual_pro"],
+            "billing": "annual",
+            "saves_percent": 33,
+        },
         "business": {
             "name": "Business", "price": _PLAN_PRICES["business"],
             "daily_limit": _PLAN_DAILY["business"],
             "batch_limit": 500, "pdf": True, "widget": True,
-            # NO fallback to the enterprise price id — that would charge a
-            # business customer the enterprise rate while granting business.
-            # Empty => create_checkout raises a clear "set STRIPE_BUSINESS_PRICE_ID".
             "price_id": os.getenv("STRIPE_BUSINESS_PRICE_ID", ""),
             "features": _PLAN_FEATURES["business"],
             "ads": False,
             "eco_after_daily": _ECO_AFTER["business"],
+        },
+        "annual_business": {
+            "name": "Business Annual", "price": _PLAN_PRICES["annual_business"],
+            "daily_limit": _PLAN_DAILY["annual_business"],
+            "batch_limit": 500, "pdf": True, "widget": True,
+            "price_id": os.getenv("STRIPE_BUSINESS_ANNUAL_PRICE_ID", ""),
+            "features": _PLAN_FEATURES["annual_business"],
+            "ads": False,
+            "eco_after_daily": _ECO_AFTER["annual_business"],
+            "billing": "annual",
+            "saves_percent": 33,
         },
         "enterprise": {
             "name": "Enterprise", "price": _PLAN_PRICES["enterprise"],
@@ -205,7 +239,9 @@ class UserOut(BaseModel):
     daily_limit: int
     used_today: int
     stripe_customer_id: str = ""
-    bonus_today: int = 0   # extra checks earned today via feedback gamification
+    bonus_today: int = 0
+    ref_code: str = ""
+    trial_active: bool = False
 
 class GoogleAuthRequest(BaseModel):
     token: str
@@ -279,6 +315,8 @@ async def register_user(data: UserRegister, client_ip: str = "") -> dict:
         raise HTTPException(status_code=400, detail="Email deja înregistrat")
     
     _email_token = secrets.token_urlsafe(32)
+    _ref_code = secrets.token_urlsafe(6)[:8].upper()
+    _trial_until = datetime.now(timezone.utc) + timedelta(days=_TRIAL_DAYS)
     user = {
         "email":       data.email.lower(),
         "password":    hash_password(data.password),
@@ -287,9 +325,12 @@ async def register_user(data: UserRegister, client_ip: str = "") -> dict:
         "created_at":  datetime.now(timezone.utc),
         "stripe_customer_id": "",
         "stripe_subscription_id": "",
-        "usage":       {},  # {"2025-01-01": 5, ...}
+        "usage":       {},
         "email_verified": False,
         "email_token": _email_token,
+        "ref_code":    _ref_code,
+        "trial_until": _trial_until,
+        "bonus_checks": 0,
     }
     result = await db.users.insert_one(user)
     user_id = str(result.inserted_id)
@@ -308,6 +349,39 @@ async def register_user(data: UserRegister, client_ip: str = "") -> dict:
     except Exception as _e:
         print(f"[AUTH] Verification email skipped (non-fatal): {_e}")
     return {"token": token, "user_id": user_id}
+
+
+async def apply_referral(ref_code: str, new_user_id: str) -> bool:
+    """Credit 5 bonus checks to the referrer and 5 to the new user. Idempotent."""
+    if not ref_code or not new_user_id:
+        return False
+    try:
+        from bson import ObjectId
+        db = get_db()
+        referrer = await db.users.find_one({"ref_code": ref_code.upper()})
+        if not referrer:
+            return False
+        referrer_id = referrer["_id"]
+        # Don't allow self-referral
+        if str(referrer_id) == new_user_id:
+            return False
+        # Check not already applied
+        already = await db.referrals.find_one({"referrer": str(referrer_id), "referred": new_user_id})
+        if already:
+            return False
+        await db.referrals.insert_one({
+            "referrer": str(referrer_id), "referred": new_user_id,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+        # +5 checks to referrer
+        await db.users.update_one({"_id": referrer_id}, {"$inc": {"bonus_checks": 5}})
+        # +5 checks to new user
+        await db.users.update_one({"_id": ObjectId(new_user_id)}, {"$inc": {"bonus_checks": 5}})
+        return True
+    except Exception as e:
+        print(f"[AUTH] apply_referral error: {e}")
+        return False
+
 
 async def login_user(data: UserLogin) -> dict:
     db = get_db()
@@ -482,7 +556,6 @@ async def require_user(credentials: HTTPAuthorizationCredentials = Security(secu
 async def check_rate_limit(user, claim, client_ip: str = "", fp: str = "") -> dict:
     """Check rate limit. Anonymous visitors get ANON_DAILY_CAP checks/day/IP+fingerprint."""
     if user is None:
-        # Anonymous: small try-before-signup allowance per IP (+ browser fingerprint)
         from utils.abuse import anon_ip_check
         _, info = await anon_ip_check(client_ip, fp)
         return info
@@ -490,6 +563,22 @@ async def check_rate_limit(user, claim, client_ip: str = "", fp: str = "") -> di
     plan_name = user.get("plan", "free")
     plan      = PLANS.get(plan_name, PLANS["free"])
     limit     = plan["daily_limit"]
+
+    # Trial: free users get more checks during first N days
+    if plan_name == "free":
+        trial_until = user.get("trial_until")
+        if trial_until:
+            if isinstance(trial_until, str):
+                try:
+                    trial_until = datetime.fromisoformat(trial_until.replace("Z", "+00:00"))
+                except Exception:
+                    trial_until = None
+            if trial_until and datetime.now(timezone.utc) < trial_until:
+                limit = max(limit, _TRIAL_DAILY)
+
+    # Permanent bonus checks earned via referrals/feedback
+    limit += int(user.get("bonus_checks", 0))
+
     today     = today_key()
     used      = user.get("usage", {}).get(today, 0)
     db = get_db()
@@ -563,15 +652,34 @@ async def get_user_out(user):
         bonus = await get_feedback_bonus(str(user["_id"]))
     except Exception:
         bonus = 0
+    # Referral bonus (permanent daily limit increase)
+    referral_bonus = int(user.get("bonus_checks", 0))
+    # Trial status
+    trial_active = False
+    if plan_name == "free":
+        trial_until = user.get("trial_until")
+        if trial_until:
+            if isinstance(trial_until, str):
+                try:
+                    trial_until = datetime.fromisoformat(trial_until.replace("Z", "+00:00"))
+                except Exception:
+                    trial_until = None
+            if trial_until and datetime.now(timezone.utc) < trial_until:
+                trial_active = True
+    effective_limit = plan["daily_limit"] + referral_bonus
+    if trial_active:
+        effective_limit = max(effective_limit, _TRIAL_DAILY)
     return UserOut(
         id=str(user["_id"]),
         email=user["email"],
         name=user.get("name", ""),
         plan=plan_name,
-        daily_limit=plan["daily_limit"],
+        daily_limit=effective_limit,
         used_today=await _current_daily_used(user),
         stripe_customer_id=user.get("stripe_customer_id", ""),
-        bonus_today=bonus,
+        bonus_today=bonus + referral_bonus,
+        ref_code=user.get("ref_code", ""),
+        trial_active=trial_active,
     )
 
 

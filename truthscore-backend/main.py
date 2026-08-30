@@ -23,7 +23,7 @@ import hashlib as _hashlib
 from datetime import datetime, timezone
 from typing import Optional as _Optional
 from fastapi import Response, UploadFile, File
-from fastapi.responses import FileResponse, PlainTextResponse, HTMLResponse
+from fastapi.responses import FileResponse, PlainTextResponse, HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 from pipeline.case_study import log_interaction
 from pipeline.verdict_store import save_verdict, load_verdict
@@ -234,9 +234,27 @@ async def _warmup_models():
     global _READY
     _READY = True
     print("[STARTUP] Ready to serve.")
+    # Auto-digest: check every hour, send weekly digest on Sundays
+    asyncio.create_task(_weekly_digest_scheduler())
 
 
-@app.on_event("shutdown")
+async def _weekly_digest_scheduler():
+    """Background loop: sends weekly digest every Sunday ~09:00 UTC."""
+    import datetime as _dt
+    _sent_week: set = set()
+    while True:
+        try:
+            await asyncio.sleep(3600)  # check every hour
+            now = _dt.datetime.now(_dt.timezone.utc)
+            week_key = f"{now.isocalendar()[0]}-W{now.isocalendar()[1]}"
+            if now.weekday() == 6 and 8 <= now.hour <= 10 and week_key not in _sent_week:
+                from email_digest import run_digest
+                db = get_db()
+                await run_digest(db)
+                _sent_week.add(week_key)
+                print(f"[DIGEST] Weekly digest sent for {week_key}")
+        except Exception as e:
+            print(f"[DIGEST] scheduler error: {e}")
 async def _close_pools():
     """Cleanly close the shared retrieval HTTP connection pool on shutdown."""
     try:
@@ -1714,7 +1732,47 @@ async def plans():
     return PLANS
 
 
-# ── API Keys (for widgets, extensions, programmatic access) ──
+@app.get("/stats/public")
+async def public_stats():
+    """Aggregate stats for social proof: total claims checked, users, etc."""
+    try:
+        db = get_db()
+        total_checks = await db.trending_claims.aggregate([
+            {"$group": {"_id": None, "total": {"$sum": "$check_count"}}}
+        ]).to_list(1)
+        total = (total_checks[0]["total"] if total_checks else 0)
+        users = await db.users.estimated_document_count()
+        claims = await db.trending_claims.estimated_document_count()
+        return {"total_checks": total, "total_users": users, "unique_claims": claims}
+    except Exception:
+        return {"total_checks": 0, "total_users": 0, "unique_claims": 0}
+
+
+@app.get("/refer/{code}", include_in_schema=False)
+async def referral_redirect(code: str, request: Request):
+    """Landing page for referral links — stores ref code in cookie then redirects home."""
+    resp = RedirectResponse(url="/?ref=" + code.upper(), status_code=302)
+    resp.set_cookie("ts_ref", code.upper(), max_age=86400 * 30, httponly=False, samesite="lax")
+    return resp
+
+
+@app.post("/auth/apply-referral")
+async def apply_referral_endpoint(req: Request, user=Depends(require_user)):
+    """Apply a referral code to the current user (one-time)."""
+    try:
+        body = await req.json()
+        code = (body.get("ref_code") or "").strip()
+        if not code:
+            raise HTTPException(400, "ref_code required")
+        from auth import apply_referral
+        ok = await apply_referral(code, str(user["_id"]))
+        if not ok:
+            raise HTTPException(400, "Invalid or already-used referral code")
+        return {"status": "ok", "bonus_checks": 5}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
 
 @app.post("/api-keys")
 async def create_key(user=Depends(require_user)):
@@ -1786,7 +1844,167 @@ async def quota_metrics(user=Depends(require_admin)):
     }
 
 
-# ── Batch + PDF ───────────────────────────────────────────
+@app.get("/admin/data")
+async def admin_dashboard_data(user=Depends(require_admin)):
+    """Aggregate stats for the admin dashboard."""
+    from datetime import datetime, timezone, timedelta
+    try:
+        db = get_db()
+        # Users by plan
+        plan_pipeline = [{"$group": {"_id": "$plan", "count": {"$sum": 1}}}]
+        plan_docs = await db.users.aggregate(plan_pipeline).to_list(20)
+        by_plan = {d["_id"] or "free": d["count"] for d in plan_docs}
+
+        # New users per day (last 30 days)
+        now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(days=30)
+        new_users_pipeline = [
+            {"$match": {"created_at": {"$gte": cutoff}}},
+            {"$group": {"_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$created_at"}}, "count": {"$sum": 1}}},
+            {"$sort": {"_id": 1}},
+        ]
+        new_users_docs = await db.users.aggregate(new_users_pipeline).to_list(35)
+
+        # Total users
+        total_users = await db.users.estimated_document_count()
+
+        # Checks per day from trending (last 30 days)
+        checks_pipeline = [
+            {"$match": {"last_checked": {"$gte": cutoff.isoformat()}}},
+            {"$group": {"_id": {"$substr": ["$last_checked", 0, 10]}, "checks": {"$sum": "$check_count"}}},
+            {"$sort": {"_id": 1}},
+        ]
+        checks_docs = await db.trending_claims.aggregate(checks_pipeline).to_list(35)
+
+        # Total checks
+        total_checks_agg = await db.trending_claims.aggregate(
+            [{"$group": {"_id": None, "total": {"$sum": "$check_count"}}}]
+        ).to_list(1)
+        total_checks = (total_checks_agg[0]["total"] if total_checks_agg else 0)
+
+        # Top claims
+        top_claims = await db.trending_claims.find({}, {"claim": 1, "check_count": 1, "verdict": 1}).sort("check_count", -1).limit(10).to_list(10)
+        for c in top_claims:
+            c.pop("_id", None)
+
+        # Revenue estimate
+        prices = {"pro": 9.99, "annual_pro": 6.67, "business": 29.99, "annual_business": 19.99, "enterprise": 199}
+        mrr = sum(by_plan.get(p, 0) * prices.get(p, 0) for p in prices)
+
+        # Recent signups (last 10)
+        recent_users = await db.users.find({}, {"email": 1, "plan": 1, "created_at": 1}).sort("created_at", -1).limit(10).to_list(10)
+        for u in recent_users:
+            u["_id"] = str(u["_id"])
+            if hasattr(u.get("created_at"), "isoformat"):
+                u["created_at"] = u["created_at"].isoformat()
+
+        return {
+            "total_users": total_users,
+            "total_checks": total_checks,
+            "mrr": round(mrr, 2),
+            "by_plan": by_plan,
+            "new_users_per_day": [{"date": d["_id"], "count": d["count"]} for d in new_users_docs],
+            "checks_per_day": [{"date": d["_id"], "checks": d["checks"]} for d in checks_docs],
+            "top_claims": top_claims,
+            "recent_users": recent_users,
+        }
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.get("/admin", response_class=HTMLResponse, include_in_schema=False)
+async def admin_dashboard(user=Depends(require_admin)):
+    return HTMLResponse(_ADMIN_HTML)
+
+
+_ADMIN_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>TruthScore Admin</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0d0d1a;color:#e5e7eb;font-family:'Inter',-apple-system,sans-serif;padding:24px}
+h1{font-size:24px;font-weight:800;margin-bottom:24px;color:#fff}
+h2{font-size:16px;font-weight:700;margin-bottom:14px;color:#c4b5fd}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:28px}
+.card{background:#1a1a2e;border:1px solid rgba(109,40,217,.2);border-radius:12px;padding:20px}
+.stat-val{font-size:32px;font-weight:900;color:#fff;letter-spacing:-1px}
+.stat-lbl{font-size:12px;color:#9ca3af;margin-top:4px}
+.chart-wrap{background:#1a1a2e;border:1px solid rgba(109,40,217,.2);border-radius:12px;padding:20px;margin-bottom:24px}
+.charts-2col{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;padding:8px 10px;color:#9ca3af;font-weight:600;border-bottom:1px solid rgba(255,255,255,.07)}
+td{padding:8px 10px;border-bottom:1px solid rgba(255,255,255,.04)}
+.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}
+.badge-free{background:rgba(107,114,128,.2);color:#9ca3af}
+.badge-pro{background:rgba(109,40,217,.2);color:#c4b5fd}
+.badge-business{background:rgba(251,191,36,.15);color:#fbbf24}
+.badge-enterprise{background:rgba(34,197,94,.15);color:#22c55e}
+@media(max-width:700px){.charts-2col{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<h1>🛡️ TruthScore Admin Dashboard</h1>
+<div class="grid" id="kpiGrid"><div style="color:#6b7280;font-size:14px">Loading…</div></div>
+<div class="charts-2col">
+  <div class="chart-wrap"><h2>New Users (30 days)</h2><canvas id="usersChart" height="200"></canvas></div>
+  <div class="chart-wrap"><h2>Checks / Day (30 days)</h2><canvas id="checksChart" height="200"></canvas></div>
+</div>
+<div class="charts-2col">
+  <div class="chart-wrap"><h2>Users by Plan</h2><canvas id="planChart" height="220"></canvas></div>
+  <div class="chart-wrap">
+    <h2>Top 10 Claims</h2>
+    <table><thead><tr><th>Claim</th><th>Verdict</th><th>Checks</th></tr></thead><tbody id="topClaims"></tbody></table>
+  </div>
+</div>
+<div class="chart-wrap">
+  <h2>Recent Signups</h2>
+  <table><thead><tr><th>Email</th><th>Plan</th><th>Signed up</th></tr></thead><tbody id="recentUsers"></tbody></table>
+</div>
+<script>
+const token = localStorage.getItem('ts_token') || new URLSearchParams(location.search).get('token') || '';
+const hdr = token ? {'Authorization':'Bearer '+token} : {};
+const PLAN_COLORS = {free:'#6b7280',pro:'#7c3aed',annual_pro:'#9333ea',business:'#f59e0b',annual_business:'#f97316',enterprise:'#22c55e'};
+function fmt(n){return n>=1000000?(n/1000000).toFixed(1)+'M':n>=1000?(n/1000).toFixed(1)+'k':String(n);}
+function badgeClass(p){return 'badge badge-'+(p||'free').split('_').pop();}
+function lineChart(id,labels,data,label,color){
+  new Chart(document.getElementById(id),{type:'line',data:{labels,datasets:[{label,data,borderColor:color,backgroundColor:color+'22',fill:true,tension:.4,pointRadius:3}]},options:{plugins:{legend:{display:false}},scales:{x:{grid:{color:'rgba(255,255,255,.05)'},ticks:{color:'#9ca3af',font:{size:10}}},y:{grid:{color:'rgba(255,255,255,.05)'},ticks:{color:'#9ca3af',font:{size:10}}}}}});
+}
+async function load(){
+  try{
+    const r = await fetch('/admin/data',{headers:hdr});
+    if(r.status===401||r.status===403){document.body.innerHTML='<div style="padding:40px;text-align:center;color:#ef4444">Access denied. Are you logged in as admin?</div>';return;}
+    const d = await r.json();
+    // KPI cards
+    document.getElementById('kpiGrid').innerHTML=[
+      ['Total Users', fmt(d.total_users),'👥'],
+      ['Total Checks', fmt(d.total_checks),'✅'],
+      ['Est. MRR', '€'+d.mrr.toFixed(2),'💰'],
+      ['Paid Users', fmt(Object.entries(d.by_plan||{}).filter(([k])=>k!=='free').reduce((s,[,v])=>s+v,0)),'⭐'],
+    ].map(([l,v,e])=>`<div class="card"><div class="stat-val">${e} ${v}</div><div class="stat-lbl">${l}</div></div>`).join('');
+    // Line charts
+    const uLabels = (d.new_users_per_day||[]).map(x=>x.date.slice(5));
+    const uData = (d.new_users_per_day||[]).map(x=>x.count);
+    lineChart('usersChart',uLabels,uData,'New Users','#7c3aed');
+    const cLabels = (d.checks_per_day||[]).map(x=>x.date.slice(5));
+    const cData = (d.checks_per_day||[]).map(x=>x.checks);
+    lineChart('checksChart',cLabels,cData,'Checks','#06b6d4');
+    // Plan pie
+    const planEntries = Object.entries(d.by_plan||{});
+    new Chart(document.getElementById('planChart'),{type:'doughnut',data:{labels:planEntries.map(([k])=>k),datasets:[{data:planEntries.map(([,v])=>v),backgroundColor:planEntries.map(([k])=>PLAN_COLORS[k]||'#6b7280')}]},options:{plugins:{legend:{position:'right',labels:{color:'#9ca3af',font:{size:12}}}}}});
+    // Top claims table
+    document.getElementById('topClaims').innerHTML=(d.top_claims||[]).map(c=>`<tr><td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${c.claim||''}">${(c.claim||'').substring(0,70)}</td><td>${c.verdict||'—'}</td><td>${c.check_count||0}</td></tr>`).join('');
+    // Recent users
+    document.getElementById('recentUsers').innerHTML=(d.recent_users||[]).map(u=>`<tr><td>${u.email||''}</td><td><span class="${badgeClass(u.plan)}">${u.plan||'free'}</span></td><td style="color:#6b7280;font-size:11px">${(u.created_at||'').slice(0,10)}</td></tr>`).join('');
+  }catch(e){document.getElementById('kpiGrid').innerHTML='<div style="color:#ef4444">Error: '+e.message+'</div>';}
+}
+load();
+</script>
+</body>
+</html>"""
 
 @app.post("/batch-verify")
 async def batch(req: BatchVerifyRequest, user=Depends(require_user)):
