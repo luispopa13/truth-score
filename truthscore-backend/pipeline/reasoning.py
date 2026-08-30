@@ -654,61 +654,7 @@ Hard claims requiring extra care:
           f"sup={len(supporting)} con={len(contradicting)} "
           f"irr={len(irr_idx)}/{len(top_evidence)}")
 
-    # ── Multi-model consensus for low-confidence verdicts ──────
-    # If Gemini gives LOW confidence or UNCERTAIN -> ask Groq too
-    groq_key = os.getenv("GROQ_API_KEY", "")
-    if (verdict == "UNCERTAIN" or confidence == "LOW") and groq_key:
-        print(f"  [CONSENSUS] Low confidence -> asking Groq for second opinion")
-        consensus_prompt = (
-            f'You are an expert fact-checker. Is this claim TRUE or FALSE?\n'
-            f'Claim: "{claim}"\n'
-            f'Current evidence summary: {explanation[:300]}\n\n'
-            'Respond with JSON only: {{"verdict":"TRUE or FALSE","score":0-100,"confidence":"HIGH or MEDIUM or LOW","explanation":"2 sentences with specific facts"}}'
-        )
-        try:
-            from groq import Groq as _Groq
-            import asyncio as _aio, json as _json
-            # Reuse the module-level client when available (avoids re-opening an
-            # HTTP connection pool on every low-confidence claim).
-            _gc = _groq_client or _Groq(api_key=groq_key)
-            loop = _aio.get_event_loop()
-            resp = await loop.run_in_executor(None,
-                lambda: _gc.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
-                    messages=[{"role": "user", "content": consensus_prompt}],
-                    temperature=0.1, max_tokens=300,
-                )
-            )
-            raw2 = resp.choices[0].message.content.strip()
-            raw2 = raw2.replace("```json","").replace("```","").strip()
-            s2, e2 = raw2.find("{"), raw2.rfind("}")
-            if s2 != -1 and e2 > s2:
-                d2 = _json.loads(raw2[s2:e2+1])
-                g_verdict = d2.get("verdict","").upper()
-                g_score   = int(d2.get("score", 50))
-                g_conf    = d2.get("confidence","LOW").upper()
-                g_expl    = d2.get("explanation","")
-
-                if g_verdict in ("TRUE","FALSE"):
-                    if verdict == "UNCERTAIN":
-                        # The second evaluator breaks the tie.
-                        verdict, score, confidence = g_verdict, g_score, g_conf
-                        explanation = g_expl
-                        print(f"  [CONSENSUS] Secondary evaluator resolved: {verdict} score={score}")
-                    elif g_verdict == verdict:
-                        # Both agree -> boost confidence
-                        if confidence == "LOW": confidence = "MEDIUM"
-                        score = (score + g_score) // 2
-                        print(f"  [CONSENSUS] Both models agree: {verdict} -> confidence boosted")
-                    else:
-                        # Models disagree -> keep Gemini but lower score toward 50
-                        score = (score + 50) // 2
-                        confidence = "LOW"
-                        print(f"  [CONSENSUS] Models disagree: Gemini={verdict}, Groq={g_verdict} -> LOW")
-        except Exception as e:
-            print(f"  [CONSENSUS] Groq error: {str(e)[:60]}")
-
-    # If still UNCERTAIN after consensus -> commit to a verdict only when the
+    # If still UNCERTAIN -> commit to a verdict only when the
     # score crosses a canonical decision threshold (config.py VERDICT_TRUE_AT /
     # VERDICT_FALSE_AT). A score inside the neutral band means the evidence
     # genuinely doesn't decide either way, so forcing TRUE/FALSE there

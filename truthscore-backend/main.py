@@ -449,83 +449,84 @@ async def verify(req: VerifyRequest, response: Response,
     result = await verify_claim(req, eco=eco)
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
 
-    try:
-        interaction_id = await log_interaction({
-            "claim":               getattr(result, "claim", req.text)[:500],
-            "topic":               getattr(result, "topic", None),
-            "verdict":             getattr(result, "verdict", None),
-            "score":               getattr(result, "score", None),
-            "confidence":          getattr(result, "confidence", None),
-            "evidence_count":      getattr(result, "evidence_count", None),
-            "supporting_count":    len(getattr(result, "supporting", []) or []),
-            "contradicting_count": len(getattr(result, "contradicting", []) or []),
-            "neutral_count":       len(getattr(result, "neutral_sources", []) or []),
-            "models_used":         getattr(result, "models_used", None),
-            "cached":              getattr(result, "cached", False),
-            "duration_ms":         duration_ms,
-            "user_id":             user.get("id") if user else None,
-            "user_plan":           (user.get("plan") if user else "anonymous"),
-        })
-        response.headers["X-TruthScore-Interaction-Id"] = interaction_id
-    except Exception as e:
-        print(f"[CASE-STUDY] Logging skipped (non-fatal): {e}")
+    # ── Post-pipeline bookkeeping — all run concurrently, none block the response ──
+    async def _do_log():
+        try:
+            iid = await log_interaction({
+                "claim":               getattr(result, "claim", req.text)[:500],
+                "topic":               getattr(result, "topic", None),
+                "verdict":             getattr(result, "verdict", None),
+                "score":               getattr(result, "score", None),
+                "confidence":          getattr(result, "confidence", None),
+                "evidence_count":      getattr(result, "evidence_count", None),
+                "supporting_count":    len(getattr(result, "supporting", []) or []),
+                "contradicting_count": len(getattr(result, "contradicting", []) or []),
+                "neutral_count":       len(getattr(result, "neutral_sources", []) or []),
+                "models_used":         getattr(result, "models_used", None),
+                "cached":              getattr(result, "cached", False),
+                "duration_ms":         duration_ms,
+                "user_id":             user.get("id") if user else None,
+                "user_plan":           (user.get("plan") if user else "anonymous"),
+            })
+            response.headers["X-TruthScore-Interaction-Id"] = iid
+        except Exception as e:
+            print(f"[CASE-STUDY] Logging skipped (non-fatal): {e}")
 
-    # ── Permanent shareable verdict page (the moat) ──────────────
-    # Persist the full result under a short id and hand the client a permalink
-    # id. Skip cache hits' re-save is unnecessary — every distinct result gets a
-    # stable /v/{id}. Best-effort: a failed save just means no share link.
-    try:
-        _uid = (user.get("id") or "") if user else ""
-        _vid = await save_verdict(result.model_dump(), user_id=_uid)
-        if _vid:
-            response.headers["X-TruthScore-Verdict-Id"] = _vid
-    except Exception as e:
-        print(f"[VERDICT-STORE] save skipped (non-fatal): {e}")
+    async def _do_save():
+        try:
+            _uid = (user.get("id") or "") if user else ""
+            _vid = await save_verdict(result.model_dump(), user_id=_uid)
+            if _vid:
+                response.headers["X-TruthScore-Verdict-Id"] = _vid
+        except Exception as e:
+            print(f"[VERDICT-STORE] save skipped (non-fatal): {e}")
 
-    # Trending tracker (best-effort): every distinct check bumps the claim's
-    # public counter so /trending can surface what's hot right now.
-    try:
-        from auth import get_db
-        from pipeline.trending import record_check
-        await record_check(get_db(), result.claim, result.verdict,
-                           result.score, result.topic)
-    except Exception as e:
-        print(f"[TRENDING] record skipped (non-fatal): {e}")
+    async def _do_trending():
+        try:
+            from auth import get_db
+            from pipeline.trending import record_check
+            await record_check(get_db(), result.claim, result.verdict,
+                               result.score, result.topic)
+        except Exception as e:
+            print(f"[TRENDING] record skipped (non-fatal): {e}")
 
-    # Push notifications to claim watchers (best-effort)
-    try:
-        from auth import get_db
-        from api.push_notifications import notify_claim_watchers
-        _slug = getattr(result, '_claimSlug', '') or ''
-        asyncio.create_task(notify_claim_watchers(
-            get_db(), result.claim, result.verdict, _slug
-        ))
-    except Exception as e:
-        print(f"[PUSH] notify watchers skipped: {e}")
+    async def _do_push():
+        try:
+            from auth import get_db
+            from api.push_notifications import notify_claim_watchers
+            _slug = getattr(result, '_claimSlug', '') or ''
+            await notify_claim_watchers(get_db(), result.claim, result.verdict, _slug)
+        except Exception as e:
+            print(f"[PUSH] notify watchers skipped: {e}")
 
-    # Public claim page (best-effort): upsert a permanent SEO-indexed page
-    # for this claim at /claim/{slug}.
-    try:
-        from auth import get_db
-        from pipeline.public_claims import upsert_public_claim
-        all_src = [
-            *(result.supporting or []),
-            *(result.contradicting or []),
-            *(result.neutral_sources or []),
-        ]
-        _slug = await upsert_public_claim(
-            get_db(),
-            claim=result.claim,
-            verdict=result.verdict,
-            score=result.score,
-            sources=[s.model_dump() if hasattr(s, "model_dump") else s for s in all_src],
-            explanation=getattr(result, "aggregate_reason", "") or "",
-            topic=result.topic or "",
-        )
-        if _slug:
-            response.headers["X-TruthScore-Claim-Slug"] = _slug
-    except Exception as e:
-        print(f"[PUBLIC-CLAIMS] upsert skipped (non-fatal): {e}")
+    async def _do_upsert():
+        try:
+            from auth import get_db
+            from pipeline.public_claims import upsert_public_claim
+            all_src = [
+                *(result.supporting or []),
+                *(result.contradicting or []),
+                *(result.neutral_sources or []),
+            ]
+            _slug = await upsert_public_claim(
+                get_db(),
+                claim=result.claim,
+                verdict=result.verdict,
+                score=result.score,
+                sources=[s.model_dump() if hasattr(s, "model_dump") else s for s in all_src],
+                explanation=getattr(result, "aggregate_reason", "") or "",
+                topic=result.topic or "",
+            )
+            if _slug:
+                response.headers["X-TruthScore-Claim-Slug"] = _slug
+        except Exception as e:
+            print(f"[PUBLIC-CLAIMS] upsert skipped (non-fatal): {e}")
+
+    # Run all bookkeeping in parallel — headers are set before we return
+    await asyncio.gather(
+        _do_log(), _do_save(), _do_trending(), _do_push(), _do_upsert(),
+        return_exceptions=True,
+    )
 
     # Internal telemetry records model choices before this point. Public clients
     # receive no provider/model metadata, which also keeps the API contract clean.
@@ -580,18 +581,26 @@ async def verify_stream(req: VerifyRequest, request: Request,
         def _evt(obj):
             return f"data: {_json.dumps(obj, ensure_ascii=False)}\n\n"
         start = time.perf_counter()
-        task = _asyncio.create_task(verify_claim(req, eco=eco))
+        partial_q = _asyncio.Queue()
+        task = _asyncio.create_task(verify_claim(req, eco=eco, on_partial=partial_q))
         try:
-            stages = ["classify", "search", "compare", "score"]
-            yield _evt({"stage": stages[0]})
-            idx = 1
-            # Advance synthetic stages while the pipeline runs; the last stage holds
-            # until the real result is ready. Heartbeats keep proxies from buffering.
+            yield _evt({"stage": "classify"})
+            emitted_partial = False
             while not task.done():
-                done, _pending = await _asyncio.wait({task}, timeout=2.5)
+                done, _pending = await _asyncio.wait({task}, timeout=1.0)
                 if not done:
-                    if idx < len(stages):
-                        yield _evt({"stage": stages[idx]}); idx += 1
+                    # Check for partial result from Path A+B
+                    if not emitted_partial:
+                        try:
+                            partial = partial_q.get_nowait()
+                            p_payload = partial.model_dump() if hasattr(partial, "model_dump") else dict(partial)
+                            p_payload["show_ads"] = show_ads
+                            if quota_left is not None:
+                                p_payload["quota_left"] = quota_left
+                            yield _evt({"event": "partial", "data": p_payload})
+                            emitted_partial = True
+                        except _asyncio.QueueEmpty:
+                            yield _evt({"heartbeat": True})
                     else:
                         yield _evt({"heartbeat": True})
             try:
@@ -602,36 +611,45 @@ async def verify_stream(req: VerifyRequest, request: Request,
                 yield _evt({"event": "error", "detail": str(e)[:200]}); return
 
             duration_ms = round((time.perf_counter() - start) * 1000, 1)
-            try:
-                interaction_id = await log_interaction({
-                    "claim":               getattr(result, "claim", req.text)[:500],
-                    "topic":               getattr(result, "topic", None),
-                    "verdict":             getattr(result, "verdict", None),
-                    "score":               getattr(result, "score", None),
-                    "confidence":          getattr(result, "confidence", None),
-                    "evidence_count":      getattr(result, "evidence_count", None),
-                    "cached":              getattr(result, "cached", False),
-                    "duration_ms":         duration_ms,
-                    "user_id":             user.get("id") if user else None,
-                    "user_plan":           (user.get("plan") if user else "anonymous"),
-                })
-            except Exception as e:
-                interaction_id = ""
-                print(f"[CASE-STUDY] Logging skipped (non-fatal): {e}")
+
+            async def _log_sse():
+                try:
+                    return await log_interaction({
+                        "claim":               getattr(result, "claim", req.text)[:500],
+                        "topic":               getattr(result, "topic", None),
+                        "verdict":             getattr(result, "verdict", None),
+                        "score":               getattr(result, "score", None),
+                        "confidence":          getattr(result, "confidence", None),
+                        "evidence_count":      getattr(result, "evidence_count", None),
+                        "cached":              getattr(result, "cached", False),
+                        "duration_ms":         duration_ms,
+                        "user_id":             user.get("id") if user else None,
+                        "user_plan":           (user.get("plan") if user else "anonymous"),
+                    })
+                except Exception as e:
+                    print(f"[CASE-STUDY] Logging skipped (non-fatal): {e}")
+                    return ""
+
+            async def _save_sse():
+                try:
+                    _uid = (user.get("id") or "") if user else ""
+                    return await save_verdict(result.model_dump() if hasattr(result, "model_dump") else dict(result), user_id=_uid)
+                except Exception as e:
+                    print(f"[VERDICT-STORE] save skipped (non-fatal): {e}")
+                    return None
+
+            interaction_id, _vid = await _asyncio.gather(_log_sse(), _save_sse(), return_exceptions=True)
+            if isinstance(interaction_id, Exception): interaction_id = ""
+            if isinstance(_vid, Exception): _vid = None
 
             result.models_used = []
             payload = result.model_dump() if hasattr(result, "model_dump") else dict(result)
             payload["latency_ms"] = duration_ms
+            payload["partial"] = False
             if interaction_id:
                 payload["_interactionId"] = interaction_id
-            # Permanent shareable permalink id (moat) — best-effort.
-            try:
-                _uid = (user.get("id") or "") if user else ""
-                _vid = await save_verdict(payload, user_id=_uid)
-                if _vid:
-                    payload["_verdictId"] = _vid
-            except Exception as e:
-                print(f"[VERDICT-STORE] save skipped (non-fatal): {e}")
+            if _vid:
+                payload["_verdictId"] = _vid
             try:
                 from pipeline.verdict_store import increment_and_get_check_count
                 payload["check_count"] = increment_and_get_check_count(req.text)

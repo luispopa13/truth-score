@@ -98,6 +98,8 @@ class VerifyResponse(BaseModel):
     is_manipulative:         bool             = False
     # Entity memory profiles
     entity_profiles:         list[dict]       = Field(default_factory=list)
+    # True when this is a preliminary Path A+B result; final result has partial=False
+    partial:                 bool             = False
 
 
 

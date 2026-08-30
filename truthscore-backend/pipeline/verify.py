@@ -176,8 +176,8 @@ async def retrieve_and_rank(claim: str, *, eco: bool = False) -> RetrievalResult
     # so the primary web fallbacks contributed zero evidence. Sources run
     # concurrently in the gather below, so the total retrieval time is bounded
     # by the slowest budget, not their sum. (Priorities: evidence quality > latency.)
-    _SLOW_SOURCE_BUDGET = float(os.getenv("SLOW_SOURCE_TIMEOUT", "12"))
-    _FAST_SOURCE_BUDGET = float(os.getenv("FAST_SOURCE_TIMEOUT", "7"))
+    _SLOW_SOURCE_BUDGET = float(os.getenv("SLOW_SOURCE_TIMEOUT", "5"))
+    _FAST_SOURCE_BUDGET = float(os.getenv("FAST_SOURCE_TIMEOUT", "4"))
     _SLOW_KEYS = ("DDG", "WIKI", "BRITANNICA", "COUNTER", "TAVILY", "GDELT", "SCRAPE")
 
     def _budget_for(label: str) -> float:
@@ -234,7 +234,7 @@ async def retrieve_and_rank(claim: str, *, eco: bool = False) -> RetrievalResult
         print(f"  [TAVILY] Free evidence thin ({len(all_evidence)}) -> paid top-up")
         try:
             tavily_results = await asyncio.wait_for(
-                search_tavily(search_query), timeout=12.0)
+                search_tavily(search_query), timeout=4.0)
             print(f"  [TAVILY-TOPUP] +{len(tavily_results)} sources")
             all_evidence.extend(tavily_results)
             tavily_topup_used = True
@@ -276,7 +276,7 @@ async def retrieve_and_rank(claim: str, *, eco: bool = False) -> RetrievalResult
     )
 
 
-async def verify_claim(req: VerifyRequest, eco: bool = False):
+async def verify_claim(req: VerifyRequest, eco: bool = False, on_partial=None):
     import time as _t
     claim = req.text.strip()
     key   = f"v3:{normalize_claim(claim)}"   # normalized cache key
@@ -312,8 +312,8 @@ async def verify_claim(req: VerifyRequest, eco: bool = False):
         if _lock_redis:
             _got_lock = bool(await _lock_redis.set(_inflight_key, "1", nx=True, ex=30))
             if not _got_lock:
-                # Another worker is computing — poll semantic cache up to 25 s
-                for _ in range(50):
+                # Another worker is computing — poll semantic cache up to 6 s
+                for _ in range(12):
                     await asyncio.sleep(0.5)
                     try:
                         from utils.semantic_cache import semantic_lookup as _sl
@@ -334,7 +334,7 @@ async def verify_claim(req: VerifyRequest, eco: bool = False):
     # key for its full 30 s TTL, so a single failed compute stalled every retry
     # and every concurrent waiter for ~25 s.
     try:
-        return await _verify_compute(claim, key, eco, t_total_start)
+        return await _verify_compute(claim, key, eco, t_total_start, on_partial=on_partial)
     except Exception as _e:
         print(f"  [VERIFY] compute failed for '{claim[:60]}': {type(_e).__name__}: {_e}")
         # Degrade to an honest UNCERTAIN rather than surfacing a 500 — keeps the
@@ -353,7 +353,7 @@ async def verify_claim(req: VerifyRequest, eco: bool = False):
             pass
 
 
-async def _verify_compute(claim: str, key: str, eco: bool, t_total_start: float):
+async def _verify_compute(claim: str, key: str, eco: bool, t_total_start: float, on_partial=None):
     """Core verification compute: retrieval → reasoning → aggregate → response.
 
     Split out of verify_claim so the thundering-herd lock release can wrap the
@@ -467,17 +467,29 @@ async def _verify_compute(claim: str, key: str, eco: bool, t_total_start: float)
                             confidence = "MEDIUM"
                         print(f"  [PATH-B] Both agree: {verdict} -> confidence boosted")
 
+            # ── Emit preliminary verdict (Path A+B done) ─────────────
+            # SSE clients receive this immediately — before the heavier
+            # FActScore/AVeriTeC enrichment runs. Gives users a result in
+            # 3-5s while refinement continues silently.
+            if on_partial is not None:
+                try:
+                    _partial = VerifyResponse(
+                        claim=claim, score=score, verdict=verdict,
+                        confidence=confidence, explanation=explanation,
+                        topic=topic, supporting=supporting,
+                        contradicting=contradicting, neutral_sources=neutral,
+                        evidence_count=len(supporting)+len(contradicting)+len(neutral),
+                        models_used=[], cached=False, partial=True,
+                    )
+                    on_partial.put_nowait(_partial)
+                except Exception:
+                    pass
+
             # ── Luna 2: FActScore atomic decomposition ────────────
-            # Decompose compound claims into atomic facts, verify each.
-            # Catches partial truths where one sub-claim is false.
-            # LATENCY GATE: only on genuinely doubtful results — running it on
-            # every medium-confidence claim added a full LLM round-trip to the
-            # median response for marginal accuracy gain.
-            # In eco mode we still decompose genuinely compound claims (the
-            # per-sub-claim breakdown is a core product promise), but skip the
-            # extra accuracy-boosting FActScore runs on single doubtful claims.
-            if (is_compound or (not eco and (confidence != "HIGH"
-                    or is_nuance_claim(claim) or is_strict_domain(claim, topic)))):
+            # Run only for genuinely compound claims OR LOW confidence —
+            # skips the 2-6s overhead for simple single-fact claims that
+            # Path A+B already resolved with MEDIUM/HIGH confidence.
+            if (is_compound or (not eco and confidence == "LOW")):
                 print(f"  [FACTSCORE] Running (score={score}, compound={is_compound})")
                 fs_score, fs_verdict, fs_conf, fs_expl, atom_results = \
                     await factscore_verify(claim, top_k)

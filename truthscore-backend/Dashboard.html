@@ -1129,7 +1129,27 @@ async function streamVerify(text,headers){
       const dl=raw.split('\n').find(l=>l.startsWith('data:'));if(!dl)continue;
       let obj;try{obj=JSON.parse(dl.slice(5).trim());}catch(_){continue;}
       if(obj.stage)setStage(obj.stage);
-      else if(obj.event==='result')result=obj.data;
+      else if(obj.event==='partial'){
+        // Path A+B done — show preliminary verdict immediately while FActScore refines
+        try{
+          const p=obj.data;
+          renderScore(p);renderSources(p);renderExplain(p);renderSub(p);
+          document.getElementById('resultSection').style.display='';
+          // Show "Refining..." badge on score card
+          const sc=document.getElementById('scoreCard');
+          if(sc&&!sc.querySelector('.refining-badge')){
+            const b=document.createElement('div');
+            b.className='refining-badge';
+            b.style='display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:20px;background:rgba(167,139,250,.12);border:1px solid rgba(167,139,250,.3);font-size:11px;color:#a78bfa;margin-top:6px';
+            b.textContent='⚡ Refining verdict…';
+            sc.appendChild(b);
+          }
+        }catch(_){}
+      }
+      else if(obj.event==='result'){result=obj.data;
+        // Remove refining badge on final result
+        try{document.querySelector('.refining-badge')?.remove();}catch(_){}
+      }
       else if(obj.event==='error')errObj=obj;
     }
   }
