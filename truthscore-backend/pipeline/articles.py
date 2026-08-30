@@ -120,6 +120,17 @@ async def get_article(db, slug: str) -> dict | None:
         return None
 
 
+async def list_article_slugs_for_sitemap(db, limit: int = 5000) -> list[dict]:
+    """Return [{_id, updated_at}] for sitemap generation."""
+    try:
+        cursor = db.articles.find(
+            {}, {"_id": 1, "updated_at": 1}
+        ).sort("updated_at", -1).limit(limit)
+        return await cursor.to_list(length=limit)
+    except Exception:
+        return []
+
+
 # ── HTML page renderer ──────────────────────────────────────
 
 def render_article_page(doc: dict, base_url: str) -> str:

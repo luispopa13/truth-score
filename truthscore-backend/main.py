@@ -2415,18 +2415,34 @@ async def claim_og_svg(slug: str):
 
 @app.get("/sitemap.xml", response_class=PlainTextResponse)
 async def sitemap_xml():
-    """XML sitemap listing all public claim pages for Google Search Console."""
+    """XML sitemap listing all public claim/article/source pages for Google."""
     from auth import get_db
     from pipeline.public_claims import list_slugs_for_sitemap
-    slugs = await list_slugs_for_sitemap(get_db(), limit=5000)
+    from pipeline.articles import list_article_slugs_for_sitemap
+    from pipeline.source_credibility import list_domains_for_sitemap
+    db = get_db()
     lines = ['<?xml version="1.0" encoding="UTF-8"?>',
              '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
              f'  <url><loc>{PUBLIC_BASE_URL}/</loc><priority>1.0</priority></url>']
-    for row in slugs:
+
+    for row in await list_slugs_for_sitemap(db, limit=5000):
         loc = f"{PUBLIC_BASE_URL}/claim/{row['_id']}"
         lastmod = (row.get("updated_at") or "")[:10]
         mod_tag = f"<lastmod>{lastmod}</lastmod>" if lastmod else ""
         lines.append(f"  <url><loc>{loc}</loc>{mod_tag}<priority>0.8</priority></url>")
+
+    for row in await list_article_slugs_for_sitemap(db, limit=5000):
+        loc = f"{PUBLIC_BASE_URL}/article/{row['_id']}"
+        lastmod = (row.get("updated_at") or "")[:10]
+        mod_tag = f"<lastmod>{lastmod}</lastmod>" if lastmod else ""
+        lines.append(f"  <url><loc>{loc}</loc>{mod_tag}<priority>0.7</priority></url>")
+
+    for row in await list_domains_for_sitemap(db, limit=5000):
+        loc = f"{PUBLIC_BASE_URL}/source/{row['_id']}"
+        lastmod = (row.get("last_updated") or "")[:10]
+        mod_tag = f"<lastmod>{lastmod}</lastmod>" if lastmod else ""
+        lines.append(f"  <url><loc>{loc}</loc>{mod_tag}<priority>0.6</priority></url>")
+
     lines.append("</urlset>")
     return PlainTextResponse("\n".join(lines), media_type="application/xml")
 

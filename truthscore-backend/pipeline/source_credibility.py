@@ -190,6 +190,22 @@ async def get_domain_score(db, domain: str) -> dict | None:
         return None
 
 
+async def list_domains_for_sitemap(db, limit: int = 5000) -> list[dict]:
+    """Return [{_id, last_updated}] for domains with enough evidence to index."""
+    try:
+        if db is None:
+            return []
+        cursor = (
+            db["source_credibility"]
+            .find({"total_sources": {"$gte": 5}}, {"_id": 1, "last_updated": 1})
+            .sort("reliability_score", -1)
+            .limit(limit)
+        )
+        return await cursor.to_list(length=limit)
+    except Exception:
+        return []
+
+
 async def get_top_sources(db, limit: int = 20) -> list[dict]:
     """Return top reliable sources sorted by reliability_score desc.
 
