@@ -213,6 +213,13 @@ textarea::placeholder{color:var(--text3)}
 .tab-panel{display:none}
 .tab-panel.active{display:block;animation:fadeUp .22s ease}
 .sec-lbl{font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1.2px;margin-bottom:10px;font-family:'JetBrains Mono',monospace}
+.proc-steps{display:flex;flex-direction:column;gap:7px;counter-reset:proc}
+.proc-step{display:flex;gap:12px;align-items:flex-start;padding:11px 13px;border-radius:12px;font-size:12.5px;color:var(--text2);background:rgba(255,255,255,.02);border:1px solid var(--border);position:relative;transition:background .15s,border-color .15s}
+.proc-step:hover{background:rgba(91,78,255,.05);border-color:rgba(91,78,255,.22)}
+.proc-ico{width:32px;height:32px;flex-shrink:0;display:grid;place-items:center;font-size:15px;border-radius:9px;background:rgba(91,78,255,.12);border:1px solid rgba(91,78,255,.2);counter-increment:proc}
+.proc-txt{display:flex;flex-direction:column;gap:2px;line-height:1.5;min-width:0;padding-top:2px}
+.proc-txt b{color:var(--text);font-weight:650;font-size:13px}
+.proc-txt span{color:var(--text2);font-size:12px}
 .grp-lbl{font-size:11px;font-weight:600;margin:12px 0 7px}
 .src-list{display:flex;flex-direction:column;gap:5px}
 .src{
@@ -1325,7 +1332,7 @@ function renderTextAnalysis(d){
   const summary={...d,topic:'general',supporting:[],contradicting:[],neutral_sources:[],
     evidence_count:(d.results||[]).reduce((n,r)=>n+(r.evidence_count||0),0),sub_claims:[],word_importance:[],latency:{}};
   renderScore(summary);
-  if(!window._rcss){window._rcss=1;const st=document.createElement('style');st.textContent='.src-line{display:flex;gap:9px;align-items:center;padding:7px 10px;border-radius:10px;color:var(--text2);text-decoration:none;font-size:12px;border:1px solid transparent;margin-bottom:2px}.src-line:hover{background:rgba(255,255,255,.04);border-color:rgba(255,255,255,.08)}.src-line.hl{animation:srchl 1.5s ease}.src-num{font-family:"JetBrains Mono",monospace;font-size:10px;font-weight:700;color:#fff;background:linear-gradient(135deg,#5b4eff,#8b5cf6);min-width:22px;height:20px;display:inline-grid;place-items:center;border-radius:6px;flex-shrink:0}.src-pub{color:var(--text);font-weight:600;white-space:nowrap}.src-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.72;min-width:0}@keyframes srchl{0%,55%{background:rgba(91,78,255,.18);border-color:rgba(91,78,255,.55)}}.ref-chip{font-family:"JetBrains Mono",monospace;font-size:10px;font-weight:700;background:transparent;border:1px solid var(--border2);color:var(--text2);border-radius:6px;padding:2px 7px;cursor:pointer;margin-right:4px;transition:.15s}.ref-chip:hover{color:#fff;border-color:#5b4eff;background:rgba(91,78,255,.18)}.proc-step{display:flex;gap:10px;align-items:flex-start;padding:7px 0;font-size:12.5px;color:#b8b8d4}.proc-step b{color:var(--text)}.src-line{min-width:0;overflow:hidden;flex-wrap:wrap;align-items:baseline}.src-line .src-title{flex:1;min-width:200px;white-space:normal;word-break:break-word;overflow:visible;text-overflow:clip;opacity:.72}.src-pub{max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0}/*src-wrap-fix*/';document.head.appendChild(st);}
+  if(!window._rcss){window._rcss=1;const st=document.createElement('style');st.textContent='.src-line{display:flex;gap:9px;align-items:center;padding:7px 10px;border-radius:10px;color:var(--text2);text-decoration:none;font-size:12px;border:1px solid transparent;margin-bottom:2px}.src-line:hover{background:rgba(255,255,255,.04);border-color:rgba(255,255,255,.08)}.src-line.hl{animation:srchl 1.5s ease}.src-num{font-family:"JetBrains Mono",monospace;font-size:10px;font-weight:700;color:#fff;background:linear-gradient(135deg,#5b4eff,#8b5cf6);min-width:22px;height:20px;display:inline-grid;place-items:center;border-radius:6px;flex-shrink:0}.src-pub{color:var(--text);font-weight:600;white-space:nowrap}.src-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.72;min-width:0}@keyframes srchl{0%,55%{background:rgba(91,78,255,.18);border-color:rgba(91,78,255,.55)}}.ref-chip{font-family:"JetBrains Mono",monospace;font-size:10px;font-weight:700;background:transparent;border:1px solid var(--border2);color:var(--text2);border-radius:6px;padding:2px 7px;cursor:pointer;margin-right:4px;transition:.15s}.ref-chip:hover{color:#fff;border-color:#5b4eff;background:rgba(91,78,255,.18)}.src-line{min-width:0;overflow:hidden;flex-wrap:wrap;align-items:baseline}.src-line .src-title{flex:1;min-width:200px;white-space:normal;word-break:break-word;overflow:visible;text-overflow:clip;opacity:.72}.src-pub{max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0}/*src-wrap-fix*/';document.head.appendChild(st);}
   const reg=[],regMap=new Map();
   const refOf=s=>{if(!s)return null;const k=s.url||s.publisher||s.title;if(!k)return null;if(regMap.has(k))return regMap.get(k);const n=reg.push(s);regMap.set(k,n);return n;};
   (d.results||[]).forEach(r=>{['supporting','contradicting','neutral_sources'].forEach(k=>(r[k]||[]).forEach(s=>{const n=refOf(s);if(n){s._ref=n;s._stance=k==='supporting'?'ts':k==='contradicting'?'tc':'tn';}}));});
@@ -1361,7 +1368,7 @@ function renderTextAnalysis(d){
       `<div style="margin-bottom:16px">${overviewHtml}</div>`+
       `<div style="font-size:13px;line-height:1.75;padding:12px 14px;border-radius:10px;background:rgba(91,78,255,.06);border:1px solid rgba(91,78,255,.14);margin-bottom:16px">${explRomanian(d)}</div>`+
       `<div class="sec-lbl">${t('verifySteps')}</div>`+
-      PROC2.map(p=>`<div class="proc-step"><span style="font-size:16px;flex-shrink:0">${p[0]}</span><span><b>${p[1]}</b> — ${p[2]}</span></div>`).join('')+
+      `<div class="proc-steps">`+PROC2.map(p=>`<div class="proc-step"><span class="proc-ico">${p[0]}</span><div class="proc-txt"><b>${p[1]}</b><span>${p[2]}</span></div></div>`).join('')+`</div>`+
       latLine;
   }
   document.getElementById('tp-sub').innerHTML=`<div class="sec-lbl">${t('subTitle')} (${d.results.length})</div>`+
@@ -2118,7 +2125,7 @@ function renderExplain(d){
     ['\u2696\ufe0f',t('stepWeigh'),t('stepWeighD')],
     ['\ud83e\udde0',t('stepVerdict'),t('stepVerdictD')],
   ];
-  body+=PROC.map(p=>`<div class="proc-step"><span style="font-size:16px;flex-shrink:0">${p[0]}</span><span><b>${p[1]}</b> \u2014 ${p[2]}</span></div>`).join('');
+  body+=`<div class="proc-steps">`+PROC.map(p=>`<div class="proc-step"><span class="proc-ico">${p[0]}</span><div class="proc-txt"><b>${p[1]}</b><span>${p[2]}</span></div></div>`).join('')+`</div>`;
   // \u2500\u2500 Technical details \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   const details=[];
   if((d.models_used||[]).length) details.push(`\ud83e\udd16 ${esc(d.models_used.join(', '))}`);

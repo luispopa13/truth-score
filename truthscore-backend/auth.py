@@ -341,6 +341,10 @@ def _is_trial_active(user) -> bool:
             trial_until = datetime.fromisoformat(trial_until.replace("Z", "+00:00"))
         except Exception:
             return False
+    # Mongo/Motor returns naive datetimes (stored as UTC) unless tz_aware=True.
+    # Coerce to aware UTC so the comparison below never throws TypeError.
+    if getattr(trial_until, "tzinfo", None) is None:
+        trial_until = trial_until.replace(tzinfo=timezone.utc)
     return bool(trial_until and datetime.now(timezone.utc) < trial_until)
 
 
@@ -750,6 +754,21 @@ async def get_user_out(user):
         bonus = 0
     # Referral bonus (permanent daily limit increase)
     referral_bonus = int(user.get("bonus_checks", 0))
+    # Guarantee a referral code for EVERY user. Accounts created via Google
+    # OAuth (and any account created before this field existed) have no
+    # ref_code, so the dashboard's "invite a friend" box would stay empty. Mint
+    # one lazily on first read and persist it — this backfills all such users
+    # transparently, no migration script needed.
+    ref_code = user.get("ref_code", "")
+    if not ref_code:
+        ref_code = secrets.token_urlsafe(6)[:8].upper()
+        try:
+            await get_db().users.update_one(
+                {"_id": user["_id"]}, {"$set": {"ref_code": ref_code}}
+            )
+            user["ref_code"] = ref_code
+        except Exception as _e:
+            print(f"[AUTH] ref_code backfill skipped (non-fatal): {_e}")
     # Trial status + effective limit come from the single-source helpers so the
     # dashboard shows exactly what the rate limiter enforces.
     trial_active = _is_trial_active(user)
@@ -763,7 +782,7 @@ async def get_user_out(user):
         used_today=await _current_daily_used(user),
         stripe_customer_id=user.get("stripe_customer_id", ""),
         bonus_today=bonus + referral_bonus,
-        ref_code=user.get("ref_code", ""),
+        ref_code=ref_code,
         trial_active=trial_active,
         streak=int(user.get("streak", 0)),
         streak_best=int(user.get("streak_best", 0)),
@@ -926,13 +945,21 @@ async def _google_login_or_register(email: str, name: str) -> dict:
     db = get_db()
     user = await db.users.find_one({"email": email})
     if not user:
-        from datetime import datetime as _dt, timezone as _tz
+        from datetime import datetime as _dt, timezone as _tz, timedelta as _td
         new_user = {
             "email": email, "password": "", "name": name,
             "plan": "free", "created_at": _dt.now(_tz.utc),
             "auth_provider": "google",
             "stripe_customer_id": "", "stripe_subscription_id": "",
             "usage": {},
+            # Parity with password registration: Google emails are pre-verified,
+            # and every user needs a referral code + trial + streak fields so the
+            # dashboard's invite box, trial banner and streak counter all work.
+            "email_verified": True,
+            "ref_code": secrets.token_urlsafe(6)[:8].upper(),
+            "trial_until": _dt.now(_tz.utc) + _td(days=_TRIAL_DAYS),
+            "bonus_checks": 0,
+            "streak": 0, "streak_best": 0, "last_active_date": "",
         }
         result = await db.users.insert_one(new_user)
         user_id = str(result.inserted_id)

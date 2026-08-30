@@ -34,11 +34,12 @@ try:
         check_rate_limit, get_user_out, upgrade_user_plan,
         UserRegister, UserLogin, UserOut, PLANS, create_token,
         google_auth, google_callback, google_exchange, AUTH_AVAILABLE,
-        logout_user, security as _auth_security,
+        logout_user, security as _auth_security, get_db,
     )
 except ImportError as e:
     print(f"[WARN] Auth not available: {e}")
     AUTH_AVAILABLE = False
+    def get_db(): raise HTTPException(503, "Database not configured")
     async def register_user(*a, **k): raise HTTPException(503, "Auth not configured")
     async def login_user(*a, **k):    raise HTTPException(503, "Auth not configured")
     async def get_current_user(**k): return None

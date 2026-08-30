@@ -503,6 +503,26 @@ async def _verify_compute(claim: str, key: str, eco: bool, t_total_start: float,
                         score, verdict, confidence = 50, "UNCERTAIN", "LOW"
                         explanation = f"Atomic analysis conflicts. {fs_expl}"
 
+            # ── Guarantee a per-sub-claim breakdown for compound claims ──
+            # split_claims detected 2+ sub-claims, but FActScore's OWN atomic
+            # decomposition (a separate LLM call with its own prompt) may return
+            # ≤1 atom, disagree, or come up empty when an auxiliary call falls
+            # short — leaving sub_results empty. The UI would then show bare
+            # "verify" buttons instead of each sub-claim's verdict + sources.
+            # Verify each DETECTED sub-claim directly, reusing the evidence we
+            # already retrieved, so a compound claim ALWAYS yields a populated
+            # per-sub-claim breakdown. Skipped in eco mode (margin armor).
+            if is_compound and not sub_results and not eco:
+                print(f"  [SUBCLAIMS] No atoms from FActScore — verifying "
+                      f"{len(sub_claims)} detected sub-claims directly")
+                from pipeline.decomposition import verify_atomic_fact
+                _sub_tasks = [verify_atomic_fact(sc, all_evidence)
+                              for sc in sub_claims[:5]]
+                _direct = await asyncio.gather(*_sub_tasks, return_exceptions=True)
+                _atoms = [a for a in _direct if isinstance(a, dict)]
+                if _atoms:
+                    sub_results = build_sub_claim_results(_atoms)
+
             # ── Luna 3: AVeriTeC question decomposition ───────────
             # Generate verification questions, answer each with retrieval.
             # Resolves UNCERTAIN verdicts through targeted Q&A.
