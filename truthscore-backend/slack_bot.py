@@ -60,7 +60,8 @@ def build_slack_blocks(claim: str, d: dict) -> list:
     score = d.get("score", 50)
     explanation = (d.get("explanation") or "")[:300]
     vid = d.get("_verdictId", "")
-    public_url = os.getenv("PUBLIC_BASE_URL", "https://truthscore.app")
+    from config import get_public_base_url
+    public_url = get_public_base_url()
     link = f"{public_url}/v/{vid}" if vid else public_url
     sup = len(d.get("supporting", []))
     con = len(d.get("contradicting", []))
@@ -74,17 +75,20 @@ def build_slack_blocks(claim: str, d: dict) -> list:
     ]
 
 
-async def handle_slash_command(claim: str, channel: str, backend_url: str) -> None:
+async def handle_slash_command(claim: str, channel: str) -> None:
     """Handle /truthcheck command."""
     if not claim.strip():
         await post_message(channel, "Usage: `/truthcheck The Earth is flat.`")
         return
     await post_message(channel, f"⏳ Checking: _{claim[:100]}_…")
     try:
-        async with httpx.AsyncClient(timeout=60) as client:
-            r = await client.post(f"{backend_url}/verify", json={"text": claim})
-            r.raise_for_status()
-            d = r.json()
+        # Verify in-process — an HTTP self-call to /verify would round-trip the
+        # public proxy AND count against the anonymous rate limit (all Slack
+        # workspaces would share one server-IP bucket).
+        from pipeline.verify import verify_claim
+        from models import VerifyRequest
+        result = await verify_claim(VerifyRequest(text=claim[:3000]))
+        d = result.model_dump() if hasattr(result, "model_dump") else dict(result)
         blocks = build_slack_blocks(claim, d)
         v = (d.get("verdict") or "UNCERTAIN").upper()
         await post_message(channel, f"{verdict_emoji(v)} {v} for: {claim[:80]}", blocks=blocks)
@@ -92,7 +96,7 @@ async def handle_slash_command(claim: str, channel: str, backend_url: str) -> No
         await post_message(channel, f"⚠️ Error: {str(e)[:200]}")
 
 
-async def handle_app_mention(event: dict, backend_url: str) -> None:
+async def handle_app_mention(event: dict) -> None:
     """Handle @TruthScore mention in channels."""
     text = event.get("text", "")
     channel = event.get("channel", "")
@@ -101,4 +105,4 @@ async def handle_app_mention(event: dict, backend_url: str) -> None:
     if len(claim) < 8:
         await post_message(channel, "Hi! Mention me with a claim to fact-check it.\nExample: `@TruthScore The moon landing was faked.`")
         return
-    await handle_slash_command(claim, channel, backend_url)
+    await handle_slash_command(claim, channel)

@@ -33,6 +33,12 @@ COPY . .
 
 RUN mkdir -p data/case_study .truthscore_cache
 
+# The actual listen port comes from $PORT (default 8000) — resolved at runtime
+# by gunicorn.conf.py, not baked in here. EXPOSE is documentation only.
 EXPOSE 8000
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run the SAME process model as production (Procfile): gunicorn with the shared
+# config. gunicorn.conf.py reads $HOST/$PORT (default 0.0.0.0:8000) for the bind
+# and $WEB_CONCURRENCY/$GUNICORN_WORKERS for the worker count, so nothing here is
+# hardcoded. Exec form is fine: the config reads the env vars at runtime.
+CMD ["gunicorn", "-c", "gunicorn.conf.py", "main:app"]

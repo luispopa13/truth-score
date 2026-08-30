@@ -14,10 +14,18 @@ logger = logging.getLogger("truthscore.api_keys")
 
 KEY_PREFIX = "ts_"  # keys always start with this prefix for identification
 
-# Ceiling on active (non-revoked) keys per user. Without it a script could mint
-# unbounded valid credentials — storage bloat plus a wider blast radius if any
-# key leaks. Generous default; real integrations need a handful.
-MAX_API_KEYS_PER_USER = int(os.getenv("MAX_API_KEYS_PER_USER", "20"))
+
+def _api_key_cap(plan: str) -> int:
+    """Max active (non-revoked) API keys for a plan. Single source of truth is
+    auth._PLAN_FEATURES[plan]["api_keys"] (free:1, pro:5, … enterprise:100), so
+    the cap tracks the plan matrix and isn't duplicated here. An optional
+    MAX_API_KEYS_PER_USER env var caps ALL plans as a global safety ceiling."""
+    from auth import _PLAN_FEATURES
+    per_plan = int(_PLAN_FEATURES.get(plan, _PLAN_FEATURES["free"]).get("api_keys", 1))
+    hard_ceiling = os.getenv("MAX_API_KEYS_PER_USER", "")
+    if hard_ceiling.strip():
+        return min(per_plan, int(hard_ceiling))
+    return per_plan
 
 
 class APIKeyLimitError(Exception):
@@ -50,16 +58,18 @@ async def create_api_key(user_id: str, name: str = "", plan: str = "free") -> di
     key_id = hashlib.sha256(plaintext.encode()).hexdigest()[:16]
 
     db = get_db()
-    # Enforce the per-user ceiling before minting another credential.
+    # Enforce the per-PLAN ceiling before minting another credential.
+    cap = _api_key_cap(plan)
     try:
         active = await db.api_keys.count_documents(
             {"user_id": user_id, "revoked": False})
     except Exception:
         active = 0
-    if active >= MAX_API_KEYS_PER_USER:
+    if active >= cap:
         raise APIKeyLimitError(
             f"You already have {active} active API keys "
-            f"(limit {MAX_API_KEYS_PER_USER}). Revoke one before creating another.")
+            f"(limit {cap} on the {plan} plan). Revoke one, or upgrade, "
+            f"before creating another.")
 
     key_doc = {
         "key_id": key_id,

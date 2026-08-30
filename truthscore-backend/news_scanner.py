@@ -6,8 +6,8 @@ and auto-verifies the most newsworthy ones daily.
 
 Results stored in MongoDB `daily_checks` collection, served at GET /today.
 
-Required env vars:
-  PUBLIC_BASE_URL — your backend URL (used for internal /verify calls)
+Claim detection + verification run IN-PROCESS via the pipeline (no HTTP
+self-calls), so the scanner isn't subject to the public rate limit.
 
 Schedule: POST /news-scanner/run once daily (admin-only endpoint)
 """
@@ -16,8 +16,6 @@ import asyncio
 import httpx
 from datetime import datetime, timezone, timedelta
 from html.parser import HTMLParser
-
-PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
 
 # Top RSS feeds to scan
 RSS_FEEDS = [
@@ -86,27 +84,28 @@ async def fetch_feed(source: str, url: str) -> list[dict]:
 
 
 async def detect_claims_from_text(text: str) -> list[str]:
-    """Call the local /detect-claims endpoint."""
+    """Split a block of text into atomic claims, in-process (no HTTP self-call)."""
     try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            r = await client.post(
-                f"{PUBLIC_BASE_URL}/detect-claims",
-                json={"text": text[:3000]},
-            )
-            r.raise_for_status()
-            data = r.json()
-            return [c["text"] if isinstance(c, dict) else c for c in (data.get("claims") or [])]
-    except Exception:
+        from pipeline.helpers import split_claims
+        claims = await split_claims(text[:3000])
+        return [c["text"] if isinstance(c, dict) else c for c in (claims or [])]
+    except Exception as e:
+        print(f"[scanner] detect_claims failed: {e}")
         return []
 
 
 async def verify_claim_text(claim: str) -> dict:
-    """Call the local /verify endpoint."""
+    """Verify a claim in-process via the pipeline.
+
+    Calls verify_claim directly instead of POSTing to /verify: an HTTP self-call
+    would (a) round-trip through the public proxy and (b) be counted against the
+    anonymous rate limit, capping the scanner at a few claims/day.
+    """
     try:
-        async with httpx.AsyncClient(timeout=60) as client:
-            r = await client.post(f"{PUBLIC_BASE_URL}/verify", json={"text": claim})
-            r.raise_for_status()
-            return r.json()
+        from pipeline.verify import verify_claim
+        from models import VerifyRequest
+        result = await verify_claim(VerifyRequest(text=claim))
+        return result.model_dump() if hasattr(result, "model_dump") else dict(result)
     except Exception as e:
         return {"verdict": "UNCERTAIN", "score": 50, "error": str(e)}
 
@@ -159,6 +158,13 @@ async def run_scan(db) -> dict:
 
     doc = {
         "date": today,
+        # Canonical key is "results" — that's what the monitor consumer in
+        # main.py (_run_monitor_checks) reads. "items" is kept as an alias
+        # because the /today endpoint returns this doc verbatim and the
+        # Dashboard frontend reads `d.items`. Both point at the same list, so
+        # neither consumer sees an empty result. (main.py should standardize on
+        # one key long-term — see report.)
+        "results": checked,
         "items": checked,
         "feeds_scanned": len(RSS_FEEDS),
         "claims_found": len(claim_candidates),

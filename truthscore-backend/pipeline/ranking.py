@@ -143,10 +143,30 @@ async def rerank_with_crossencoder(
             lambda: encoder.predict(pairs, show_progress_bar=False)
         )
 
-        # Sort by cross-encoder score × recency weight
+        # Cross-encoder outputs are raw logits (roughly -11..+11), so they go
+        # NEGATIVE for weakly-relevant pairs. Multiplying a negative logit by a
+        # recency weight > 1 makes it *more* negative — i.e. a recent source gets
+        # pushed DOWN, inverting the intended recency boost. Squash each logit
+        # through a sigmoid to a strictly-positive 0..1 relevance FIRST, then
+        # apply the recency multiplier, so recency always boosts monotonically
+        # and the stored relevance is on the same 0..1 scale as the embedding path.
+        import math as _math
+
+        def _sigmoid(x: float) -> float:
+            try:
+                if x >= 0:
+                    return 1.0 / (1.0 + _math.exp(-x))
+                ex = _math.exp(x)
+                return ex / (1.0 + ex)
+            except OverflowError:
+                return 0.0 if x < 0 else 1.0
+
+        rel = [_sigmoid(float(s)) for s in scores]
+
+        # Sort by normalized relevance × recency weight (both strictly positive)
         ranked = sorted(
-            zip(scores, sources),
-            key=lambda x: float(x[0]) * get_source_recency_weight(x[1]),
+            zip(rel, sources),
+            key=lambda x: x[0] * get_source_recency_weight(x[1]),
             reverse=True,
         )
 

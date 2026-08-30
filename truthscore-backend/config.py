@@ -170,6 +170,19 @@ def get_public_base_url() -> str:
         return "http://localhost:8000"
     return url
 
+
+def resolve_public_base_url(fallback: str = PUBLIC_BASE_URL) -> str:
+    """Non-raising public-URL resolver for background / non-HTTP contexts
+    (email digest links, push notifications, scheduled jobs) where a 503 can't
+    be surfaced to any caller and raising would abort the whole batch. Prefers
+    the configured PUBLIC_BASE_URL; when unset or localhost, returns `fallback`
+    instead of raising. HTTP request handlers should keep using
+    get_public_base_url() so a prod misconfiguration fails closed."""
+    url = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
+    looks_local = (not url) or url.startswith("http://localhost") or \
+                  url.startswith("http://127.") or url.startswith("https://localhost")
+    return (fallback or PUBLIC_BASE_URL).rstrip("/") if looks_local else url
+
 # ── OpenAI client ─────────────────────────────────────────────
 # OpenAI removed -- using Gemini
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")

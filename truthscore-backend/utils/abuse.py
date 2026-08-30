@@ -11,6 +11,16 @@ import os, logging
 
 logger = logging.getLogger("truthscore.abuse")
 
+# Environment detection (single source: config._IS_PROD). Used to decide whether
+# security layers may fail OPEN (dev convenience) or must fail CLOSED (prod).
+# Imported lazily-safe: config never imports this module during its own import,
+# so there is no cycle. Falls back to an env sniff if config can't be imported.
+try:
+    from config import _IS_PROD
+except Exception:
+    _IS_PROD = os.getenv("ENV", os.getenv("ENVIRONMENT", "dev")).strip().lower() \
+        not in ("dev", "development", "local", "localhost", "test", "")
+
 # ── 1. Disposable email domains (top offenders; extend via env) ──
 _DISPOSABLE = {
     "mailinator.com","10minutemail.com","guerrillamail.com","guerrillamail.net",
@@ -45,25 +55,36 @@ def is_disposable_email(email: str) -> bool:
 # ── 2. Cloudflare Turnstile (free, privacy-friendly CAPTCHA) ─────
 TURNSTILE_SECRET = os.getenv("TURNSTILE_SECRET", "")
 
-# In production (not an explicit dev opt-in) a missing secret means the CAPTCHA
-# layer is silently OFF — surface that loudly at boot so it isn't discovered via
-# a bot-registration wave. The per-IP velocity + disposable-email layers still
-# apply, so we warn rather than brick registration on a fresh deploy.
+# In production a missing secret must NOT silently disable the CAPTCHA layer.
+# We fail CLOSED there (turnstile_verify returns False → registration is blocked)
+# and scream at boot so the misconfiguration is impossible to miss. In dev we
+# fail OPEN (allow) for convenience. `_DEV_OPT_IN` is still used by the
+# anonymous-quota fallback below.
 _DEV_OPT_IN = (os.getenv("DEV_INSECURE", "").lower() in ("1", "true", "yes")
                or os.getenv("ENV", "").lower() in ("development", "dev", "local"))
-if not TURNSTILE_SECRET and not _DEV_OPT_IN:
-    logger.warning("[SECURITY] TURNSTILE_SECRET unset in production — CAPTCHA "
-                   "bot-protection is OFF (velocity + disposable-email checks "
-                   "still active). Set TURNSTILE_SECRET to enable it.")
+if not TURNSTILE_SECRET:
+    if _IS_PROD:
+        logger.error("[SECURITY] TURNSTILE_SECRET unset in PRODUCTION — CAPTCHA "
+                     "verification FAILS CLOSED, so registration is BLOCKED until "
+                     "you set TURNSTILE_SECRET. Configure it now.")
+    else:
+        logger.warning("[SECURITY] TURNSTILE_SECRET unset — CAPTCHA bot-protection "
+                       "is OFF in dev (fails open). Prod would fail closed.")
 
 
 async def turnstile_verify(token: str, remoteip: str = "") -> bool:
     """
     Server-side verification of a Turnstile widget token.
-    Returns True when: secret not configured (dev mode) OR token valid.
+    Returns True when the token verifies against a configured secret.
+
+    Fail-open ONLY in dev with no secret configured. In production, a missing
+    secret fails CLOSED (returns False) so the CAPTCHA layer can't be silently
+    bypassed by forgetting to configure it. When a secret IS set, a missing or
+    invalid token always fails.
     """
     if not TURNSTILE_SECRET:
-        return True   # not configured — enforcement off (warned at boot in prod)
+        # No secret: allow in dev (convenience), block in prod (fail closed).
+        return not _IS_PROD
     if not token:
         return False
     import httpx
@@ -247,3 +268,139 @@ async def get_feedback_bonus(user_id: str) -> int:
         return min(int(raw or 0), FEEDBACK_BONUS_DAILY_CAP)
     except Exception:
         return 0
+
+
+# ── 5. Login / password-reset brute-force throttling ────────────
+# Fixed-window failure counters keyed on BOTH the client IP and the account
+# identifier (email / reset-token). Either key hitting the cap inside the window
+# blocks further attempts, so brute force is stopped whether the attacker
+# rotates IPs (account key climbs) or sprays accounts from one IP (IP key
+# climbs). Redis-backed when available; falls back to a per-process in-memory
+# window otherwise (best-effort — good enough on a single instance / dev).
+import time as _time
+
+LOGIN_MAX_ATTEMPTS   = int(os.getenv("LOGIN_MAX_ATTEMPTS", "8"))
+LOGIN_WINDOW_SECONDS = int(os.getenv("LOGIN_WINDOW_SECONDS", str(15 * 60)))   # 15 min
+RESET_MAX_ATTEMPTS   = int(os.getenv("RESET_MAX_ATTEMPTS", "8"))
+RESET_WINDOW_SECONDS = int(os.getenv("RESET_WINDOW_SECONDS", str(15 * 60)))   # 15 min
+
+# In-memory fallback: key -> list[timestamps]. Pruned on every touch.
+_MEM_THROTTLE: dict = {}
+
+
+def _mem_prune(key: str, window: int) -> int:
+    now = _time.time()
+    ts = [t for t in _MEM_THROTTLE.get(key, []) if now - t < window]
+    if ts:
+        _MEM_THROTTLE[key] = ts
+    else:
+        _MEM_THROTTLE.pop(key, None)
+    return len(ts)
+
+
+async def _attempt_count(key: str, window: int) -> int:
+    from utils.redis_client import get_async_redis
+    redis = get_async_redis()
+    if redis:
+        try:
+            return int(await redis.get(key) or 0)
+        except Exception:
+            pass
+    return _mem_prune(key, window)
+
+
+async def _attempt_incr(key: str, window: int) -> int:
+    from utils.redis_client import get_async_redis
+    redis = get_async_redis()
+    if redis:
+        try:
+            v = await redis.incr(key)
+            await redis.expire(key, window)
+            return int(v)
+        except Exception:
+            pass
+    _mem_prune(key, window)
+    _MEM_THROTTLE.setdefault(key, []).append(_time.time())
+    return len(_MEM_THROTTLE[key])
+
+
+async def _attempt_clear(keys) -> None:
+    from utils.redis_client import get_async_redis
+    redis = get_async_redis()
+    if redis:
+        try:
+            for k in keys:
+                await redis.delete(k)
+            return
+        except Exception:
+            pass
+    for k in keys:
+        _MEM_THROTTLE.pop(k, None)
+
+
+def _login_keys(ip: str, email: str):
+    keys = []
+    if ip:
+        keys.append(f"ts:throttle:login:ip:{ip}")
+    if email:
+        keys.append(f"ts:throttle:login:acct:{email.lower()}")
+    return keys
+
+
+async def check_login_throttle(ip: str = "", email: str = "") -> None:
+    """Raise HTTPException(429) if this IP OR account has too many recent failed
+    logins. Call BEFORE verifying the password.
+
+    Signature: check_login_throttle(ip: str = "", email: str = "") -> None
+    Wire in main.py's /auth/login BEFORE login_user, OR rely on login_user which
+    already calls it (per-account throttling works even when ip is "")."""
+    from fastapi import HTTPException
+    for key in _login_keys(ip, email):
+        if await _attempt_count(key, LOGIN_WINDOW_SECONDS) >= LOGIN_MAX_ATTEMPTS:
+            raise HTTPException(
+                status_code=429,
+                detail="Prea multe încercări de autentificare. "
+                       "Încearcă din nou peste câteva minute.")
+
+
+async def record_login_failure(ip: str = "", email: str = "") -> None:
+    """Record ONE failed login against both the IP and account counters.
+    Call after a bad email/password. Signature:
+    record_login_failure(ip: str = "", email: str = "") -> None"""
+    for key in _login_keys(ip, email):
+        await _attempt_incr(key, LOGIN_WINDOW_SECONDS)
+
+
+async def clear_login_attempts(ip: str = "", email: str = "") -> None:
+    """Reset the failed-login counters after a SUCCESSFUL login. Signature:
+    clear_login_attempts(ip: str = "", email: str = "") -> None"""
+    await _attempt_clear(_login_keys(ip, email))
+
+
+def _reset_keys(ip: str, ident: str):
+    keys = []
+    if ip:
+        keys.append(f"ts:throttle:reset:ip:{ip}")
+    if ident:
+        keys.append(f"ts:throttle:reset:id:{ident}")
+    return keys
+
+
+async def check_reset_throttle(ip: str = "", ident: str = "") -> None:
+    """Raise HTTPException(429) if this IP OR identifier (email for forgot,
+    token for reset) has too many recent password-reset attempts. Call BEFORE
+    doing the work. Signature: check_reset_throttle(ip: str = "", ident: str = "") -> None"""
+    from fastapi import HTTPException
+    for key in _reset_keys(ip, ident):
+        if await _attempt_count(key, RESET_WINDOW_SECONDS) >= RESET_MAX_ATTEMPTS:
+            raise HTTPException(
+                status_code=429,
+                detail="Prea multe cereri de resetare a parolei. "
+                       "Încearcă din nou peste câteva minute.")
+
+
+async def record_reset_attempt(ip: str = "", ident: str = "") -> None:
+    """Record ONE password-reset attempt against both counters. Signature:
+    record_reset_attempt(ip: str = "", ident: str = "") -> None"""
+    for key in _reset_keys(ip, ident):
+        await _attempt_incr(key, RESET_WINDOW_SECONDS)

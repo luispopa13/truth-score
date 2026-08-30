@@ -114,12 +114,26 @@ _tracker = CostTracker()
 def record_llm_call(model: str, input_tokens: int, output_tokens: int):
     """Call this after every LLM invocation."""
     model = model or "unknown"
-    # Detect if thinking was on (heuristic: check env)
     _tracker.record_call(model, input_tokens, output_tokens)
 
 
 def get_cost_summary() -> dict:
     return _tracker.summary()
+
+
+async def flush_metrics() -> None:
+    """Force-flush the in-process counters to Redis for cross-instance
+    aggregation. Counters live PER worker process, so every worker must flush
+    its own — do NOT gate this behind should_run_scheduler(). main.py should
+    schedule this on a background loop (e.g. every ~600s) and once on shutdown
+    so no accumulated usage is lost on restart."""
+    await _tracker._flush_to_redis()
+
+
+async def flush_metrics_if_needed() -> None:
+    """Cheap tick for a frequent loop: only flushes once the hourly window has
+    elapsed (see CostTracker.flush_if_needed)."""
+    await _tracker.flush_if_needed()
 
 
 def estimate_cost_per_claim(plan: str = "free") -> dict:

@@ -522,23 +522,23 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
     <div class="modal-title" data-i18n="pricingTitle2">Planuri & Prețuri</div>
     <div class="modal-sub" data-i18n="pricingSub2">Simplu și transparent. Cancel oricând.</div>
     <div style="display:flex;align-items:center;justify-content:center;gap:10px;margin:14px 0 20px">
-      <span id="billingMonthlyLabel" style="font-size:13px;font-weight:600;color:var(--text)">Lunar</span>
+      <span id="billingMonthlyLabel" data-i18n="billingMonthly" style="font-size:13px;font-weight:600;color:var(--text)">Lunar</span>
       <button id="billingToggle" onclick="_toggleBilling()" style="position:relative;width:44px;height:24px;background:#6d28d9;border:none;border-radius:12px;cursor:pointer;transition:background .2s">
         <span id="billingKnob" style="position:absolute;left:3px;top:3px;width:18px;height:18px;background:#fff;border-radius:50%;transition:left .2s"></span>
       </button>
-      <span id="billingAnnualLabel" style="font-size:13px;color:var(--text2)">Anual <span style="background:#22c55e;color:#fff;font-size:10px;font-weight:700;padding:1px 5px;border-radius:4px;margin-left:3px">-33%</span></span>
+      <span id="billingAnnualLabel" data-i18n-html="billingAnnual" style="font-size:13px;color:var(--text2)">Anual <span style="background:#22c55e;color:#fff;font-size:10px;font-weight:700;padding:1px 5px;border-radius:4px;margin-left:3px">-33%</span></span>
     </div>
     <div class="plans-grid" id="plansGrid"></div>
     <div style="margin-top:18px;padding:14px 16px;background:rgba(109,40,217,.1);border-radius:10px;border:1px solid rgba(109,40,217,.2)">
-      <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:6px">🎁 Invită un prieten, primești 5 verificări gratuite</div>
+      <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:6px" data-i18n="refInvite">🎁 Invită un prieten, primești 5 verificări gratuite</div>
       <div id="refLinkWrap" style="display:none">
-        <div style="font-size:12px;color:var(--text2);margin-bottom:6px">Link-ul tău de referral:</div>
+        <div style="font-size:12px;color:var(--text2);margin-bottom:6px" data-i18n="refYourLink">Link-ul tău de referral:</div>
         <div style="display:flex;gap:8px;align-items:center">
           <input id="refLinkInput" readonly style="flex:1;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:6px;padding:6px 10px;font-size:12px;color:var(--text);min-width:0" value=""/>
-          <button onclick="_copyRefLink()" style="background:#6d28d9;color:#fff;border:none;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px;white-space:nowrap">Copiază</button>
+          <button onclick="_copyRefLink()" data-i18n="refCopy" style="background:#6d28d9;color:#fff;border:none;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px;white-space:nowrap">Copiază</button>
         </div>
       </div>
-      <div id="refLoginMsg" style="font-size:12px;color:var(--text2)">Autentifică-te pentru a-ți vedea link-ul de referral.</div>
+      <div id="refLoginMsg" style="font-size:12px;color:var(--text2)" data-i18n="refLoginPrompt">Autentifică-te pentru a-ți vedea link-ul de referral.</div>
     </div>
   </div>
 </div>
@@ -555,19 +555,19 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
 <div class="overlay" id="debateOverlay" onmousedown="if(event.target===this)closeDebate()">
   <div class="modal" style="max-width:700px;width:100%">
     <button class="modal-x" onclick="closeDebate()">✕</button>
-    <div class="modal-title">⚔️ Debate Mode</div>
-    <div class="modal-sub" style="margin-bottom:18px">Enter two opposing claims and see which is better supported by evidence.</div>
+    <div class="modal-title" data-i18n="debateTitle">⚔️ Debate Mode</div>
+    <div class="modal-sub" style="margin-bottom:18px" data-i18n="debateSub">Enter two opposing claims and see which is better supported by evidence.</div>
     <div class="debate-grid" style="margin-bottom:14px">
       <div>
-        <label style="display:block;font-size:10px;font-weight:700;color:var(--text2);letter-spacing:1px;font-family:'JetBrains Mono',monospace;margin-bottom:5px">CLAIM A</label>
-        <textarea id="debateA" class="finput" rows="3" placeholder="Enter first claim…" style="resize:vertical;min-height:72px"></textarea>
+        <label style="display:block;font-size:10px;font-weight:700;color:var(--text2);letter-spacing:1px;font-family:'JetBrains Mono',monospace;margin-bottom:5px" data-i18n="claimA">CLAIM A</label>
+        <textarea id="debateA" class="finput" rows="3" data-i18n-ph="debatePhA" placeholder="Enter first claim…" style="resize:vertical;min-height:72px"></textarea>
       </div>
       <div>
-        <label style="display:block;font-size:10px;font-weight:700;color:var(--text2);letter-spacing:1px;font-family:'JetBrains Mono',monospace;margin-bottom:5px">CLAIM B</label>
-        <textarea id="debateB" class="finput" rows="3" placeholder="Enter opposing claim…" style="resize:vertical;min-height:72px"></textarea>
+        <label style="display:block;font-size:10px;font-weight:700;color:var(--text2);letter-spacing:1px;font-family:'JetBrains Mono',monospace;margin-bottom:5px" data-i18n="claimB">CLAIM B</label>
+        <textarea id="debateB" class="finput" rows="3" data-i18n-ph="debatePhB" placeholder="Enter opposing claim…" style="resize:vertical;min-height:72px"></textarea>
       </div>
     </div>
-    <button id="debateRunBtn" class="form-btn" style="margin-bottom:0" onclick="runDebate()">⚔️ Start Debate</button>
+    <button id="debateRunBtn" class="form-btn" style="margin-bottom:0" onclick="runDebate()" data-i18n="debateStart">⚔️ Start Debate</button>
     <div id="debateResults" style="margin-top:16px"></div>
   </div>
 </div>
@@ -575,11 +575,11 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
 <div class="overlay" id="batchOverlay" onmousedown="if(event.target===this)closeBatch()">
   <div class="modal" style="max-width:700px;width:100%">
     <button class="modal-x" onclick="closeBatch()">✕</button>
-    <div class="modal-title">📋 Batch Verify</div>
-    <div style="font-size:13px;color:var(--text2);margin-bottom:12px">One claim per line · up to 50 · results shown as a table + CSV export</div>
+    <div class="modal-title" data-i18n="batchTitle">📋 Batch Verify</div>
+    <div style="font-size:13px;color:var(--text2);margin-bottom:12px" data-i18n="batchSub">One claim per line · up to 50 · results shown as a table + CSV export</div>
     <textarea id="batchInput" class="finput" rows="8" placeholder="The Earth is flat.&#10;Vaccines cause autism.&#10;The Great Wall of China is visible from space." style="width:100%;padding:10px 12px;font-size:13px;resize:vertical;min-height:160px;box-sizing:border-box"></textarea>
     <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
-      <button class="form-btn" onclick="runBatch()" id="batchRunBtn">🔍 Verify All</button>
+      <button class="form-btn" onclick="runBatch()" id="batchRunBtn" data-i18n="batchVerifyAll">🔍 Verify All</button>
       <span id="batchStatus" style="font-size:12px;color:var(--text2)"></span>
     </div>
     <div id="batchResults" style="margin-top:16px"></div>
@@ -589,8 +589,8 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
 <div class="overlay" id="watchedOverlay" onmousedown="if(event.target===this)closeWatched()">
   <div class="modal" style="max-width:600px;width:100%">
     <button class="modal-x" onclick="closeWatched()">✕</button>
-    <div class="modal-title">🔔 Watched Claims</div>
-    <div style="font-size:13px;color:var(--text2);margin-bottom:14px">Claims you're monitoring for verdict changes.</div>
+    <div class="modal-title" data-i18n="watchedTitle">🔔 Watched Claims</div>
+    <div style="font-size:13px;color:var(--text2);margin-bottom:14px" data-i18n="watchedSub">Claims you're monitoring for verdict changes.</div>
     <div id="watchedList" style="display:flex;flex-direction:column;gap:8px;max-height:400px;overflow-y:auto"></div>
   </div>
 </div>
@@ -598,13 +598,13 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
 <div class="overlay" id="monitorsOverlay" onmousedown="if(event.target===this)closeMonitors()">
   <div class="modal" style="max-width:640px;width:100%">
     <button class="modal-x" onclick="closeMonitors()">✕</button>
-    <div class="modal-title">📡 Claim Monitors</div>
-    <div style="font-size:13px;color:var(--text2);margin-bottom:14px">Get email alerts when new claims matching your keywords are verified. Requires Monitor or Business plan.</div>
+    <div class="modal-title" data-i18n="monitorsTitle">📡 Claim Monitors</div>
+    <div style="font-size:13px;color:var(--text2);margin-bottom:14px" data-i18n="monitorsSub">Get email alerts when new claims matching your keywords are verified. Requires Monitor or Business plan.</div>
     <div id="monitorForm" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
-      <input id="monitorName" class="finput" placeholder="Label (e.g. My Brand)" style="flex:1;min-width:120px;padding:8px 12px;font-size:13px">
-      <input id="monitorKeyword" class="finput" placeholder="Keyword to watch (e.g. Pfizer, Tesla...)" style="flex:2;min-width:160px;padding:8px 12px;font-size:13px">
-      <input id="monitorEmail" class="finput" placeholder="Alert email (leave blank = account email)" style="flex:2;min-width:160px;padding:8px 12px;font-size:13px">
-      <button class="form-btn" onclick="createMonitor()" style="white-space:nowrap">+ Add Monitor</button>
+      <input id="monitorName" class="finput" data-i18n-ph="monitorPhName" placeholder="Label (e.g. My Brand)" style="flex:1;min-width:120px;padding:8px 12px;font-size:13px">
+      <input id="monitorKeyword" class="finput" data-i18n-ph="monitorPhKeyword" placeholder="Keyword to watch (e.g. Pfizer, Tesla...)" style="flex:2;min-width:160px;padding:8px 12px;font-size:13px">
+      <input id="monitorEmail" class="finput" data-i18n-ph="monitorPhEmail" placeholder="Alert email (leave blank = account email)" style="flex:2;min-width:160px;padding:8px 12px;font-size:13px">
+      <button class="form-btn" onclick="createMonitor()" data-i18n="monitorAdd" style="white-space:nowrap">+ Add Monitor</button>
     </div>
     <div id="monitorsList" style="display:flex;flex-direction:column;gap:8px;max-height:360px;overflow-y:auto"></div>
     <div id="monitorsMsg" style="font-size:12px;color:#a78bfa;margin-top:8px"></div>
@@ -614,11 +614,11 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
 <div class="overlay" id="apiKeysOverlay" onmousedown="if(event.target===this)closeApiKeys()">
   <div class="modal" style="max-width:640px;width:100%">
     <button class="modal-x" onclick="closeApiKeys()">✕</button>
-    <div class="modal-title">🔑 API Keys</div>
-    <div style="font-size:13px;color:var(--text2);margin-bottom:14px">Use API keys to call TruthScore from your own apps. Include <code style="background:rgba(255,255,255,.08);padding:1px 6px;border-radius:4px;font-size:12px">X-API-Key: ts_sk_...</code> in request headers.</div>
+    <div class="modal-title" data-i18n="apiKeysTitle">🔑 API Keys</div>
+    <div style="font-size:13px;color:var(--text2);margin-bottom:14px" data-i18n-html="apiKeysSub">Use API keys to call TruthScore from your own apps. Include <code style="background:rgba(255,255,255,.08);padding:1px 6px;border-radius:4px;font-size:12px">X-API-Key: ts_sk_...</code> in request headers.</div>
     <div style="display:flex;gap:8px;margin-bottom:16px">
-      <input id="newKeyName" class="finput" placeholder="Key name (e.g. My App)" style="flex:1;padding:8px 12px;font-size:13px">
-      <button class="form-btn" onclick="createApiKey()" style="white-space:nowrap">+ Create key</button>
+      <input id="newKeyName" class="finput" data-i18n-ph="apiKeyPh" placeholder="Key name (e.g. My App)" style="flex:1;padding:8px 12px;font-size:13px">
+      <button class="form-btn" onclick="createApiKey()" data-i18n="apiKeyCreate" style="white-space:nowrap">+ Create key</button>
     </div>
     <div id="apiKeysList" style="display:flex;flex-direction:column;gap:8px;max-height:360px;overflow-y:auto"></div>
     <div id="newKeyReveal" style="display:none;margin-top:14px;padding:12px 14px;border-radius:10px;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.3)">
@@ -636,8 +636,8 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
 <div class="overlay" id="trendingOverlay" onmousedown="if(event.target===this)closeTrending()">
   <div class="modal" style="max-width:640px;width:100%">
     <button class="modal-x" onclick="closeTrending()">✕</button>
-    <div class="modal-title">🔥 Trending Claims</div>
-    <div class="modal-sub">Most-checked claims right now</div>
+    <div class="modal-title" data-i18n="trendingTitle">🔥 Trending Claims</div>
+    <div class="modal-sub" data-i18n="trendingSub">Most-checked claims right now</div>
     <div id="trendingList" style="display:flex;flex-direction:column;gap:8px;margin-top:16px;max-height:420px;overflow-y:auto"></div>
   </div>
 </div>
@@ -744,6 +744,21 @@ const I18N={
     featPdf:'PDF reports', featBatch:'Batch ({n})', featWidget:'Widget embed', featApiSla:'API + SLA',
     choosePlan:'Choose {n} →', planCurrentBtn:'Current plan',
     pricingTitle2:'Plans & Pricing', pricingSub2:'Simple and transparent. Cancel anytime.',
+    incognitoTitle:'TruthScore doesn\'t work in incognito mode',
+    incognitoBody:'To use TruthScore you need a normal browser session. Private mode blocks sign-in and your check history.',
+    incognitoBtn:'Open in a normal browser',
+    debateTitle:'⚔️ Debate Mode', debateSub:'Enter two opposing claims and see which is better supported by evidence.',
+    claimA:'CLAIM A', claimB:'CLAIM B', debatePhA:'Enter first claim…', debatePhB:'Enter opposing claim…', debateStart:'⚔️ Start Debate',
+    batchTitle:'📋 Batch Verify', batchSub:'One claim per line · up to 50 · results shown as a table + CSV export', batchVerifyAll:'🔍 Verify All',
+    watchedTitle:'🔔 Watched Claims', watchedSub:'Claims you\'re monitoring for verdict changes.',
+    monitorsTitle:'📡 Claim Monitors', monitorsSub:'Get email alerts when new claims matching your keywords are verified. Requires Monitor or Business plan.',
+    monitorPhName:'Label (e.g. My Brand)', monitorPhKeyword:'Keyword to watch (e.g. Pfizer, Tesla...)', monitorPhEmail:'Alert email (leave blank = account email)', monitorAdd:'+ Add Monitor',
+    apiKeysTitle:'🔑 API Keys', apiKeysSub:'Use API keys to call TruthScore from your own apps. Include <code style="background:rgba(255,255,255,.08);padding:1px 6px;border-radius:4px;font-size:12px">X-API-Key: ts_sk_...</code> in request headers.',
+    apiKeyPh:'Key name (e.g. My App)', apiKeyCreate:'+ Create key',
+    trendingTitle:'🔥 Trending Claims', trendingSub:'Most-checked claims right now',
+    refInvite:'🎁 Invite a friend, get 5 free checks', refYourLink:'Your referral link:', refCopy:'Copy', refLoginPrompt:'Sign in to see your referral link.',
+    billingMonthly:'Monthly', billingAnnual:'Annual <span style="background:#22c55e;color:#fff;font-size:10px;font-weight:700;padding:1px 5px;border-radius:4px;margin-left:3px">-33%</span>',
+    referralBonus:'🎁 You got 5 free checks as a referral bonus!', linkCopied:'Link copied!',
   },
   ro:{
     tagline:'Fact-checking cu AI și surse reale',
@@ -814,6 +829,21 @@ const I18N={
     featPdf:'Rapoarte PDF', featBatch:'Batch ({n})', featWidget:'Widget embed', featApiSla:'API + SLA',
     choosePlan:'Alege {n} →', planCurrentBtn:'Planul curent',
     pricingTitle2:'Planuri & Prețuri', pricingSub2:'Simplu și transparent. Cancel oricând.',
+    incognitoTitle:'TruthScore nu funcționează în modul incognito',
+    incognitoBody:'Pentru a folosi TruthScore ai nevoie de o sesiune normală de browser. Modul privat blochează autentificarea și istoricul verificărilor.',
+    incognitoBtn:'Deschide în browser normal',
+    debateTitle:'⚔️ Mod Dezbatere', debateSub:'Introdu două afirmații opuse și vezi care e mai bine susținută de dovezi.',
+    claimA:'AFIRMAȚIA A', claimB:'AFIRMAȚIA B', debatePhA:'Introdu prima afirmație…', debatePhB:'Introdu afirmația opusă…', debateStart:'⚔️ Începe Dezbaterea',
+    batchTitle:'📋 Verificare în lot', batchSub:'O afirmație pe linie · până la 50 · rezultate în tabel + export CSV', batchVerifyAll:'🔍 Verifică tot',
+    watchedTitle:'🔔 Afirmații urmărite', watchedSub:'Afirmații pe care le monitorizezi pentru schimbări de verdict.',
+    monitorsTitle:'📡 Monitoare de afirmații', monitorsSub:'Primești alerte pe email când sunt verificate afirmații noi care conțin cuvintele tale cheie. Necesită plan Monitor sau Business.',
+    monitorPhName:'Etichetă (ex. Brandul meu)', monitorPhKeyword:'Cuvânt cheie de urmărit (ex. Pfizer, Tesla...)', monitorPhEmail:'Email pentru alerte (gol = emailul contului)', monitorAdd:'+ Adaugă monitor',
+    apiKeysTitle:'🔑 Chei API', apiKeysSub:'Folosește chei API pentru a apela TruthScore din aplicațiile tale. Include <code style="background:rgba(255,255,255,.08);padding:1px 6px;border-radius:4px;font-size:12px">X-API-Key: ts_sk_...</code> în antetele cererii.',
+    apiKeyPh:'Nume cheie (ex. Aplicația mea)', apiKeyCreate:'+ Creează cheie',
+    trendingTitle:'🔥 Afirmații populare', trendingSub:'Cele mai verificate afirmații acum',
+    refInvite:'🎁 Invită un prieten, primești 5 verificări gratuite', refYourLink:'Link-ul tău de referral:', refCopy:'Copiază', refLoginPrompt:'Autentifică-te pentru a-ți vedea link-ul de referral.',
+    billingMonthly:'Lunar', billingAnnual:'Anual <span style="background:#22c55e;color:#fff;font-size:10px;font-weight:700;padding:1px 5px;border-radius:4px;margin-left:3px">-33%</span>',
+    referralBonus:'🎁 Ai primit 5 verificări gratuite ca bonus de referral!', linkCopied:'Link copiat!',
   },
 };
 let LANG=(localStorage.getItem('ts_lang')||(navigator.language||'en').slice(0,2).toLowerCase());
@@ -929,7 +959,7 @@ function _addFp(headers){if(_fp())headers['X-Browser-Fp']=_fp();return headers;}
     if(document.getElementById('_incognito_blocked')) return;
     const d=document.createElement('div');d.id='_incognito_blocked';
     d.style.cssText='position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:#0d0d1a;padding:40px';
-    d.innerHTML='<div style="max-width:480px;text-align:center;color:#e5e7eb"><div style="font-size:48px;margin-bottom:20px">🔒</div><h2 style="font-size:24px;font-weight:700;margin-bottom:12px;color:#fff">TruthScore nu funcționează în modul incognito</h2><p style="font-size:15px;color:#9ca3af;line-height:1.6;margin-bottom:24px">Pentru a folosi TruthScore ai nevoie de o sesiune normală de browser. Modul privat blochează autentificarea și istoricul verificărilor.</p><a href="/" target="_blank" style="display:inline-block;background:#6d28d9;color:#fff;padding:12px 28px;border-radius:10px;text-decoration:none;font-weight:600;font-size:15px">Deschide în browser normal</a></div>';
+    d.innerHTML='<div style="max-width:480px;text-align:center;color:#e5e7eb"><div style="font-size:48px;margin-bottom:20px">🔒</div><h2 style="font-size:24px;font-weight:700;margin-bottom:12px;color:#fff">'+esc(t('incognitoTitle'))+'</h2><p style="font-size:15px;color:#9ca3af;line-height:1.6;margin-bottom:24px">'+esc(t('incognitoBody'))+'</p><a href="/" target="_blank" style="display:inline-block;background:#6d28d9;color:#fff;padding:12px 28px;border-radius:10px;text-decoration:none;font-weight:600;font-size:15px">'+esc(t('incognitoBtn'))+'</a></div>';
     document.body.appendChild(d);
   };
   // Method 1: localStorage must work
@@ -1135,7 +1165,7 @@ async function streamVerify(text,headers){
         try{
           const p=obj.data;
           renderScore(p);renderSources(p);renderExplain(p);renderSub(p);
-          document.getElementById('resultSection').style.display='';
+          document.getElementById('resultWrap').className='result-wrap active';
           // Show "Refining..." badge on score card
           const sc=document.getElementById('scoreCard');
           if(sc&&!sc.querySelector('.refining-badge')){
@@ -1593,7 +1623,7 @@ async function unwatchClaim(id,btn){
 // ── Claim Monitors (B2B) ─────────────────────────────────────────
 function openMonitors(){
   if(!currentUser){showAuth('login');return;}
-  document.getElementById('monitorsOverlay').className='overlay active';
+  document.getElementById('monitorsOverlay').className='overlay show';
   loadMonitors();
 }
 function closeMonitors(){document.getElementById('monitorsOverlay').className='overlay';}
@@ -2107,7 +2137,7 @@ function renderExplain(d){
     <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">🧠 Entity Memory</div>
     <div style="display:flex;flex-direction:column;gap:6px">
     ${d.entity_profiles.map(e=>`<div style="font-size:11px;color:var(--text2);display:flex;align-items:center;gap:8px">
-      <span style="font-weight:600;color:var(--text);cursor:pointer;text-decoration:underline;text-decoration-style:dotted" onclick="openEntityProfile(${JSON.stringify(e.name)})">${esc(e.name)}</span>
+      <span style="font-weight:600;color:var(--text);cursor:pointer;text-decoration:underline;text-decoration-style:dotted" data-entity="${esc(e.name)}" onclick="openEntityProfile(this.dataset.entity)">${esc(e.name)}</span>
       <span style="opacity:.5">${esc(e.type)}</span>
       <span>${e.claim_count} claims checked</span>
       <span style="color:${e.accuracy_pct>=60?'#10b981':e.accuracy_pct>=40?'#f59e0b':'#ef4444'}">${e.accuracy_pct}% accurate</span>
@@ -2304,7 +2334,7 @@ async function doRegister(){
     const _refCode = new URLSearchParams(location.search).get('ref') || _getCookie('ts_ref');
     if(_refCode){
       fetch(`${API}/auth/apply-referral`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+d.token},body:JSON.stringify({ref_code:_refCode})})
-        .then(r=>r.json()).then(rd=>{if(rd.bonus_checks)toast('🎁 Ai primit 5 verificări gratuite ca bonus de referral!','ok');}).catch(()=>{});
+        .then(r=>r.json()).then(rd=>{if(rd.bonus_checks)toast(t('referralBonus'),'ok');}).catch(()=>{});
     }
   }catch(e){authErr(t('backendOffline'));btn.disabled=false;btn.textContent=t('createBtn');}
 }
@@ -2423,7 +2453,7 @@ function _refreshRefLink(){
 function _copyRefLink(){
   const inp = document.getElementById('refLinkInput');
   if(!inp) return;
-  navigator.clipboard.writeText(inp.value).then(()=>toast('Link copiat!','ok')).catch(()=>{inp.select();document.execCommand('copy');toast('Link copiat!','ok');});
+  navigator.clipboard.writeText(inp.value).then(()=>toast(t('linkCopied'),'ok')).catch(()=>{inp.select();document.execCommand('copy');toast(t('linkCopied'),'ok');});
   plausibleEvent('copy_referral_link');
 }
 
@@ -2690,7 +2720,7 @@ async function loadTrending(){
     if(!items.length){list.innerHTML='<div style="opacity:.5;font-size:13px;padding:8px">No trending claims yet.</div>';return;}
     list.innerHTML=items.map(it=>{
       const vc=it.last_verdict==='TRUE'?'#22c55e':it.last_verdict==='FALSE'?'#ef4444':'#eab308';
-      return `<div style="padding:10px 12px;border-radius:10px;border:1px solid var(--border2);cursor:pointer;background:var(--bg3)" onclick="document.getElementById('claimInput').value=${JSON.stringify(it.claim)};closeTrending();onInput()">
+      return `<div style="padding:10px 12px;border-radius:10px;border:1px solid var(--border2);cursor:pointer;background:var(--bg3)" data-claim="${esc(it.claim)}" onclick="document.getElementById('claimInput').value=this.dataset.claim;closeTrending();onInput()">
         <div style="font-size:13px;color:var(--text);line-height:1.5;margin-bottom:4px">${esc(it.claim)}</div>
         <div style="display:flex;gap:8px;align-items:center;font-size:11px;font-family:monospace">
           <span style="color:${vc};font-weight:700">${it.last_verdict||'?'}</span>
@@ -2721,7 +2751,7 @@ async function runUrlCheck(){
   const btn=document.getElementById('urlCheckBtn');
   btn.disabled=true;btn.textContent='Checking…';
   hideErr();
-  document.getElementById('resultWrap').className='result-wrap show';
+  document.getElementById('resultWrap').className='result-wrap';
   document.getElementById('vLoad').className='loading show';
   try{
     const hdr={'Content-Type':'application/json'};
@@ -2732,7 +2762,8 @@ async function runUrlCheck(){
     lastResult=d;
     document.getElementById('vLoad').className='loading';
     renderScore(d);renderExplain(d);renderSub(d);renderSources(d);
-    document.querySelector('.result-tabs button')?.click();
+    document.getElementById('resultWrap').className='result-wrap active';
+    document.querySelector('.tabs .tab')?.click();
     if(d.share_text){showShareBox(d.share_text, d.slug);}
   }catch(e){document.getElementById('vLoad').className='loading';showErr(e.message);}
   btn.disabled=false;btn.textContent='Check URL';
@@ -2796,7 +2827,7 @@ async function openEntityProfile(name){
       <div style="font-size:12px;font-weight:600;margin-bottom:8px;color:var(--text2)">Recent Claims</div>
       ${(d.recent_verdicts||[]).map(v=>{
         const vc=v.verdict==='TRUE'?'#22c55e':v.verdict==='FALSE'?'#ef4444':'#eab308';
-        return `<div style="padding:8px 10px;border-radius:7px;border:1px solid var(--border2);margin-bottom:6px;font-size:12px;cursor:pointer" onclick="document.getElementById('claimInput').value=${JSON.stringify(v.claim)};closeEntityProfile();onInput()">
+        return `<div style="padding:8px 10px;border-radius:7px;border:1px solid var(--border2);margin-bottom:6px;font-size:12px;cursor:pointer" data-claim="${esc(v.claim)}" onclick="document.getElementById('claimInput').value=this.dataset.claim;closeEntityProfile();onInput()">
           <span style="color:${vc};font-weight:700;margin-right:8px">${v.verdict}</span>${esc(v.claim)}
         </div>`;
       }).join('')}`;

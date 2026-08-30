@@ -19,7 +19,6 @@ import asyncio
 import time
 import json
 import secrets as _secrets
-import hashlib as _hashlib
 from datetime import datetime, timezone
 from typing import Optional as _Optional
 from fastapi import Response, UploadFile, File
@@ -40,8 +39,8 @@ try:
 except ImportError as e:
     print(f"[WARN] Auth not available: {e}")
     AUTH_AVAILABLE = False
-    async def register_user(d): raise HTTPException(503, "Auth not configured")
-    async def login_user(d):    raise HTTPException(503, "Auth not configured")
+    async def register_user(*a, **k): raise HTTPException(503, "Auth not configured")
+    async def login_user(*a, **k):    raise HTTPException(503, "Auth not configured")
     async def get_current_user(**k): return None
     async def require_user(**k):     raise HTTPException(401, "Auth not configured")
     async def check_rate_limit(u,c): return {"allowed":True,"used":0,"limit":10,"plan":"free"}
@@ -234,49 +233,80 @@ async def _warmup_models():
     global _READY
     _READY = True
     print("[STARTUP] Ready to serve.")
-    # Auto-digest: check every hour, send weekly digest on Sundays
-    asyncio.create_task(_weekly_digest_scheduler())
-    asyncio.create_task(_daily_news_scanner())
+    # Periodic jobs (digests, news scan) run on a SINGLE leader-elected worker so
+    # they don't fire once per gunicorn worker. Metrics flushing is per-process
+    # (counters are per-worker), so it runs everywhere.
+    asyncio.create_task(_scheduler_loop())
+    asyncio.create_task(_metrics_flush_loop())
 
 
-async def _weekly_digest_scheduler():
-    """Background loop: sends weekly digest every Sunday ~09:00 UTC."""
+async def _scheduler_loop():
+    """Single leader-elected loop for all periodic jobs.
+
+    Only ONE process across the fleet runs the body (Redis leader lock, with a
+    worker-0 fallback when Redis is down), so digests/scans never fire N× with N
+    gunicorn workers. Renews the lock each tick and steps down if leadership is
+    lost. Fires: daily email digest (~08 UTC), weekly "lies of the week" digest
+    (Sundays ~09 UTC), daily news scan (~06 UTC) + monitor checks.
+    """
     import datetime as _dt
-    _sent_week: set = set()
+    from utils.redis_client import should_run_scheduler, renew_scheduler_lock
+    if not await should_run_scheduler():
+        print("[SCHED] Not the scheduler leader — periodic jobs disabled here.")
+        return
+    print("[SCHED] Elected scheduler leader — periodic jobs active.")
+    sent_daily: set = set()
+    sent_weekly: set = set()
+    scanned_days: set = set()
     while True:
         try:
-            await asyncio.sleep(3600)  # check every hour
+            # Tick well under the default 300s lock TTL so renewal never lapses.
+            await asyncio.sleep(240)
+            if not await renew_scheduler_lock():
+                print("[SCHED] Lost scheduler lock — stepping down.")
+                return
             now = _dt.datetime.now(_dt.timezone.utc)
-            week_key = f"{now.isocalendar()[0]}-W{now.isocalendar()[1]}"
-            if now.weekday() == 6 and 8 <= now.hour <= 10 and week_key not in _sent_week:
-                from email_digest import run_digest
-                db = get_db()
-                await run_digest(db)
-                _sent_week.add(week_key)
-                print(f"[DIGEST] Weekly digest sent for {week_key}")
-        except Exception as e:
-            print(f"[DIGEST] scheduler error: {e}")
-
-
-async def _daily_news_scanner():
-    """Background loop: runs news scanner every day at 06:00 UTC."""
-    import datetime as _dt
-    _scanned_days: set = set()
-    while True:
-        try:
-            await asyncio.sleep(1800)  # check every 30 min
-            now = _dt.datetime.now(_dt.timezone.utc)
+            db = get_db()
             day_key = now.strftime("%Y-%m-%d")
-            if 6 <= now.hour <= 7 and day_key not in _scanned_days:
+            iso = now.isocalendar()
+            week_key = f"{iso[0]}-W{iso[1]}"
+
+            # Daily email digest ~08:00 UTC
+            if now.hour == 8 and day_key not in sent_daily:
+                from email_digest import run_digest
+                await run_digest(db)
+                sent_daily.add(day_key)
+                print(f"[DIGEST] Daily digest sent {day_key}")
+
+            # Weekly "lies of the week" digest — Sundays ~09:00 UTC
+            if now.weekday() == 6 and now.hour == 9 and week_key not in sent_weekly:
+                from email_digest import run_weekly_lies_digest
+                await run_weekly_lies_digest(db)
+                sent_weekly.add(week_key)
+                print(f"[DIGEST] Weekly lies digest sent {week_key}")
+
+            # Daily news scan ~06:00 UTC, then fan out monitor alerts
+            if now.hour == 6 and day_key not in scanned_days:
                 from news_scanner import run_scan
-                db = get_db()
                 result = await run_scan(db)
-                _scanned_days.add(day_key)
+                scanned_days.add(day_key)
                 print(f"[SCANNER] Daily scan complete: {result}")
-                # After scan, check monitors for matching claims
                 await _run_monitor_checks(db)
         except Exception as e:
-            print(f"[SCANNER] scheduler error: {e}")
+            print(f"[SCHED] loop error: {e}")
+
+
+async def _metrics_flush_loop():
+    """Per-worker loop: flush in-memory metrics to their sink periodically.
+    NOT leader-gated — counters accumulate per process, so every worker flushes
+    its own."""
+    from utils.metrics import flush_metrics
+    while True:
+        try:
+            await asyncio.sleep(600)
+            await flush_metrics()
+        except Exception as e:
+            print(f"[METRICS] flush error: {e}")
 
 
 async def _run_monitor_checks(db):
@@ -301,7 +331,7 @@ async def _run_monitor_checks(db):
             if not email:
                 continue
             items = "".join(f"<li><b>{c.get('verdict','?')}</b>: {c.get('claim','')[:200]}</li>" for c in matched[:5])
-            html = f"<h2>🚨 TruthScore Monitor Alert: «{mon.get('name','Monitor')}»</h2><p>S-au găsit <b>{len(matched)}</b> claims noi care conțin «{kw}» astăzi:</p><ul>{items}</ul><p><a href='{__import__('os').getenv('PUBLIC_BASE_URL','https://truthscore.app')}/trending'>Vezi toate</a></p>"
+            html = f"<h2>🚨 TruthScore Monitor Alert: «{mon.get('name','Monitor')}»</h2><p>S-au găsit <b>{len(matched)}</b> claims noi care conțin «{kw}» astăzi:</p><ul>{items}</ul><p><a href='{PUBLIC_BASE_URL}/trending'>Vezi toate</a></p>"
             await send_email(email, f"[TruthScore Monitor] {len(matched)} claims noi: «{kw}»", html)
     except Exception as e:
         print(f"[MONITOR] check error: {e}")
@@ -532,10 +562,56 @@ async def verify(req: VerifyRequest, response: Response,
         except Exception as e:
             print(f"[STREAK] update skipped (non-fatal): {e}")
 
+    async def _do_timeline():
+        # Append a snapshot to the temporal-drift timeline on EVERY verify so
+        # `/claims/timeline` actually accumulates history over time (previously
+        # only the 30-day admin scan wrote snapshots). record_verdict_snapshot
+        # dedups when the verdict+score are unchanged, so re-checks don't spam.
+        try:
+            from auth import get_db
+            from pipeline.temporal_drift import record_verdict_snapshot
+            src_urls = [s.url for s in (result.supporting or [])[:5] if getattr(s, "url", "")]
+            await record_verdict_snapshot(
+                get_db(), result.claim, result.verdict, result.score,
+                getattr(result, "explanation", "") or "", src_urls,
+            )
+        except Exception as e:
+            print(f"[TIMELINE] snapshot skipped (non-fatal): {e}")
+
+    async def _do_entities():
+        # Build/refresh entity reliability profiles from this claim. Entity
+        # extraction spends one free-tier LLM call, so it's skipped on eco-mode
+        # heavy-day requests where we're actively shedding cost. Runs in the
+        # background gather, so it never adds latency to the response.
+        if eco:
+            return
+        try:
+            from auth import get_db
+            from pipeline.entity_memory import update_entity_profiles
+            is_misleading = "MISLEAD" in (result.verdict or "").upper()
+            await update_entity_profiles(
+                get_db(), result.claim, result.verdict, result.score,
+                is_misleading=is_misleading,
+            )
+        except Exception as e:
+            print(f"[ENTITY] profile update skipped (non-fatal): {e}")
+
     await asyncio.gather(
         _do_log(), _do_save(), _do_trending(), _do_push(), _do_upsert(), _do_streak(),
+        _do_timeline(), _do_entities(),
         return_exceptions=True,
     )
+
+    # Cheap (LLM-free) entity-history enrichment — surfaces any named entity in
+    # this claim that already has an accumulated reliability profile. Pure regex
+    # + indexed Mongo lookups, safe on the hot path; the UI renders these.
+    try:
+        from auth import get_db
+        from pipeline.entity_memory import get_profiles_for_text_cheap
+        result.entity_profiles = await get_profiles_for_text_cheap(get_db(), result.claim)
+    except Exception as e:
+        print(f"[ENTITY] profile surface skipped (non-fatal): {e}")
+
 
     # Internal telemetry records model choices before this point. Public clients
     # receive no provider/model metadata, which also keeps the API contract clean.
@@ -1680,8 +1756,8 @@ async def register(data: UserRegister, request: Request):
 
 
 @app.post("/auth/login")
-async def login(data: UserLogin):
-    return await login_user(data)
+async def login(data: UserLogin, request: Request):
+    return await login_user(data, client_ip=_client_ip(request))
 
 
 @app.get("/related")
@@ -1770,9 +1846,9 @@ class ForgotPasswordRequest(BaseModel):
     email: str
 
 @app.post("/auth/forgot-password")
-async def forgot_password_endpoint(req: ForgotPasswordRequest):
+async def forgot_password_endpoint(req: ForgotPasswordRequest, request: Request):
     from auth import forgot_password
-    await forgot_password(req.email)
+    await forgot_password(req.email, client_ip=_client_ip(request))
     return {"ok": True, "message": "Dacă emailul există, vei primi un link de resetare."}
 
 class ResetPasswordRequest(BaseModel):
@@ -1780,9 +1856,9 @@ class ResetPasswordRequest(BaseModel):
     password: str
 
 @app.post("/auth/reset-password")
-async def reset_password_endpoint(req: ResetPasswordRequest):
+async def reset_password_endpoint(req: ResetPasswordRequest, request: Request):
     from auth import reset_password
-    await reset_password(req.token, req.password)
+    await reset_password(req.token, req.password, client_ip=_client_ip(request))
     return {"ok": True, "message": "Parola a fost schimbată cu succes."}
 
 
@@ -2094,11 +2170,16 @@ class SteelManRequest(BaseModel):
 
 
 @app.post("/steel-man")
-async def steel_man(req: SteelManRequest):
+async def steel_man(req: SteelManRequest, request: Request,
+                    current_user=Depends(get_current_user)):
     """Generate the strongest possible counter-argument for a verified claim."""
     claim = (req.claim or "").strip()[:2000]
     if not claim:
         return {"steel_man": "", "key_points": []}
+    # Meter against the daily quota — this makes a real LLM call, so leaving it
+    # unmetered let anyone rack up cost / bypass the verify limit.
+    await enforce_quota(current_user, claim, client_ip=_client_ip(request),
+                        fp=_client_fp(request))
     verdict_ctx = f"The claim was rated {req.verdict} with a score of {req.score}/100." if req.verdict else ""
     prompt = (
         f"A fact-checking system has evaluated the following claim:\n\n"
@@ -2204,7 +2285,7 @@ async def trending(limit: int = 10):
 
 
 @app.get("/public-stats")
-async def public_stats():
+async def public_stats_detailed():
     """Aggregate public stats for the accuracy/trust page."""
     try:
         from auth import get_db
@@ -2221,10 +2302,15 @@ class UrlCheckRequest(BaseModel):
     url: str
 
 @app.post("/check-url")
-async def check_url_endpoint(req: UrlCheckRequest, current_user=Depends(get_current_user)):
+async def check_url_endpoint(req: UrlCheckRequest, request: Request,
+                            current_user=Depends(get_current_user)):
     """Fetch a URL, extract text, and fact-check its claims."""
     from auth import get_db
     from api.url_checker import check_url
+    # Fetches + fact-checks arbitrary URL content (heavy LLM path) — meter it so
+    # it counts against the daily quota like a normal check.
+    await enforce_quota(current_user, req.url, client_ip=_client_ip(request),
+                        fp=_client_fp(request))
     db = get_db()
     return await check_url(req.url, db, user=current_user)
 
@@ -2474,61 +2560,33 @@ async def delete_webhook_endpoint(webhook_id: str, user=Depends(require_user)):
     return {"deleted": await delete_webhook(db, user["id"], webhook_id)}
 
 
-async def _resolve_api_key(request) -> dict | None:
-    """Check X-API-Key header and return the user dict if valid."""
-    api_key = request.headers.get("X-API-Key", "")
-    if not api_key.startswith("ts_sk_"):
-        return None
-    key_hash = _hashlib.sha256(api_key.encode()).hexdigest()
-    try:
-        from auth import get_db
-        db = get_db()
-        col = db["api_keys"]
-        doc = await col.find_one({"key_hash": key_hash, "active": True})
-        if not doc:
-            return None
-        await col.update_one({"_id": doc["_id"]}, {"$inc": {"use_count": 1}, "$set": {"last_used": datetime.now(timezone.utc).isoformat()}})
-        return {"id": doc["user_id"], "plan": "pro"}
-    except Exception:
-        return None
-
-
 # ── Claim Timeline / Version History ──────────────────────────────
 
 @app.get("/v/{verdict_id}/history")
 async def verdict_history(verdict_id: str):
-    """Return the full version history for a verdict (how it changed over time)."""
+    """Return the truth-over-time history for a stored verdict.
+
+    Resolves the verdict's claim text, then reads the shared temporal-drift
+    timeline (keyed by claim, populated on every /verify) so this returns real
+    history instead of an always-empty list.
+    """
     try:
         from pipeline.verdict_store import load_verdict
-        from bson import ObjectId
+        from pipeline.temporal_drift import get_truth_timeline
         from auth import get_db
         db = get_db()
-        col = db["verdict_history"]
-        docs = await col.find({"verdict_id": verdict_id}).sort("checked_at", 1).to_list(50)
-        for d in docs:
-            d["id"] = str(d.pop("_id", ""))
-        # Also return the current verdict
         current = await load_verdict(verdict_id)
-        return {"verdict_id": verdict_id, "history": docs, "current": current}
+        if not current:
+            raise HTTPException(404, "Verdict not found")
+        claim = current.get("claim", "") if isinstance(current, dict) else ""
+        timeline = await get_truth_timeline(db, claim) if claim else []
+        return {"verdict_id": verdict_id, "claim": claim,
+                "history": timeline, "current": current}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(500, str(e))
 
-
-async def _record_verdict_history(verdict_id: str, verdict: str, score: int, claim: str):
-    """Append a snapshot to the verdict history collection. Called from /verify."""
-    try:
-        from auth import get_db
-        db = get_db()
-        col = db["verdict_history"]
-        await col.insert_one({
-            "verdict_id": verdict_id,
-            "verdict": verdict,
-            "score": score,
-            "claim": claim[:500],
-            "checked_at": datetime.now(timezone.utc).isoformat(),
-        })
-    except Exception:
-        pass
 
 
 # ── WhatsApp Bot Webhook ───────────────────────────────────────────
@@ -2642,10 +2700,9 @@ async def telegram_webhook(request: Request):
         raise HTTPException(403, "Invalid webhook secret")
     try:
         update = await request.json()
-        backend_url = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
         from telegram_bot import handle_update
         import asyncio as _asyncio
-        _asyncio.create_task(handle_update(update, backend_url))
+        _asyncio.create_task(handle_update(update))
     except Exception as e:
         print(f"[telegram-webhook] error: {e}")
     return {"ok": True}
@@ -3001,7 +3058,7 @@ async def _render_topic_page(request: Request, topic_slug: str, country_code: st
     except Exception:
         docs = []
 
-    base = os.getenv("PUBLIC_BASE_URL", "https://truthscore.app")
+    base = get_public_base_url()
     canonical_path = f"/topic/{country_code.lower()}/{topic_slug}" if country_code else f"/topic/{topic_slug}"
 
     items_html = ""
@@ -3081,7 +3138,7 @@ async def topic_page(topic_slug: str, request: Request):
 
 @app.get("/pricing", response_class=HTMLResponse, include_in_schema=False)
 async def pricing_page():
-    base = os.getenv("PUBLIC_BASE_URL", "https://truthscore.app")
+    base = get_public_base_url()
     plan_rows = ""
     for key in ["free", "pro", "monitor", "business", "enterprise"]:
         p = PLANS.get(key, {})
@@ -3154,7 +3211,7 @@ async def today_checks():
 @app.get("/bookmarklet.js")
 async def bookmarklet():
     """Serve the one-line bookmarklet script."""
-    public_url = os.getenv("PUBLIC_BASE_URL", "https://truthscore.app")
+    public_url = get_public_base_url()
     js = f"javascript:(function(){{var t=window.getSelection().toString().trim()||document.title;window.open('{public_url}/?claim='+encodeURIComponent(t),'_blank','width=960,height=720,noopener');}})()"
     return PlainTextResponse(js, media_type="application/javascript")
 
@@ -3218,14 +3275,13 @@ async def twitter_webhook_handler(request: Request):
     try:
         body = await request.json()
         tweet_events = body.get("tweet_create_events", [])
-        backend_url = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
         from twitter_bot import handle_mention
         import asyncio as _asyncio
         bot_username = os.getenv("TWITTER_BOT_USERNAME", "TruthScoreBot")
         for tweet in tweet_events:
             if tweet.get("user", {}).get("screen_name", "").lower() == bot_username.lower():
                 continue
-            _asyncio.create_task(handle_mention(tweet, backend_url))
+            _asyncio.create_task(handle_mention(tweet))
     except Exception as e:
         print(f"[twitter-webhook] error: {e}")
     return {"status": "ok"}
@@ -3235,8 +3291,7 @@ async def twitter_webhook_handler(request: Request):
 async def twitter_poll(user=Depends(require_admin)):
     """Admin: poll recent @mentions and reply."""
     from twitter_bot import poll_and_reply
-    backend_url = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
-    return await poll_and_reply(backend_url)
+    return await poll_and_reply()
 
 
 # ── Slack Bot ──────────────────────────────────────────────────────
@@ -3254,9 +3309,8 @@ async def slack_command(request: Request):
     params = {k: v[0] for k, v in parse_qs(body_bytes.decode()).items()}
     claim = params.get("text", "").strip()
     channel = params.get("channel_id", "")
-    backend_url = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
     import asyncio as _asyncio
-    _asyncio.create_task(handle_slash_command(claim, channel, backend_url))
+    _asyncio.create_task(handle_slash_command(claim, channel))
     return {"response_type": "in_channel", "text": f"⏳ Checking: _{claim[:100]}_…"}
 
 
@@ -3274,9 +3328,8 @@ async def slack_events(request: Request):
         return {"challenge": body.get("challenge")}
     event = body.get("event", {})
     if event.get("type") == "app_mention":
-        backend_url = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
         import asyncio as _asyncio
-        _asyncio.create_task(handle_app_mention(event, backend_url))
+        _asyncio.create_task(handle_app_mention(event))
     return {"status": "ok"}
 
 
@@ -3291,6 +3344,11 @@ async def debate_claim(request: Request, current_user=Depends(get_current_user))
         raise HTTPException(status_code=422, detail="claim required")
     if len(claim) > 2000:
         raise HTTPException(status_code=422, detail="claim too long (max 2000 chars)")
+
+    # A debate spins up multiple PRO/CON LLM turns — meter it like a check so it
+    # can't be used to bypass the daily quota and rack up cost.
+    await enforce_quota(current_user, claim, client_ip=_client_ip(request),
+                        fp=_client_fp(request))
 
     from pipeline.debate import run_debate
 
@@ -3355,9 +3413,29 @@ async def get_claim_timeline(claim: str, current_user=Depends(get_current_user))
 
 @app.post("/temporal-drift/scan")
 async def run_drift_scan(current_user=Depends(require_admin)):
-    """Re-verify all watched claims older than 30 days. Admin only."""
+    """Re-verify all watched claims older than 30 days. Admin only.
+
+    Any claim whose verdict changed fans out a `verdict_change` event to every
+    subscribed webhook (this is the one place a verdict genuinely changes).
+    """
     from auth import get_db
     from pipeline.temporal_drift import scan_watched_for_drift
     db = get_db()
     drifted = await scan_watched_for_drift(db)
+
+    # Fire verdict_change webhooks for each drifted claim (best-effort).
+    if drifted:
+        try:
+            from api.webhooks import notify_verdict_change
+            from pipeline.public_claims import make_slug
+            for d in drifted:
+                claim = d.get("claim", "")
+                verdict_url = f"{PUBLIC_BASE_URL}/claim/{make_slug(claim)}" if claim else PUBLIC_BASE_URL
+                await notify_verdict_change(
+                    db, claim, d.get("old_verdict", ""), d.get("new_verdict", ""),
+                    int(d.get("score", 0)), verdict_url,
+                )
+        except Exception as e:
+            print(f"[WEBHOOKS] verdict_change fan-out skipped (non-fatal): {e}")
+
     return {"drifted_count": len(drifted), "drifted": drifted[:20]}

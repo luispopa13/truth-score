@@ -95,7 +95,7 @@ async def get_recent_mentions(since_id: str = "") -> list[dict]:
         return data.get("data") or []
 
 
-async def handle_mention(tweet: dict, backend_url: str) -> None:
+async def handle_mention(tweet: dict) -> None:
     """Process a single @mention tweet."""
     tweet_id = tweet.get("id", "")
     text = tweet.get("text", "")
@@ -105,15 +105,19 @@ async def handle_mention(tweet: dict, backend_url: str) -> None:
     if len(claim) < 10:
         return
     try:
-        async with httpx.AsyncClient(timeout=60) as client:
-            r = await client.post(f"{backend_url}/verify", json={"text": claim})
-            r.raise_for_status()
-            d = r.json()
+        # Verify in-process — an HTTP self-call to /verify would round-trip the
+        # public proxy AND count against the anonymous rate limit (all mentions
+        # would share one server-IP bucket).
+        from pipeline.verify import verify_claim
+        from models import VerifyRequest
+        from config import get_public_base_url
+        result = await verify_claim(VerifyRequest(text=claim[:3000]))
+        d = result.model_dump() if hasattr(result, "model_dump") else dict(result)
         v = (d.get("verdict") or "UNCERTAIN").upper()
         score = d.get("score", 50)
         explanation = (d.get("explanation") or "")[:160]
         vid = d.get("_verdictId", "")
-        link = f"{backend_url.replace('localhost:8000', 'truthscore.app')}/v/{vid}" if vid else ""
+        link = f"{get_public_base_url().rstrip('/')}/v/{vid}" if vid else ""
         reply = f"{verdict_emoji(v)} {v} {score}/100\n{explanation}"
         if link:
             reply += f"\n🔗 {link}"
@@ -124,14 +128,14 @@ async def handle_mention(tweet: dict, backend_url: str) -> None:
         print(f"[twitter-bot] handle_mention error: {e}")
 
 
-async def poll_and_reply(backend_url: str) -> dict:
+async def poll_and_reply() -> dict:
     """Poll recent mentions and reply. Called by POST /twitter/poll-mentions."""
     global _last_mention_id
     mentions = await get_recent_mentions(since_id=_last_mention_id)
     if mentions:
         _last_mention_id = mentions[0]["id"]
     for mention in mentions:
-        await handle_mention(mention, backend_url)
+        await handle_mention(mention)
     return {"processed": len(mentions)}
 
 

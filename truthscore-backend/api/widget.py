@@ -59,7 +59,7 @@ async def widget_script(user_key: str = ""):
       '<button class="ts-widget-btn">Verifică</button>' +
       '<div class="ts-widget-result"></div>' +
       '<div class="ts-widget-powered">' +
-      '<a href="https://truthscore.app" target="_blank" style="color:#5050a0;text-decoration:none">' +
+      '<a href="{api_url}" target="_blank" style="color:#5050a0;text-decoration:none">' +
       'Powered by TruthScore' +
       '</a>' +
       '</div>' +

@@ -8,8 +8,6 @@ Set up the webhook via:
 Required env var: TELEGRAM_BOT_TOKEN
 """
 import os
-import json
-import asyncio
 import httpx
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
@@ -62,7 +60,7 @@ def format_verdict(claim: str, d: dict) -> str:
     return text
 
 
-async def handle_update(update: dict, backend_url: str) -> None:
+async def handle_update(update: dict) -> None:
     """Process a single Telegram update."""
     msg = update.get("message") or update.get("edited_message")
     if not msg:
@@ -93,27 +91,22 @@ async def handle_update(update: dict, backend_url: str) -> None:
     await send_message(chat_id, "🔄 Checking...")
 
     try:
-        async with httpx.AsyncClient(timeout=60) as client:
-            # Use analyze-text for paragraphs, verify for single claims
-            if len(text) > 120 or "." in text[20:]:
-                endpoint = f"{backend_url}/analyze-text"
-                payload = {"text": text}
-            else:
-                endpoint = f"{backend_url}/verify"
-                payload = {"text": text}
+        # Verify in-process via the pipeline. An HTTP self-call to /verify or
+        # /analyze-text would round-trip the public proxy AND be counted against
+        # the anonymous rate limit (every Telegram user would share one
+        # server-IP bucket, ~5/day). verify_claim already decomposes compound
+        # text into sub_claim_results, so a single call covers both the
+        # single-claim and the paragraph case.
+        from pipeline.verify import verify_claim
+        from models import VerifyRequest
+        result = await verify_claim(VerifyRequest(text=text[:3000]))
+        d = result.model_dump() if hasattr(result, "model_dump") else dict(result)
 
-            r = await client.post(
-                endpoint,
-                json=payload,
-                headers={"Content-Type": "application/json"},
-            )
-            r.raise_for_status()
-            d = r.json()
-
-        if "results" in d and d["results"]:
-            # Paragraph result
+        subs = d.get("sub_claim_results") or []
+        if subs:
+            # Compound text: show a per-sub-claim breakdown
             lines = []
-            for i, res in enumerate(d["results"][:5]):
+            for i, res in enumerate(subs[:5]):
                 v = (res.get("verdict") or "UNCERTAIN").upper()
                 lines.append(
                     f"{verdict_emoji(v)} #{i+1} {(res.get('claim') or '')[:80]} — {res.get('score',50)}%"

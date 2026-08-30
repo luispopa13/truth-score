@@ -30,7 +30,11 @@ def test_rate_limiter_limits_align_with_auth():
 
 def test_all_plans_present():
     from auth import PLANS
-    assert set(PLANS.keys()) == {"free", "pro", "business", "enterprise"}
+    # The core public tiers must always exist. Additional tiers (monitor,
+    # annual_* variants) are allowed to grow the catalog, so this is a
+    # subset/superset check rather than exact equality.
+    core = {"free", "pro", "business", "enterprise"}
+    assert core.issubset(set(PLANS.keys())), f"missing core plans: {core - set(PLANS.keys())}"
     assert PLANS["free"]["daily_limit"] >= 1
     assert PLANS["pro"]["daily_limit"] > PLANS["free"]["daily_limit"]
     assert PLANS["business"]["price"] == 29.99

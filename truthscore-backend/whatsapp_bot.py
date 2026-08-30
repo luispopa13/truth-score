@@ -88,17 +88,17 @@ async def handle_whatsapp_update(body: dict, wa_token: str) -> None:
             return
         # Indicate processing
         await send_whatsapp(from_number, "⏳ Checking...", wa_token)
-        backend_url = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
-        async with httpx.AsyncClient(timeout=60) as client:
-            if len(text) > 120:
-                r = await client.post(f"{backend_url}/analyze-text", json={"text": text[:3000]})
-            else:
-                r = await client.post(f"{backend_url}/verify", json={"text": text})
-            r.raise_for_status()
-            d = r.json()
-        if "results" in d and d["results"]:
+        # Verify in-process via the pipeline — an HTTP self-call to /verify would
+        # round-trip the public proxy AND be counted against the anonymous rate
+        # limit (all bot users would share one server-IP bucket, ~5/day).
+        from pipeline.verify import verify_claim
+        from models import VerifyRequest
+        result = await verify_claim(VerifyRequest(text=text[:3000]))
+        d = result.model_dump() if hasattr(result, "model_dump") else dict(result)
+        subs = d.get("sub_claim_results") or []
+        if subs:
             lines = []
-            for i, res in enumerate(d["results"][:5]):
+            for i, res in enumerate(subs[:5]):
                 v = (res.get("verdict") or "UNCERTAIN").upper()
                 lines.append(f"{verdict_emoji(v)} #{i+1} {(res.get('claim') or '')[:80]} — {res.get('score', 50)}%")
             reply = (

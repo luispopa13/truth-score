@@ -321,11 +321,77 @@ def decode_token(token: str) -> dict:
 def today_key() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
+
+# ── Effective daily limit (SINGLE SOURCE OF TRUTH) ─────────────
+# Every path that needs a user's per-day check allowance — the Mongo fallback
+# here, the Redis counting path in utils.rate_limiter, and get_user_out — MUST
+# call this ONE function so the base-plan limit + free-trial bump + permanent
+# referral (bonus_checks) can never drift between code paths. (The daily,
+# ephemeral *feedback* bonus is added dynamically on top by the callers that
+# have Redis, since it isn't stored on the user doc.)
+def _is_trial_active(user) -> bool:
+    """True if this free user is still inside their signup trial window."""
+    if (user or {}).get("plan", "free") != "free":
+        return False
+    trial_until = user.get("trial_until")
+    if not trial_until:
+        return False
+    if isinstance(trial_until, str):
+        try:
+            trial_until = datetime.fromisoformat(trial_until.replace("Z", "+00:00"))
+        except Exception:
+            return False
+    return bool(trial_until and datetime.now(timezone.utc) < trial_until)
+
+
+def get_effective_daily_limit(user) -> int:
+    """The REAL per-day check limit for a user = base plan limit
+    + trial bump (free tier, first N days) + permanent referral bonus_checks.
+
+    This is the single source of truth used by BOTH the auth Mongo-fallback path
+    and utils.rate_limiter's Redis path, so trial/referral bonuses are enforced
+    identically everywhere. Does NOT include the daily feedback bonus (added
+    separately by callers that can read it from Redis)."""
+    plan_name = (user or {}).get("plan", "free")
+    plan = PLANS.get(plan_name, PLANS["free"])
+    limit = plan["daily_limit"]
+    if _is_trial_active(user):
+        limit = max(limit, _TRIAL_DAILY)
+    limit += int(user.get("bonus_checks", 0))
+    return limit
+
+
+# ── Password strength (registration + reset) ───────────────────
+# Tiny embedded set of the most-abused passwords; the goal is to reject the
+# obvious garbage, not to be draconian. Extend via env if ever needed.
+_COMMON_PASSWORDS = {
+    "password", "password1", "password123", "12345678", "123456789",
+    "1234567890", "qwerty123", "111111111", "iloveyou", "letmein1",
+    "admin123", "welcome1", "changeme", "qwertyuiop", "1q2w3e4r",
+}
+
+
+def validate_password_strength(pw: str) -> None:
+    """Raise HTTPException(400) when a password is too weak. Rules kept
+    reasonable: >= 8 chars, not all-numeric, not a well-known common password."""
+    if not pw or len(pw) < 8:
+        raise HTTPException(status_code=400,
+                            detail="Parola trebuie să aibă cel puțin 8 caractere")
+    if pw.isdigit():
+        raise HTTPException(status_code=400,
+                            detail="Parola nu poate fi formată doar din cifre")
+    if pw.strip().lower() in _COMMON_PASSWORDS:
+        raise HTTPException(status_code=400,
+                            detail="Parola este prea comună — alege una mai puternică")
+
+
 # ── Auth endpoints helpers ─────────────────────────────────────
 async def register_user(data: UserRegister, client_ip: str = "") -> dict:
     """Register a new account, with abuse checks (disposable email,
     Turnstile CAPTCHA, per-IP velocity)."""
     from utils.abuse import is_disposable_email, turnstile_verify, ip_can_register
+
+    validate_password_strength(data.password)
 
     if is_disposable_email(data.email):
         raise HTTPException(status_code=400,
@@ -369,7 +435,8 @@ async def register_user(data: UserRegister, client_ip: str = "") -> dict:
     token = create_token(user_id)
     await _register_session(user_id, token)
     try:
-        _base = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
+        from config import get_public_base_url
+        _base = get_public_base_url()
         _link = f"{_base}/auth/verify-email?token={_email_token}"
         _html = (
             f"<p>Bun venit la TruthScore!</p>"
@@ -415,11 +482,22 @@ async def apply_referral(ref_code: str, new_user_id: str) -> bool:
         return False
 
 
-async def login_user(data: UserLogin) -> dict:
+async def login_user(data: UserLogin, client_ip: str = "") -> dict:
+    """Authenticate a user, with brute-force throttling (per-IP + per-account).
+
+    `client_ip` is optional for backward compatibility; pass it from the endpoint
+    (main.py: `login_user(data, client_ip=_client_ip(request))`) to also throttle
+    by IP. Per-account throttling works even without it."""
+    from utils.abuse import (check_login_throttle, record_login_failure,
+                             clear_login_attempts)
+    email = data.email.lower()
+    await check_login_throttle(client_ip, email)   # raises 429 if locked out
     db = get_db()
-    user = await db.users.find_one({"email": data.email.lower()})
+    user = await db.users.find_one({"email": email})
     if not user or not verify_password(data.password, user["password"]):
+        await record_login_failure(client_ip, email)
         raise HTTPException(status_code=401, detail="Email sau parolă incorectă")
+    await clear_login_attempts(client_ip, email)
     user_id = str(user["_id"])
     token = create_token(user_id, user.get("token_version", 0))
     await _register_session(user_id, token)
@@ -594,22 +672,8 @@ async def check_rate_limit(user, claim, client_ip: str = "", fp: str = "") -> di
 
     plan_name = user.get("plan", "free")
     plan      = PLANS.get(plan_name, PLANS["free"])
-    limit     = plan["daily_limit"]
-
-    # Trial: free users get more checks during first N days
-    if plan_name == "free":
-        trial_until = user.get("trial_until")
-        if trial_until:
-            if isinstance(trial_until, str):
-                try:
-                    trial_until = datetime.fromisoformat(trial_until.replace("Z", "+00:00"))
-                except Exception:
-                    trial_until = None
-            if trial_until and datetime.now(timezone.utc) < trial_until:
-                limit = max(limit, _TRIAL_DAILY)
-
-    # Permanent bonus checks earned via referrals/feedback
-    limit += int(user.get("bonus_checks", 0))
+    # Effective limit = base plan + trial bump + referral bonus (single source).
+    limit     = get_effective_daily_limit(user)
 
     today     = today_key()
     used      = user.get("usage", {}).get(today, 0)
@@ -686,21 +750,10 @@ async def get_user_out(user):
         bonus = 0
     # Referral bonus (permanent daily limit increase)
     referral_bonus = int(user.get("bonus_checks", 0))
-    # Trial status
-    trial_active = False
-    if plan_name == "free":
-        trial_until = user.get("trial_until")
-        if trial_until:
-            if isinstance(trial_until, str):
-                try:
-                    trial_until = datetime.fromisoformat(trial_until.replace("Z", "+00:00"))
-                except Exception:
-                    trial_until = None
-            if trial_until and datetime.now(timezone.utc) < trial_until:
-                trial_active = True
-    effective_limit = plan["daily_limit"] + referral_bonus
-    if trial_active:
-        effective_limit = max(effective_limit, _TRIAL_DAILY)
+    # Trial status + effective limit come from the single-source helpers so the
+    # dashboard shows exactly what the rate limiter enforces.
+    trial_active = _is_trial_active(user)
+    effective_limit = get_effective_daily_limit(user)
     return UserOut(
         id=str(user["_id"]),
         email=user["email"],
@@ -1123,8 +1176,14 @@ async def verify_email_token(token: str) -> bool:
     return True
 
 
-async def forgot_password(email: str) -> bool:
-    """Generate a password-reset token and email the link. Always returns True (no email leak)."""
+async def forgot_password(email: str, client_ip: str = "") -> bool:
+    """Generate a password-reset token and email the link. Always returns True (no email leak).
+
+    Throttled per-IP + per-account so the endpoint can't be used to spam reset
+    emails or probe which addresses exist. Pass `client_ip` from the endpoint."""
+    from utils.abuse import check_reset_throttle, record_reset_attempt
+    await check_reset_throttle(client_ip, email.lower())   # raises 429 if abused
+    await record_reset_attempt(client_ip, email.lower())
     db = get_db()
     user = await db.users.find_one({"email": email.lower()})
     if user:
@@ -1135,7 +1194,8 @@ async def forgot_password(email: str) -> bool:
             {"$set": {"reset_token": reset_token, "reset_token_expires": reset_expires}},
         )
         try:
-            _base = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
+            from config import get_public_base_url
+            _base = get_public_base_url()
             _link = f"{_base}/auth/reset-password?token={reset_token}"
             _html = (
                 f"<p>Ai solicitat resetarea parolei TruthScore.</p>"
@@ -1150,8 +1210,15 @@ async def forgot_password(email: str) -> bool:
     return True
 
 
-async def reset_password(token: str, new_password: str) -> bool:
-    """Apply a password reset if the token is valid and not expired."""
+async def reset_password(token: str, new_password: str, client_ip: str = "") -> bool:
+    """Apply a password reset if the token is valid and not expired.
+
+    Throttled per-IP + per-token so a stolen/guessed reset link can't be
+    brute-forced. Also enforces password strength on the new password."""
+    from utils.abuse import check_reset_throttle, record_reset_attempt
+    await check_reset_throttle(client_ip, token[:24])   # raises 429 if abused
+    await record_reset_attempt(client_ip, token[:24])
+    validate_password_strength(new_password)
     db = get_db()
     now = datetime.now(timezone.utc)
     user = await db.users.find_one({

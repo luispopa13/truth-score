@@ -12,6 +12,7 @@ Set ONE of:
   SMTP_HOST + SMTP_PORT + SMTP_USER + SMTP_PASS  → any SMTP server
 """
 import os
+import asyncio
 
 
 _FROM = os.getenv("FROM_EMAIL", "noreply@truthscore.app")
@@ -29,7 +30,10 @@ async def send_email(to: str, subject: str, html: str) -> bool:
     if sg_key:
         return await _send_sendgrid(to, subject, html, sg_key)
     if smtp_host:
-        return _send_smtp(to, subject, html)
+        # smtplib is synchronous and blocks the event loop (TLS handshake +
+        # network round-trips can take seconds). Run it in a worker thread so
+        # the loop stays free to serve other requests.
+        return await asyncio.to_thread(_send_smtp, to, subject, html)
 
     print(f"[MAILER] No email provider configured — would send to {to}: {subject}")
     return True

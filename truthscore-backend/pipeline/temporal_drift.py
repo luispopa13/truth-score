@@ -7,7 +7,7 @@ A claim that was TRUE in 2021 may be FALSE today (e.g., drug efficacy
 that got revised, statistics that changed, policies that were repealed).
 
 How it works:
-1. Every verdict is saved to `verdict_history` collection (already done via _record_verdict_history)
+1. Every verdict is saved to `verdict_history` collection (via record_verdict_snapshot, called from /verify)
 2. This module RE-VERIFIES watched claims on a schedule
 3. Returns a timeline: [{date, verdict, score, reason, changed: bool}]
 4. If verdict changed, send notification to user
@@ -140,6 +140,7 @@ async def scan_watched_for_drift(db) -> list[dict]:
     """
     from datetime import timedelta
     from pipeline.verify import verify_claim
+    from models import VerifyRequest
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=30)
     watched_col = db["watched_claims"]
@@ -163,7 +164,7 @@ async def scan_watched_for_drift(db) -> list[dict]:
 
         # Re-verify
         try:
-            result = await verify_claim(claim)
+            result = await verify_claim(VerifyRequest(text=claim))
             new_verdict = result.verdict
             old_verdict = last.get("verdict") if last else None
 

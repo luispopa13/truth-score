@@ -50,13 +50,6 @@ except ImportError:
     _MANIPULATION_AVAILABLE = False
     async def score_manipulation(c): return {"manipulation_score": 0, "techniques": [], "summary": "", "is_manipulative": False}
 
-try:
-    from pipeline.entity_memory import get_claim_entity_profiles
-    _ENTITY_MEMORY_AVAILABLE = True
-except ImportError:
-    _ENTITY_MEMORY_AVAILABLE = False
-    async def get_claim_entity_profiles(db, c): return []
-
 @dataclass
 class RetrievalResult:
     """Everything /verify, batch, and PDF need out of the shared retrieval+rank stage."""

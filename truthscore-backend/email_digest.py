@@ -11,9 +11,9 @@ Required env vars:
 import os
 import httpx
 from datetime import datetime, timezone, timedelta
+from config import resolve_public_base_url
 
 FROM_EMAIL = os.getenv("FROM_EMAIL", "noreply@truthscore.app")
-PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "https://truthscore.app")
 SENDGRID_URL = "https://api.sendgrid.com/v3/mail/send"
 
 
@@ -28,6 +28,7 @@ def verdict_color(v: str) -> str:
 
 
 def build_html(claims: list[dict]) -> str:
+    base = resolve_public_base_url()
     rows = ""
     for i, c in enumerate(claims[:8]):
         v = (c.get("verdict") or "UNCERTAIN").upper()
@@ -35,7 +36,7 @@ def build_html(claims: list[dict]) -> str:
         claim_text = (c.get("claim") or "")[:160]
         explanation = (c.get("explanation") or "")[:200]
         vid = c.get("_verdictId") or c.get("id") or ""
-        link = f"{PUBLIC_BASE_URL}/v/{vid}" if vid else PUBLIC_BASE_URL
+        link = f"{base}/v/{vid}" if vid else base
         rows += f"""
         <tr>
           <td style="padding:16px 0;border-bottom:1px solid #2a2a3e">
@@ -63,12 +64,12 @@ def build_html(claims: list[dict]) -> str:
       <table style="width:100%;border-collapse:collapse">{rows}</table>
     </div>
     <div style="text-align:center;margin-top:24px">
-      <a href="{PUBLIC_BASE_URL}" style="display:inline-block;padding:12px 28px;background:#6c63ff;color:#fff;border-radius:8px;font-size:14px;font-weight:600;text-decoration:none">
+      <a href="{base}" style="display:inline-block;padding:12px 28px;background:#6c63ff;color:#fff;border-radius:8px;font-size:14px;font-weight:600;text-decoration:none">
         Check your own claims →
       </a>
     </div>
     <div style="text-align:center;margin-top:20px;font-size:11px;color:#4b5563">
-      <a href="{PUBLIC_BASE_URL}/unsubscribe?email={{{{email}}}}" style="color:#4b5563">Unsubscribe</a> · TruthScore · Evidence-first AI fact-checking
+      <a href="{base}/unsubscribe?email={{{{email}}}}" style="color:#4b5563">Unsubscribe</a> · TruthScore · Evidence-first AI fact-checking
     </div>
   </div>
 </body>
@@ -76,15 +77,16 @@ def build_html(claims: list[dict]) -> str:
 
 
 def build_text(claims: list[dict]) -> str:
+    base = resolve_public_base_url()
     lines = [f"TruthScore Daily Digest — {datetime.now(timezone.utc).strftime('%B %d, %Y')}\n"]
     for c in claims[:8]:
         v = (c.get("verdict") or "UNCERTAIN").upper()
         score = c.get("score", 50)
         claim_text = (c.get("claim") or "")[:120]
         vid = c.get("_verdictId") or c.get("id") or ""
-        link = f"{PUBLIC_BASE_URL}/v/{vid}" if vid else PUBLIC_BASE_URL
+        link = f"{base}/v/{vid}" if vid else base
         lines.append(f"{verdict_emoji(v)} {v} ({score}/100)\n{claim_text}\n{link}\n")
-    lines.append(f"\nUnsubscribe: {PUBLIC_BASE_URL}/unsubscribe")
+    lines.append(f"\nUnsubscribe: {base}/unsubscribe")
     return "\n".join(lines)
 
 
@@ -128,7 +130,12 @@ async def get_trending_claims(db, limit: int = 8) -> list[dict]:
 
 
 async def run_digest(db) -> dict:
-    """Send digest to all subscribers. Returns stats dict."""
+    """Send the DAILY digest (top trending claims, last 48h) to all active
+    subscribers. Returns stats dict {sent, failed, claims_count} or a skip dict.
+
+    Scheduling (main.py, behind should_run_scheduler()): daily, e.g. ~08:00 UTC.
+    Signature: run_digest(db) -> dict, where db is the Motor database handle.
+    """
     claims = await get_trending_claims(db)
     if not claims:
         return {"sent": 0, "skipped": 0, "reason": "no trending claims"}
@@ -195,7 +202,13 @@ async def send_lies_digest_to(email: str, claims: list[dict]) -> bool:
 
 
 async def run_weekly_lies_digest(db) -> dict:
-    """Send the 'Top 5 Lies of the Week' email to all active subscribers."""
+    """Send the 'Top 5 Lies of the Week' email to all active subscribers.
+    Returns stats dict {sent, failed, claims_count} or a skip dict.
+
+    Scheduling (main.py, behind should_run_scheduler()): weekly, e.g. Sundays
+    ~09:00 UTC, fired by the leader-elected _scheduler_loop alongside run_digest.
+    Signature: run_weekly_lies_digest(db) -> dict, where db is the Motor handle.
+    """
     claims = await get_top_lies(db, limit=5, days=7)
     if not claims:
         return {"sent": 0, "skipped": 0, "reason": "no false claims this week"}

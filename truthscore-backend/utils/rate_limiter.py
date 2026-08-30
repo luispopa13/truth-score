@@ -9,13 +9,18 @@ from datetime import datetime, timezone, timedelta
 logger = logging.getLogger("truthscore.rate_limiter")
 
 # Daily limits AND feature matrix per plan — the single source of truth lives
-# in auth.py (_PLAN_DAILY / _PLAN_FEATURES); imported here so the two never
-# drift. auth.py has no top-level import of this module, so importing auth here
-# is cycle-free. Importing the feature matrix (rather than keeping a second
-# copy) guarantees the `features` dict is identical on the Redis and Mongo
-# code paths below.
-from auth import _PLAN_DAILY as PLAN_LIMITS
+# in auth.py; imported here so the two never drift. auth.py has no top-level
+# import of this module, so importing auth here is cycle-free. We import the
+# effective-limit FUNCTION (base plan + trial + referral bonus) rather than the
+# raw plan table, so trial/referral bonuses are enforced identically on this
+# Redis path and on auth's own Mongo fallback. _PLAN_FEATURES is imported (not
+# copied) so the `features` dict is identical on both code paths below.
+from auth import get_effective_daily_limit
 from auth import _PLAN_FEATURES
+# Re-exported for consumers that display the raw base-plan daily table
+# (e.g. main.py's plan/config endpoint). Still sourced from auth — no second
+# copy. Enforcement uses get_effective_daily_limit(), not this table.
+from auth import _PLAN_DAILY as PLAN_LIMITS
 
 
 def _utc_date_str() -> str:
@@ -44,7 +49,7 @@ async def check_rate_limit(user: dict) -> Tuple[bool, dict]:
 
     user_id = str(user.get("id") or user.get("_id") or "")
     plan = user.get("plan", "free")
-    limit = PLAN_LIMITS.get(plan, PLAN_LIMITS["free"])
+    limit = get_effective_daily_limit(user)
 
     redis = get_async_redis()
     if redis:
@@ -107,7 +112,7 @@ async def _check_mongo_usage(user: dict) -> Tuple[bool, dict]:
         )
         used = (usage or {}).get("usage", {}).get(today, 0)
         plan = user.get("plan", "free")
-        limit = PLAN_LIMITS.get(plan, PLAN_LIMITS["free"])
+        limit = get_effective_daily_limit(user)
         # `used` is PRE-increment: `used < limit` allows exactly `limit` requests/day.
         allowed = used < limit
         if allowed:
@@ -130,7 +135,7 @@ async def _check_mongo_usage(user: dict) -> Tuple[bool, dict]:
                            "reset_in_hours": 24,
                            "note": "Rate-limit stores unavailable — free tier paused"}
         return True, {"allowed": True, "used": 0,
-                      "limit": PLAN_LIMITS.get(plan, PLAN_LIMITS["free"]), "plan": plan,
+                      "limit": get_effective_daily_limit(user), "plan": plan,
                       "note": "Rate-limit fallback — stores unavailable, paid user allowed"}
 
 

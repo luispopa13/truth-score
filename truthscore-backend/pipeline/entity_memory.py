@@ -132,10 +132,15 @@ async def update_entity_profiles(
                             "$slice": 10,
                         }
                     },
+                    # NOTE: counters (claim_count/true_count/…) are intentionally
+                    # NOT in $setOnInsert. MongoDB rejects any field that appears in
+                    # BOTH $inc and $setOnInsert ("would create a conflict"), which
+                    # made every write throw and left entity_profiles permanently
+                    # empty. $inc treats a missing field as 0 and initializes it, so
+                    # the counters seed correctly on insert without $setOnInsert.
                     "$setOnInsert": {
-                        "true_count": 0, "false_count": 0,
-                        "uncertain_count": 0, "misleading_count": 0,
-                        "accuracy_pct": 0, "pattern_notes": "", "claim_count": 0,
+                        "accuracy_pct": 0, "pattern_notes": "",
+                        "created_at": now_iso,
                     },
                 },
                 upsert=True,
@@ -209,13 +214,56 @@ async def get_claim_entity_profiles(db, claim: str) -> list[dict]:
     for ent in entities:
         profile = await get_entity_profile(db, ent["name"])
         if profile and profile.get("claim_count", 0) >= 3:
-            profiles.append({
-                "name": profile["name"],
-                "type": profile["type"],
-                "claim_count": profile["claim_count"],
-                "accuracy_pct": profile.get("accuracy_pct", 50),
-                "misleading_count": profile.get("misleading_count", 0),
-                "pattern_notes": profile.get("pattern_notes", ""),
-                "recent_verdicts": profile.get("recent_verdicts", [])[:3],
-            })
+            profiles.append(_public_profile(profile))
     return profiles
+
+
+def _public_profile(profile: dict) -> dict:
+    """Shape a stored profile into the fields the client renders."""
+    return {
+        "name": profile["name"],
+        "type": profile.get("type", "other"),
+        "claim_count": profile.get("claim_count", 0),
+        "accuracy_pct": profile.get("accuracy_pct", 50),
+        "misleading_count": profile.get("misleading_count", 0),
+        "pattern_notes": profile.get("pattern_notes", ""),
+        "recent_verdicts": profile.get("recent_verdicts", [])[:3],
+    }
+
+
+# Candidate named-entity spans: runs of Capitalized words (incl. diacritics),
+# e.g. "Elon Musk", "European Union". Cheap regex — NO LLM — for the hot-path
+# READ enrichment, so surfacing an entity's history costs a Mongo lookup, not a
+# model call. Names that never accumulated a profile simply don't match.
+_CAP_SPAN = _re.compile(r"\b([A-ZĂÂÎȘȚ][\wăâîșț]+(?:\s+[A-ZĂÂÎȘȚ][\wăâîșț]+){0,3})")
+_CAP_STOP = {"the", "a", "an", "this", "that", "is", "are", "was", "were"}
+
+
+async def get_profiles_for_text_cheap(db, claim: str, min_claims: int = 3) -> list[dict]:
+    """LLM-free profile surfacing: pull Capitalized-name candidates from the
+    claim with a regex and look up any that already have an accumulated profile.
+    Safe to call on every verify — a few indexed _id lookups, no model cost.
+    """
+    if db is None or not claim:
+        return []
+    try:
+        seen: set[str] = set()
+        candidates: list[str] = []
+        for m in _CAP_SPAN.finditer(claim):
+            span = m.group(1).strip()
+            if span.lower() in _CAP_STOP:
+                continue
+            eid = _normalize_name(span)
+            if eid and eid not in seen:
+                seen.add(eid)
+                candidates.append(eid)
+        if not candidates:
+            return []
+        col = db["entity_profiles"]
+        cursor = col.find({"_id": {"$in": candidates[:8]},
+                           "claim_count": {"$gte": min_claims}})
+        docs = await cursor.to_list(length=8)
+        return [_public_profile(d) for d in docs]
+    except Exception as e:
+        print(f"[entity_memory] cheap lookup error: {e}")
+        return []
