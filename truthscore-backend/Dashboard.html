@@ -594,6 +594,22 @@ footer{border-top:1px solid var(--border);padding:22px 40px;display:flex;align-i
   </div>
 </div>
 
+<div class="overlay" id="monitorsOverlay" onmousedown="if(event.target===this)closeMonitors()">
+  <div class="modal" style="max-width:640px;width:100%">
+    <button class="modal-x" onclick="closeMonitors()">✕</button>
+    <div class="modal-title">📡 Claim Monitors</div>
+    <div style="font-size:13px;color:var(--text2);margin-bottom:14px">Get email alerts when new claims matching your keywords are verified. Requires Monitor or Business plan.</div>
+    <div id="monitorForm" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
+      <input id="monitorName" class="finput" placeholder="Label (e.g. My Brand)" style="flex:1;min-width:120px;padding:8px 12px;font-size:13px">
+      <input id="monitorKeyword" class="finput" placeholder="Keyword to watch (e.g. Pfizer, Tesla...)" style="flex:2;min-width:160px;padding:8px 12px;font-size:13px">
+      <input id="monitorEmail" class="finput" placeholder="Alert email (leave blank = account email)" style="flex:2;min-width:160px;padding:8px 12px;font-size:13px">
+      <button class="form-btn" onclick="createMonitor()" style="white-space:nowrap">+ Add Monitor</button>
+    </div>
+    <div id="monitorsList" style="display:flex;flex-direction:column;gap:8px;max-height:360px;overflow-y:auto"></div>
+    <div id="monitorsMsg" style="font-size:12px;color:#a78bfa;margin-top:8px"></div>
+  </div>
+</div>
+
 <div class="overlay" id="apiKeysOverlay" onmousedown="if(event.target===this)closeApiKeys()">
   <div class="modal" style="max-width:640px;width:100%">
     <button class="modal-x" onclick="closeApiKeys()">✕</button>
@@ -1553,6 +1569,97 @@ async function unwatchClaim(id,btn){
   }catch(e){toast('Error: '+e.message,'err');}
 }
 
+// ── Claim Monitors (B2B) ─────────────────────────────────────────
+function openMonitors(){
+  if(!currentUser){showAuth('login');return;}
+  document.getElementById('monitorsOverlay').className='overlay active';
+  loadMonitors();
+}
+function closeMonitors(){document.getElementById('monitorsOverlay').className='overlay';}
+async function loadMonitors(){
+  const list=document.getElementById('monitorsList');
+  list.innerHTML='<div style="color:var(--text2);font-size:13px">Loading…</div>';
+  try{
+    const r=await fetch(`${API}/monitors`,{headers:{'Authorization':'Bearer '+token()}});
+    const j=await r.json();
+    if(!Array.isArray(j)||!j.length){
+      list.innerHTML='<div style="color:var(--text2);font-size:13px;padding:10px 0">No monitors yet. Add your first keyword above.</div>';return;
+    }
+    list.innerHTML=j.map(m=>`
+      <div style="padding:10px 12px;border-radius:8px;border:1px solid var(--border2);display:flex;justify-content:space-between;align-items:center;gap:10px">
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:600;color:var(--text)">${esc(m.name||m.keyword)}</div>
+          <div style="font-size:11px;color:var(--text2);margin-top:2px">🔑 <b>${esc(m.keyword)}</b> · 📧 ${esc(m.notify_email||'')}</div>
+        </div>
+        <button class="fbbtn" style="font-size:11px;flex-shrink:0;color:#ef4444" onclick="deleteMonitor('${m.id}',this)">🗑️</button>
+      </div>`).join('');
+  }catch(e){
+    const j=e.message||'';
+    if(j.includes('403')||j.includes('Upgrade')){
+      list.innerHTML=`<div style="color:#a78bfa;font-size:13px;padding:10px 0">📡 Claim Monitors require a Monitor or Business plan. <a href="#" onclick="openPricing();return false" style="color:#a78bfa;text-decoration:underline">Upgrade →</a></div>`;
+    } else {
+      list.innerHTML=`<div style="color:var(--red);font-size:13px">${esc(String(e.message))}</div>`;
+    }
+  }
+}
+async function createMonitor(){
+  const name=document.getElementById('monitorName').value.trim();
+  const kw=document.getElementById('monitorKeyword').value.trim();
+  const email=document.getElementById('monitorEmail').value.trim();
+  if(!kw){toast('Enter a keyword','err');return;}
+  const msg=document.getElementById('monitorsMsg');
+  msg.textContent='Saving…';
+  try{
+    const r=await fetch(`${API}/monitors`,{method:'POST',headers:{'Authorization':'Bearer '+token(),'Content-Type':'application/json'},body:JSON.stringify({name:name||kw,keyword:kw,notify_email:email})});
+    const j=await r.json();
+    if(!r.ok)throw new Error(j.detail||JSON.stringify(j));
+    document.getElementById('monitorName').value='';
+    document.getElementById('monitorKeyword').value='';
+    document.getElementById('monitorEmail').value='';
+    msg.textContent='✅ Monitor created!';
+    setTimeout(()=>msg.textContent='',3000);
+    loadMonitors();
+  }catch(e){msg.textContent='';toast(e.message,'err');}
+}
+async function deleteMonitor(id,btn){
+  try{
+    const r=await fetch(`${API}/monitors/${id}`,{method:'DELETE',headers:{'Authorization':'Bearer '+token()}});
+    if(!r.ok){const j=await r.json();throw new Error(j.detail||'Error');}
+    btn.closest('div[style]').remove();
+  }catch(e){toast('Error: '+e.message,'err');}
+}
+
+// ── Community Voting ─────────────────────────────────────────────
+async function loadVotes(slug){
+  try{
+    const r=await fetch(`${API}/claim/${slug}/votes`);
+    const j=await r.json();
+    _updateVoteUI(j);
+  }catch(e){}
+}
+async function castVote(slug,vote){
+  try{
+    const hdrs={'Content-Type':'application/json'};
+    if(token())hdrs['Authorization']='Bearer '+token();
+    const r=await fetch(`${API}/claim/${slug}/vote`,{method:'POST',headers:hdrs,body:JSON.stringify({vote})});
+    const j=await r.json();
+    if(!r.ok)throw new Error(j.detail||'Error');
+    _updateVoteUI(j);
+    const agreeBtn=document.getElementById('voteAgree');
+    const disBtn=document.getElementById('voteDisagree');
+    if(agreeBtn)agreeBtn.style.background=vote==='agree'?'rgba(16,185,129,.2)':'';
+    if(disBtn)disBtn.style.background=vote==='disagree'?'rgba(239,68,68,.2)':'';
+  }catch(e){toast(e.message,'err');}
+}
+function _updateVoteUI(j){
+  const an=document.getElementById('voteAgreeN');
+  const dn=document.getElementById('voteDisagreeN');
+  const fill=document.getElementById('voteBarFill');
+  if(an)an.textContent=j.agree||0;
+  if(dn)dn.textContent=j.disagree||0;
+  if(fill)fill.style.width=(j.agree_pct||50)+'%';
+}
+
 // ── API Keys ────────────────────────────────────────────────────
 function openApiKeys(){
   if(!currentUser){showAuth('login');return;}
@@ -1740,9 +1847,16 @@ function renderScore(d){
       <button class="fbbtn" id="steelManBtn" title="${LANG==='ro'?'Contraargument puternic':'Strongest counter-argument'}" onclick="openSteelMan()">🛡️</button>
       <button class="fbbtn" id="watchBtn" title="${LANG==='ro'?'Urmărește afirmația':'Watch this claim'}" onclick="toggleWatch(d)">🔔</button>
       <button class="fbbtn" id="debateBtn" title="${LANG==='ro'?'Dezbatere live — PRO vs CON':'Live Debate — PRO vs CON'}" onclick="openLiveDebate()">⚔️</button>
+      <button class="fbbtn" title="${LANG==='ro'?'Monitoare de afirmații':'Claim Monitors'}" onclick="openMonitors()">📡</button>
       ${d._claimSlug?`<a class="fbbtn" href="${API}/claim/${d._claimSlug}" target="_blank" title="${LANG==='ro'?'Pagina publică a afirmației':'Public claim page'}">🌐</a>`:''}
       ${pdfBtn}
     </div>
+    ${d._claimSlug?`<div id="voteRow" style="display:flex;align-items:center;gap:10px;margin-top:10px;padding:10px 12px;border-radius:10px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.07)">
+      <span style="font-size:12px;color:var(--text2)">${LANG==='ro'?'Ești de acord cu verdictul?':'Do you agree with the verdict?'}</span>
+      <button id="voteAgree" class="fbbtn" onclick="castVote('${d._claimSlug}','agree')" title="Agree" style="font-size:13px">👍 <span id="voteAgreeN">—</span></button>
+      <button id="voteDisagree" class="fbbtn" onclick="castVote('${d._claimSlug}','disagree')" title="Disagree" style="font-size:13px">👎 <span id="voteDisagreeN">—</span></button>
+      <div id="voteBar" style="flex:1;height:6px;border-radius:99px;background:rgba(120,120,160,.18);overflow:hidden"><div id="voteBarFill" style="height:100%;width:50%;background:#10b981;border-radius:99px;transition:width .5s"></div></div>
+    </div>`:''}
     <div class="fb-note-area" id="fbNote" style="display:none">
       <div style="font-size:11px;color:var(--text2);margin-bottom:5px">💬 ${LANG==='ro'?'Ce a fost greșit? — revizuit de oameni, niciodată aplicat automat:':'What was wrong? — reviewed by humans, never auto-applied:'}</div>
       <textarea class="finput" id="fbNoteText" rows="2" placeholder="${LANG==='ro'?'ex: sursa era depășită, afirmația a fost greșit interpretată...':'e.g. source was outdated, claim was misread...'}" style="padding:7px 10px;font-size:12px;min-height:52px;resize:vertical;width:100%;box-sizing:border-box;margin-top:2px"></textarea>
@@ -1779,6 +1893,7 @@ function renderScore(d){
   document.getElementById('watchBtn').onclick=()=>toggleWatch(d);
   document.getElementById('steelManBtn').onclick=()=>openSteelMan();
   document.getElementById('debateBtn').onclick=()=>openLiveDebate();
+  if(d&&d._claimSlug)loadVotes(d._claimSlug);
 }
 function shareResult(d){
   const text=(d&&d.claim)||document.getElementById('claimInput').value.trim();

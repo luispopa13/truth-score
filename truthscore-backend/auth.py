@@ -74,6 +74,8 @@ _PLAN_DAILY = {
     "free":            int(os.getenv("PLAN_FREE_DAILY", "3")),
     "pro":             int(os.getenv("PLAN_PRO_DAILY", "200")),
     "annual_pro":      int(os.getenv("PLAN_PRO_DAILY", "200")),
+    "monitor":         int(os.getenv("PLAN_MONITOR_DAILY", "500")),
+    "annual_monitor":  int(os.getenv("PLAN_MONITOR_DAILY", "500")),
     "business":        int(os.getenv("PLAN_BUSINESS_DAILY", "800")),
     "annual_business": int(os.getenv("PLAN_BUSINESS_DAILY", "800")),
     "enterprise":      int(os.getenv("PLAN_ENTERPRISE_DAILY", "9999")),
@@ -91,6 +93,8 @@ _ECO_AFTER = {
     "free":            999999,
     "pro":             int(os.getenv("PRO_ECO_AFTER", "100")),
     "annual_pro":      int(os.getenv("PRO_ECO_AFTER", "100")),
+    "monitor":         int(os.getenv("MONITOR_ECO_AFTER", "250")),
+    "annual_monitor":  int(os.getenv("MONITOR_ECO_AFTER", "250")),
     "business":        int(os.getenv("BUSINESS_ECO_AFTER", "350")),
     "annual_business": int(os.getenv("BUSINESS_ECO_AFTER", "350")),
     "enterprise":      999999,
@@ -100,29 +104,30 @@ _PLAN_PRICES = {
     "free":            0,
     "pro":             9.99,
     "annual_pro":      79.99,
+    "monitor":         99.0,
+    "annual_monitor":  790.0,
     "business":        29.99,
     "annual_business": 239.88,
     "enterprise":      199,
 }
 
-# Canonical per-plan feature matrix. This is the ONE definition — utils/
-# rate_limiter.py imports it (never redefines) so the `features` dict a user
-# sees is identical whether the rate-limit ran through Redis or the Mongo
-# fallback. `api_keys` = max concurrent API keys; `models` is advisory (routing
-# is decided by eco-mode + pick_model, not this list).
 _PLAN_FEATURES = {
     "free":            {"batch": False, "pdf": False, "widget": False, "seats": 1,
-                        "api_quota": 0,    "api_keys": 1,   "models": ["eco"]},
+                        "api_quota": 0,    "api_keys": 1,   "models": ["eco"],     "monitors": 0},
     "pro":             {"batch": True,  "pdf": True,  "widget": True,  "seats": 1,
-                        "api_quota": 0,    "api_keys": 5,   "models": ["gemini", "groq"]},
+                        "api_quota": 0,    "api_keys": 5,   "models": ["gemini", "groq"], "monitors": 0},
     "annual_pro":      {"batch": True,  "pdf": True,  "widget": True,  "seats": 1,
-                        "api_quota": 0,    "api_keys": 5,   "models": ["gemini", "groq"]},
+                        "api_quota": 0,    "api_keys": 5,   "models": ["gemini", "groq"], "monitors": 0},
+    "monitor":         {"batch": True,  "pdf": True,  "widget": True,  "seats": 2,
+                        "api_quota": 1000, "api_keys": 10,  "models": ["gemini", "groq"], "monitors": 5},
+    "annual_monitor":  {"batch": True,  "pdf": True,  "widget": True,  "seats": 2,
+                        "api_quota": 1000, "api_keys": 10,  "models": ["gemini", "groq"], "monitors": 5},
     "business":        {"batch": True,  "pdf": True,  "widget": True,  "seats": 3,
-                        "api_quota": 5000, "api_keys": 20,  "models": ["gemini", "groq", "gpt4o-mini"]},
+                        "api_quota": 5000, "api_keys": 20,  "models": ["gemini", "groq", "gpt4o-mini"], "monitors": 20},
     "annual_business": {"batch": True,  "pdf": True,  "widget": True,  "seats": 3,
-                        "api_quota": 5000, "api_keys": 20,  "models": ["gemini", "groq", "gpt4o-mini"]},
+                        "api_quota": 5000, "api_keys": 20,  "models": ["gemini", "groq", "gpt4o-mini"], "monitors": 20},
     "enterprise":      {"batch": True,  "pdf": True,  "widget": True,  "seats": 0,
-                        "api_quota": -1,   "api_keys": 100, "models": ["all"]},
+                        "api_quota": -1,   "api_keys": 100, "models": ["all"],               "monitors": -1},
 }
 
 
@@ -158,6 +163,28 @@ def _get_plans():
             "eco_after_daily": _ECO_AFTER["annual_pro"],
             "billing": "annual",
             "saves_percent": 33,
+        },
+        "monitor": {
+            "name": "Monitor", "price": _PLAN_PRICES["monitor"],
+            "daily_limit": _PLAN_DAILY["monitor"],
+            "batch_limit": 200, "pdf": True, "widget": True,
+            "price_id": os.getenv("STRIPE_MONITOR_PRICE_ID", ""),
+            "features": _PLAN_FEATURES["monitor"],
+            "ads": False,
+            "eco_after_daily": _ECO_AFTER["monitor"],
+            "highlight": "Pentru jurnaliști și companii",
+        },
+        "annual_monitor": {
+            "name": "Monitor Annual", "price": _PLAN_PRICES["annual_monitor"],
+            "daily_limit": _PLAN_DAILY["annual_monitor"],
+            "batch_limit": 200, "pdf": True, "widget": True,
+            "price_id": os.getenv("STRIPE_MONITOR_ANNUAL_PRICE_ID", ""),
+            "features": _PLAN_FEATURES["annual_monitor"],
+            "ads": False,
+            "eco_after_daily": _ECO_AFTER["annual_monitor"],
+            "billing": "annual",
+            "saves_percent": 33,
+            "highlight": "Pentru jurnaliști și companii",
         },
         "business": {
             "name": "Business", "price": _PLAN_PRICES["business"],

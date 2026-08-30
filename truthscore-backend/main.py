@@ -236,6 +236,7 @@ async def _warmup_models():
     print("[STARTUP] Ready to serve.")
     # Auto-digest: check every hour, send weekly digest on Sundays
     asyncio.create_task(_weekly_digest_scheduler())
+    asyncio.create_task(_daily_news_scanner())
 
 
 async def _weekly_digest_scheduler():
@@ -255,7 +256,55 @@ async def _weekly_digest_scheduler():
                 print(f"[DIGEST] Weekly digest sent for {week_key}")
         except Exception as e:
             print(f"[DIGEST] scheduler error: {e}")
-async def _close_pools():
+
+
+async def _daily_news_scanner():
+    """Background loop: runs news scanner every day at 06:00 UTC."""
+    import datetime as _dt
+    _scanned_days: set = set()
+    while True:
+        try:
+            await asyncio.sleep(1800)  # check every 30 min
+            now = _dt.datetime.now(_dt.timezone.utc)
+            day_key = now.strftime("%Y-%m-%d")
+            if 6 <= now.hour <= 7 and day_key not in _scanned_days:
+                from news_scanner import run_scan
+                db = get_db()
+                result = await run_scan(db)
+                _scanned_days.add(day_key)
+                print(f"[SCANNER] Daily scan complete: {result}")
+                # After scan, check monitors for matching claims
+                await _run_monitor_checks(db)
+        except Exception as e:
+            print(f"[SCANNER] scheduler error: {e}")
+
+
+async def _run_monitor_checks(db):
+    """Send alert emails to users whose monitors match today's new claims."""
+    try:
+        today = __import__('datetime').date.today().isoformat()
+        new_claims = await db.daily_checks.find_one({"date": today})
+        if not new_claims:
+            return
+        claims_today = new_claims.get("results", [])
+        monitors = await db.monitors.find({"active": True}).to_list(500)
+        for mon in monitors:
+            kw = (mon.get("keyword") or "").lower()
+            if not kw:
+                continue
+            matched = [c for c in claims_today if kw in (c.get("claim") or "").lower()]
+            if not matched:
+                continue
+            from utils.mailer import send_email
+            user = await db.users.find_one({"_id": mon["user_id"]})
+            email = (user or {}).get("email")
+            if not email:
+                continue
+            items = "".join(f"<li><b>{c.get('verdict','?')}</b>: {c.get('claim','')[:200]}</li>" for c in matched[:5])
+            html = f"<h2>🚨 TruthScore Monitor Alert: «{mon.get('name','Monitor')}»</h2><p>S-au găsit <b>{len(matched)}</b> claims noi care conțin «{kw}» astăzi:</p><ul>{items}</ul><p><a href='{__import__('os').getenv('PUBLIC_BASE_URL','https://truthscore.app')}/trending'>Vezi toate</a></p>"
+            await send_email(email, f"[TruthScore Monitor] {len(matched)} claims noi: «{kw}»", html)
+    except Exception as e:
+        print(f"[MONITOR] check error: {e}")
     """Cleanly close the shared retrieval HTTP connection pool on shutdown."""
     try:
         from pipeline.retrieval import close_shared_http_client
@@ -2593,6 +2642,409 @@ async def news_scanner_run(user=Depends(require_admin)):
     import asyncio as _asyncio
     _asyncio.create_task(run_scan(db))
     return {"status": "started"}
+
+
+# ── Claim Monitors (B2B) ──────────────────────────────────────────────────────
+
+class MonitorCreate(BaseModel):
+    name: str
+    keyword: str
+    notify_email: str = ""
+
+@app.post("/monitors")
+async def create_monitor(req: MonitorCreate, user=Depends(require_user)):
+    """Create a keyword monitor. Alerts when new claims matching keyword appear."""
+    from bson import ObjectId
+    plan = user.get("plan", "free")
+    feat = PLANS.get(plan, PLANS["free"]).get("features", {})
+    max_monitors = feat.get("monitors", 0)
+    if max_monitors == 0:
+        raise HTTPException(403, "Upgrade to Monitor/Business plan to use claim monitors.")
+    db = get_db()
+    count = await db.monitors.count_documents({"user_id": user["_id"], "active": True})
+    if max_monitors != -1 and count >= max_monitors:
+        raise HTTPException(400, f"You've reached your monitor limit ({max_monitors}). Upgrade to add more.")
+    now = __import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat()
+    doc = {
+        "user_id": user["_id"],
+        "name": req.name[:100],
+        "keyword": req.keyword[:100].lower(),
+        "notify_email": req.notify_email or user.get("email", ""),
+        "active": True,
+        "created_at": now,
+        "last_alert": None,
+    }
+    result = await db.monitors.insert_one(doc)
+    return {"id": str(result.inserted_id), "keyword": doc["keyword"], "name": doc["name"]}
+
+@app.get("/monitors")
+async def list_monitors(user=Depends(require_user)):
+    db = get_db()
+    docs = await db.monitors.find({"user_id": user["_id"]}).sort("created_at", -1).to_list(50)
+    for d in docs:
+        d["id"] = str(d.pop("_id"))
+        d["user_id"] = str(d["user_id"])
+    return docs
+
+@app.delete("/monitors/{monitor_id}")
+async def delete_monitor(monitor_id: str, user=Depends(require_user)):
+    from bson import ObjectId
+    db = get_db()
+    try:
+        result = await db.monitors.delete_one({"_id": ObjectId(monitor_id), "user_id": user["_id"]})
+        if result.deleted_count == 0:
+            raise HTTPException(404, "Monitor not found")
+        return {"status": "deleted"}
+    except Exception as e:
+        raise HTTPException(400, str(e))
+
+
+# ── Community Voting on Claims ────────────────────────────────────────────────
+
+@app.post("/claim/{slug}/vote")
+async def vote_on_claim(slug: str, request: Request, user=Depends(get_current_user)):
+    """Cast a community vote on a public claim verdict (agree/disagree)."""
+    try:
+        body = await request.json()
+        vote = body.get("vote")  # "agree" or "disagree"
+        if vote not in ("agree", "disagree"):
+            raise HTTPException(400, "vote must be 'agree' or 'disagree'")
+        db = get_db()
+        voter_id = str(user["_id"]) if user else _client_ip(request)
+        now = __import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat()
+        await db.claim_votes.update_one(
+            {"slug": slug, "voter": voter_id},
+            {"$set": {"vote": vote, "updated_at": now, "slug": slug, "voter": voter_id}},
+            upsert=True,
+        )
+        # Return updated tally
+        pipeline = [
+            {"$match": {"slug": slug}},
+            {"$group": {"_id": "$vote", "count": {"$sum": 1}}},
+        ]
+        tally_docs = await db.claim_votes.aggregate(pipeline).to_list(5)
+        tally = {d["_id"]: d["count"] for d in tally_docs}
+        total = sum(tally.values())
+        return {
+            "agree": tally.get("agree", 0),
+            "disagree": tally.get("disagree", 0),
+            "total": total,
+            "agree_pct": round(tally.get("agree", 0) / max(total, 1) * 100),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+@app.get("/claim/{slug}/votes")
+async def get_claim_votes(slug: str):
+    try:
+        db = get_db()
+        pipeline = [
+            {"$match": {"slug": slug}},
+            {"$group": {"_id": "$vote", "count": {"$sum": 1}}},
+        ]
+        tally_docs = await db.claim_votes.aggregate(pipeline).to_list(5)
+        tally = {d["_id"]: d["count"] for d in tally_docs}
+        total = sum(tally.values())
+        return {
+            "agree": tally.get("agree", 0),
+            "disagree": tally.get("disagree", 0),
+            "total": total,
+            "agree_pct": round(tally.get("agree", 0) / max(total, 1) * 100),
+        }
+    except Exception:
+        return {"agree": 0, "disagree": 0, "total": 0, "agree_pct": 0}
+
+
+# ── Topic / Category SEO Pages — Universal (all languages, all countries) ─────
+
+# UI strings per language code (ISO 639-1). Fallback = "en".
+_TOPIC_I18N = {
+    "en": {"claims": "verified claims", "ai_src": "AI-verified from authoritative sources",
+           "no_claims": "No verified claims yet for this topic.",
+           "be_first": "Be the first to check a claim", "open": "Open TruthScore",
+           "full": "Full analysis →", "checks": "checks", "title_tpl": "Top fact-checked claims about {topic} | TruthScore",
+           "desc_tpl": "TruthScore has analyzed {n} claims about {topic} using AI and verified sources. Discover what's true and what's false."},
+    "ro": {"claims": "afirmații verificate", "ai_src": "verificate cu AI din surse autorizate",
+           "no_claims": "Nu există încă afirmații verificate pentru acest subiect.",
+           "be_first": "Verifică prima afirmație", "open": "Deschide TruthScore",
+           "full": "Analiză completă →", "checks": "verificări", "title_tpl": "Afirmații verificate despre {topic} | TruthScore",
+           "desc_tpl": "TruthScore a analizat {n} afirmații despre {topic} cu AI și surse verificate. Descoperă ce e adevărat și ce e fals."},
+    "de": {"claims": "geprüfte Aussagen", "ai_src": "KI-geprüft aus autorisierten Quellen",
+           "no_claims": "Noch keine verifizierten Aussagen zu diesem Thema.",
+           "be_first": "Erste Aussage prüfen", "open": "TruthScore öffnen",
+           "full": "Vollständige Analyse →", "checks": "Prüfungen", "title_tpl": "Faktengeprüfte Aussagen über {topic} | TruthScore",
+           "desc_tpl": "TruthScore hat {n} Aussagen über {topic} mit KI analysiert. Entdecke was wahr und was falsch ist."},
+    "fr": {"claims": "affirmations vérifiées", "ai_src": "vérifiées par IA depuis des sources fiables",
+           "no_claims": "Pas encore d'affirmations vérifiées sur ce sujet.",
+           "be_first": "Vérifier la première affirmation", "open": "Ouvrir TruthScore",
+           "full": "Analyse complète →", "checks": "vérifications", "title_tpl": "Affirmations vérifiées sur {topic} | TruthScore",
+           "desc_tpl": "TruthScore a analysé {n} affirmations sur {topic} avec l'IA. Découvrez ce qui est vrai et ce qui est faux."},
+    "es": {"claims": "afirmaciones verificadas", "ai_src": "verificadas con IA desde fuentes autorizadas",
+           "no_claims": "Aún no hay afirmaciones verificadas sobre este tema.",
+           "be_first": "Verifica la primera afirmación", "open": "Abrir TruthScore",
+           "full": "Análisis completo →", "checks": "verificaciones", "title_tpl": "Afirmaciones verificadas sobre {topic} | TruthScore",
+           "desc_tpl": "TruthScore ha analizado {n} afirmaciones sobre {topic} con IA. Descubre qué es verdad y qué es falso."},
+    "pt": {"claims": "afirmações verificadas", "ai_src": "verificadas com IA de fontes autorizadas",
+           "no_claims": "Ainda não há afirmações verificadas sobre este tópico.",
+           "be_first": "Verificar a primeira afirmação", "open": "Abrir TruthScore",
+           "full": "Análise completa →", "checks": "verificações", "title_tpl": "Afirmações verificadas sobre {topic} | TruthScore",
+           "desc_tpl": "TruthScore analisou {n} afirmações sobre {topic} com IA. Descubra o que é verdadeiro e o que é falso."},
+    "it": {"claims": "affermazioni verificate", "ai_src": "verificate con IA da fonti autorizzate",
+           "no_claims": "Ancora nessuna affermazione verificata su questo argomento.",
+           "be_first": "Verifica la prima affermazione", "open": "Apri TruthScore",
+           "full": "Analisi completa →", "checks": "verifiche", "title_tpl": "Affermazioni verificate su {topic} | TruthScore",
+           "desc_tpl": "TruthScore ha analizzato {n} affermazioni su {topic} con IA. Scopri cosa è vero e cosa è falso."},
+    "nl": {"claims": "geverifieerde beweringen", "ai_src": "AI-geverifieerd uit gezaghebbende bronnen",
+           "no_claims": "Nog geen geverifieerde beweringen over dit onderwerp.",
+           "be_first": "Controleer de eerste bewering", "open": "TruthScore openen",
+           "full": "Volledige analyse →", "checks": "controles", "title_tpl": "Geverifieerde beweringen over {topic} | TruthScore",
+           "desc_tpl": "TruthScore heeft {n} beweringen over {topic} geanalyseerd met AI."},
+    "pl": {"claims": "zweryfikowanych twierdzeń", "ai_src": "zweryfikowane przez AI ze sprawdzonych źródeł",
+           "no_claims": "Brak jeszcze zweryfikowanych twierdzeń na ten temat.",
+           "be_first": "Sprawdź pierwsze twierdzenie", "open": "Otwórz TruthScore",
+           "full": "Pełna analiza →", "checks": "sprawdzeń", "title_tpl": "Zweryfikowane twierdzenia o {topic} | TruthScore",
+           "desc_tpl": "TruthScore przeanalizował {n} twierdzeń o {topic} za pomocą AI."},
+    "tr": {"claims": "doğrulanmış iddia", "ai_src": "yetkili kaynaklardan yapay zeka ile doğrulandı",
+           "no_claims": "Bu konu için henüz doğrulanmış iddia yok.",
+           "be_first": "İlk iddiayı kontrol et", "open": "TruthScore'u aç",
+           "full": "Tam analiz →", "checks": "kontrol", "title_tpl": "{topic} hakkında doğrulanmış iddialar | TruthScore",
+           "desc_tpl": "TruthScore, {topic} hakkında {n} iddiayı yapay zeka ile analiz etti."},
+    "ar": {"claims": "ادعاءات موثقة", "ai_src": "تم التحقق منها بالذكاء الاصطناعي من مصادر موثوقة",
+           "no_claims": "لا توجد ادعاءات موثقة حول هذا الموضوع بعد.",
+           "be_first": "تحقق من أول ادعاء", "open": "افتح TruthScore",
+           "full": "تحليل كامل ←", "checks": "تحقق", "title_tpl": "ادعاءات موثقة حول {topic} | TruthScore",
+           "desc_tpl": "حلل TruthScore {n} ادعاء حول {topic} باستخدام الذكاء الاصطناعي."},
+    "ja": {"claims": "件の検証済み主張", "ai_src": "信頼できる情報源からAIで検証済み",
+           "no_claims": "このトピックに関する検証済みの主張はまだありません。",
+           "be_first": "最初の主張を確認する", "open": "TruthScoreを開く",
+           "full": "完全な分析 →", "checks": "回確認", "title_tpl": "{topic}に関する検証済み主張 | TruthScore",
+           "desc_tpl": "TruthScoreはAIを使って{topic}に関する{n}件の主張を分析しました。"},
+    "zh": {"claims": "条已验证声明", "ai_src": "通过AI从权威来源验证",
+           "no_claims": "该主题目前还没有经过验证的声明。",
+           "be_first": "验证第一条声明", "open": "打开TruthScore",
+           "full": "完整分析 →", "checks": "次验证", "title_tpl": "关于{topic}的已验证声明 | TruthScore",
+           "desc_tpl": "TruthScore使用AI分析了关于{topic}的{n}条声明。"},
+    "hi": {"claims": "सत्यापित दावे", "ai_src": "AI द्वारा विश्वसनीय स्रोतों से सत्यापित",
+           "no_claims": "इस विषय पर अभी तक कोई सत्यापित दावे नहीं हैं।",
+           "be_first": "पहला दावा जांचें", "open": "TruthScore खोलें",
+           "full": "पूरा विश्लेषण →", "checks": "जांच", "title_tpl": "{topic} के बारे में सत्यापित दावे | TruthScore",
+           "desc_tpl": "TruthScore ने AI का उपयोग करके {topic} के बारे में {n} दावों का विश्लेषण किया।"},
+    "ru": {"claims": "проверенных утверждений", "ai_src": "проверено AI из авторитетных источников",
+           "no_claims": "Пока нет проверенных утверждений по этой теме.",
+           "be_first": "Проверить первое утверждение", "open": "Открыть TruthScore",
+           "full": "Полный анализ →", "checks": "проверок", "title_tpl": "Проверенные утверждения о {topic} | TruthScore",
+           "desc_tpl": "TruthScore проанализировал {n} утверждений о {topic} с помощью AI."},
+    "uk": {"claims": "перевірених тверджень", "ai_src": "перевірено AI з авторитетних джерел",
+           "no_claims": "Ще немає перевірених тверджень на цю тему.",
+           "be_first": "Перевірити перше твердження", "open": "Відкрити TruthScore",
+           "full": "Повний аналіз →", "checks": "перевірок", "title_tpl": "Перевірені твердження про {topic} | TruthScore",
+           "desc_tpl": "TruthScore проаналізував {n} тверджень про {topic} за допомогою AI."},
+    "ko": {"claims": "개 검증된 주장", "ai_src": "신뢰할 수 있는 출처에서 AI로 검증됨",
+           "no_claims": "이 주제에 대한 검증된 주장이 아직 없습니다.",
+           "be_first": "첫 번째 주장 확인", "open": "TruthScore 열기",
+           "full": "전체 분석 →", "checks": "회 확인", "title_tpl": "{topic}에 관한 검증된 주장 | TruthScore",
+           "desc_tpl": "TruthScore는 AI를 사용하여 {topic}에 관한 {n}개의 주장을 분석했습니다."},
+}
+
+# RTL languages
+_RTL_LANGS = {"ar", "he", "fa", "ur"}
+
+# Country code → default language (for /topic/{country}/{slug} routes)
+_COUNTRY_LANG = {
+    "ro": "ro", "md": "ro",
+    "de": "de", "at": "de", "ch": "de",
+    "fr": "fr", "be": "fr", "ca": "fr",
+    "es": "es", "mx": "es", "ar": "es", "co": "es",
+    "pt": "pt", "br": "pt",
+    "it": "it",
+    "nl": "nl",
+    "pl": "pl",
+    "tr": "tr",
+    "sa": "ar", "ae": "ar", "eg": "ar",
+    "jp": "ja",
+    "cn": "zh", "tw": "zh",
+    "in": "hi",
+    "ru": "ru",
+    "ua": "uk",
+    "kr": "ko",
+    "gb": "en", "us": "en", "au": "en", "nz": "en", "ie": "en",
+}
+
+
+def _detect_lang(request: Request, country_code: str = "") -> str:
+    """Detect best language: country_code override > Accept-Language header > en."""
+    if country_code and country_code.lower() in _COUNTRY_LANG:
+        return _COUNTRY_LANG[country_code.lower()]
+    accept = request.headers.get("accept-language", "")
+    for part in accept.replace("-", "_").split(","):
+        code = part.strip().split(";")[0].split("_")[0].lower()
+        if code in _TOPIC_I18N:
+            return code
+    return "en"
+
+
+def _t(lang: str, key: str) -> str:
+    return _TOPIC_I18N.get(lang, _TOPIC_I18N["en"]).get(key, _TOPIC_I18N["en"].get(key, ""))
+
+
+async def _render_topic_page(request: Request, topic_slug: str, country_code: str = "") -> HTMLResponse:
+    """Universal topic page renderer for any slug, any language, any country."""
+    # Sanitize slug → human-readable label (replace hyphens/underscores with spaces, title-case)
+    label = topic_slug.replace("-", " ").replace("_", " ").strip()[:80]
+    if not label or len(label) < 2:
+        raise HTTPException(404, "Invalid topic")
+
+    lang = _detect_lang(request, country_code)
+    tr = _TOPIC_I18N.get(lang, _TOPIC_I18N["en"])
+    is_rtl = lang in _RTL_LANGS
+    dir_attr = 'dir="rtl"' if is_rtl else ''
+
+    try:
+        db = get_db()
+        # Search by topic field OR keyword match in claim text
+        query = {"$or": [
+            {"topic": {"$regex": label, "$options": "i"}},
+            {"claim": {"$regex": label, "$options": "i"}},
+        ]}
+        if country_code:
+            query["$or"].append({"country": country_code.upper()})  # type: ignore[index]
+        docs = await db.trending_claims.find(
+            query,
+            {"claim": 1, "verdict": 1, "score": 1, "check_count": 1, "_id": 1, "topic": 1}
+        ).sort("check_count", -1).limit(40).to_list(40)
+    except Exception:
+        docs = []
+
+    base = os.getenv("PUBLIC_BASE_URL", "https://truthscore.app")
+    canonical_path = f"/topic/{country_code.lower()}/{topic_slug}" if country_code else f"/topic/{topic_slug}"
+
+    items_html = ""
+    for d in docs:
+        v = (d.get("verdict") or "UNCERTAIN").upper()
+        color = {"TRUE": "#22c55e", "FALSE": "#ef4444"}.get(v, "#eab308")
+        score = d.get("score", 50)
+        claim_text = _esc(d.get("claim", "")[:220])
+        slug = str(d.get("_id", ""))
+        chk = d.get("check_count", 1)
+        full_link = f"<a href='{base}/claim/{slug}' style='display:inline-block;margin-top:10px;font-size:12px;color:#a78bfa'>{tr['full']}</a>" if slug else ""
+        items_html += f"""<div style="background:#1a1a2e;border:1px solid rgba(255,255,255,.07);border-radius:12px;padding:20px;margin-bottom:12px">
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">
+    <span style="background:{color}22;color:{color};font-size:11px;font-weight:700;padding:3px 8px;border-radius:4px">{v}</span>
+    <span style="font-size:12px;color:#6b7280">{score}/100</span>
+    <span style="font-size:11px;color:#4b5563;margin-left:auto">✅ {chk} {tr['checks']}</span>
+  </div>
+  <div style="font-size:15px;color:#e5e7eb;line-height:1.5">{claim_text}</div>
+  {full_link}
+</div>"""
+
+    count = len(docs)
+    title = tr["title_tpl"].format(topic=label.title())
+    desc = tr["desc_tpl"].format(n=count, topic=label.title())
+    no_claims_html = f'<p style="color:#6b7280">{tr["no_claims"]} <a href="/" style="color:#a78bfa">{tr["be_first"]}</a></p>'
+
+    # Schema.org structured data
+    schema = {
+        "@context": "https://schema.org", "@type": "CollectionPage",
+        "name": title, "url": f"{base}{canonical_path}",
+        "description": desc, "inLanguage": lang,
+    }
+    import json as _json
+    schema_str = _json.dumps(schema)
+
+    return HTMLResponse(f"""<!DOCTYPE html>
+<html lang="{lang}" {dir_attr}>
+<head>
+<meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>{_esc(title)}</title>
+<meta name="description" content="{_esc(desc)}"/>
+<meta property="og:title" content="{_esc(title)}"/>
+<meta property="og:description" content="{_esc(desc)}"/>
+<meta property="og:url" content="{base}{canonical_path}"/>
+<meta property="og:type" content="website"/>
+<link rel="canonical" href="{base}{canonical_path}"/>
+<script type="application/ld+json">{schema_str}</script>
+<style>*{{box-sizing:border-box;margin:0;padding:0}}body{{background:#0d0d1a;color:#e5e7eb;font-family:'Inter',-apple-system,sans-serif;padding:32px 20px;max-width:780px;margin:0 auto}}</style>
+</head>
+<body>
+<div style="margin-bottom:24px"><a href="/" style="color:#a78bfa;font-size:14px;text-decoration:none">← TruthScore</a></div>
+<h1 style="font-size:28px;font-weight:800;color:#fff;margin-bottom:8px">📋 <em style="color:#a78bfa">{_esc(label.title())}</em></h1>
+<p style="color:#9ca3af;font-size:15px;margin-bottom:28px">{count} {tr['claims']} — {tr['ai_src']}</p>
+{items_html if items_html else no_claims_html}
+<div style="margin-top:32px;padding:20px;background:#1a1a2e;border-radius:12px;text-align:center">
+  <a href="/" style="background:#6d28d9;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:600">{tr['open']}</a>
+</div>
+</body></html>""")
+
+
+@app.get("/topic/{country_code}/{topic_slug}", response_class=HTMLResponse, include_in_schema=False)
+async def topic_page_country(country_code: str, topic_slug: str, request: Request):
+    """Country-specific topic page: /topic/ro/politica, /topic/de/gesundheit, /topic/us/vaccines ..."""
+    # Two-letter country code validation
+    if len(country_code) != 2 or not country_code.isalpha():
+        raise HTTPException(404, "Invalid country code")
+    return await _render_topic_page(request, topic_slug, country_code=country_code)
+
+
+@app.get("/topic/{topic_slug}", response_class=HTMLResponse, include_in_schema=False)
+async def topic_page(topic_slug: str, request: Request):
+    """Universal topic page: /topic/politics, /topic/health, /topic/vaccins ..."""
+    return await _render_topic_page(request, topic_slug)
+
+
+# ── Pricing page (SEO-indexed) ────────────────────────────────────────────────
+
+@app.get("/pricing", response_class=HTMLResponse, include_in_schema=False)
+async def pricing_page():
+    base = os.getenv("PUBLIC_BASE_URL", "https://truthscore.app")
+    plan_rows = ""
+    for key in ["free", "pro", "monitor", "business", "enterprise"]:
+        p = PLANS.get(key, {})
+        price = p.get("price", 0)
+        lim = p.get("daily_limit", 0)
+        monitors = p.get("features", {}).get("monitors", 0)
+        price_str = f"€{price:.2f}/lună" if price > 0 else "Gratuit"
+        monitors_str = "Nelimitat" if monitors == -1 else (str(monitors) if monitors > 0 else "—")
+        plan_rows += f"<tr><td><b>{p.get('name', key)}</b></td><td>{price_str}</td><td>{'Nelimitat' if lim>=9999 else lim}/zi</td><td>{monitors_str}</td></tr>"
+
+    return HTMLResponse(f"""<!DOCTYPE html>
+<html lang="ro">
+<head>
+<meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Prețuri TruthScore — Planuri și Abonamente Fact-Checker AI</title>
+<meta name="description" content="TruthScore oferă un plan gratuit + planuri Pro, Monitor și Business pentru jurnaliști, companii și cercetători. Vezi comparația completă a planurilor."/>
+<meta property="og:title" content="Prețuri TruthScore"/>
+<meta property="og:url" content="{base}/pricing"/>
+<link rel="canonical" href="{base}/pricing"/>
+<script type="application/ld+json">{{"@context":"https://schema.org","@type":"WebPage","name":"Prețuri TruthScore","url":"{base}/pricing"}}</script>
+<style>*{{box-sizing:border-box;margin:0;padding:0}}body{{background:#0d0d1a;color:#e5e7eb;font-family:'Inter',-apple-system,sans-serif;padding:40px 20px;max-width:900px;margin:0 auto}}
+h1{{font-size:36px;font-weight:900;text-align:center;margin-bottom:12px}}
+.sub{{text-align:center;color:#9ca3af;margin-bottom:40px;font-size:16px}}
+table{{width:100%;border-collapse:collapse;background:#1a1a2e;border-radius:12px;overflow:hidden}}
+th{{background:#6d28d9;color:#fff;padding:14px 16px;text-align:left;font-size:13px}}
+td{{padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.06);font-size:14px}}
+tr:last-child td{{border:none}}
+.cta{{display:block;text-align:center;margin-top:40px;background:#6d28d9;color:#fff;padding:16px 40px;border-radius:12px;text-decoration:none;font-size:16px;font-weight:700;max-width:300px;margin:40px auto 0}}
+</style>
+</head>
+<body>
+<div style="margin-bottom:24px;text-align:center"><a href="/" style="color:#a78bfa;font-size:14px;text-decoration:none">← TruthScore</a></div>
+<h1>Prețuri transparente 💎</h1>
+<p class="sub">Fără surprize. Poți anula oricând.</p>
+<table>
+  <thead><tr><th>Plan</th><th>Preț</th><th>Verificări</th><th>Monitoare</th></tr></thead>
+  <tbody>{plan_rows}</tbody>
+</table>
+<ul style="margin-top:32px;padding-left:20px;color:#9ca3af;font-size:14px;line-height:2">
+  <li>✅ Toate planurile includ: extensie browser, verificare imagini, istoric personal</li>
+  <li>✅ Planul Monitor include alerte prin email când apar claims despre subiectele tale</li>
+  <li>✅ Planul Business include API access și până la 20 monitoare</li>
+  <li>✅ Trial 7 zile gratuit cu 10 verificări/zi</li>
+  <li>🔒 Datele tale sunt private. Nu stocăm claim-urile tale fără acordul tău.</li>
+</ul>
+<a class="cta" href="/?pricing=1">Alege planul tău</a>
+</body></html>""")
 
 
 @app.get("/today")
