@@ -34,6 +34,11 @@ _V_COLORS = {
 PAGE_W = A4[0] - 40*mm   # usable width
 
 
+def _x(s):
+    """Escape text for ReportLab's mini-XML paragraph parser."""
+    return (str(s or "")).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 # ── Styles ────────────────────────────────────────────────────────────
 def _styles():
     return {
@@ -129,7 +134,7 @@ def generate_pdf_report(d: dict) -> bytes:
     # ── Claim card ────────────────────────────────────────────────────
     story.append(Paragraph("CLAIM UNDER REVIEW", S["section"]))
     story.append(_card(
-        [[Paragraph(f"“{claim}”", S["claim"])]],
+        [[Paragraph(f"“{_x(claim)}”", S["claim"])]],
         col_widths=[PAGE_W], padding=14,
     ))
     story.append(Spacer(1, 14))
@@ -161,7 +166,7 @@ def generate_pdf_report(d: dict) -> bytes:
     filled   = max(4, int(bar_w * score / 100))
     meta_rows = [
         [Paragraph("EXPLANATION", S["section"])],
-        [Paragraph(expl[:600] + ("…" if len(expl) > 600 else ""), S["body"])],
+        [Paragraph(_x(expl[:600]) + ("…" if len(expl) > 600 else ""), S["body"])],
         [Spacer(1, 6)],
         [Table(
             [[
@@ -210,108 +215,137 @@ def generate_pdf_report(d: dict) -> bytes:
     story.append(verdict_row)
     story.append(Spacer(1, 14))
 
-    # ── Sub-claims ────────────────────────────────────────────────────
+    # ── Sub-claims ── one full-width card per claim (mirrors the UI) ─────
     if sub_res:
-        story.append(KeepTogether([
-            Paragraph("SUB-CLAIM BREAKDOWN", S["section"]),
-            HRFlowable(width=PAGE_W, thickness=0.5, color=_BORDER, spaceAfter=6),
-        ]))
+        story.append(Paragraph(f"PER-CLAIM BREAKDOWN  ({len(sub_res)})", S["section"]))
+        story.append(HRFlowable(width=PAGE_W, thickness=0.5, color=_BORDER, spaceAfter=8))
+
+        innerw = PAGE_W - 34   # content width inside card (padding 14+14 + 3 accent + slack)
+
+        def _src_line(s, positive):
+            col  = "#15803d" if positive else "#b91c1c"
+            mark = "✓" if positive else "✗"
+            pub   = _x((s.get("publisher") or s.get("source") or "Source"))[:48]
+            title = _x((s.get("title") or ""))[:90]
+            url   = s.get("url") or ""
+            snip  = _x((s.get("snippet") or ""))[:120]
+            pubtxt = (f'<link href="{url}" color="{col}"><b>{pub}</b></link>'
+                      if url else f'<b>{pub}</b>')
+            txt = f'<font color="{col}">{mark}</font> {pubtxt}'
+            if title:
+                txt += f' — {title}'
+            if snip:
+                txt += f'<br/><font color="#9ca3af">{snip}</font>'
+            return Paragraph(txt, ParagraphStyle(
+                "sl", fontSize=8.5, fontName="Helvetica",
+                textColor=_INK, leading=12, spaceAfter=4, leftIndent=4))
+
         for i, sr in enumerate(sub_res, 1):
-            sv = (sr.get("verdict") or "UNCERTAIN").upper()
-            sc = int(sr.get("score") or 50)
+            sv   = (sr.get("verdict") or "UNCERTAIN").upper()
+            sc   = int(sr.get("score") or 50)
+            conf = (sr.get("confidence") or "").upper()
             sv_tc, sv_bg = _V_COLORS.get(sv, _V_COLORS["UNCERTAIN"])
-            sr_sup = sr.get("supporting_sources") or sr.get("supporting") or []
-            sr_con = sr.get("contradicting_sources") or sr.get("contradicting") or []
-            sr_expl = (sr.get("explanation") or "")[:300]
+            hexc = sv_tc.hexval()[2:]
+            sr_sup = sr.get("supporting") or sr.get("supporting_sources") or []
+            sr_con = sr.get("contradicting") or sr.get("contradicting_sources") or []
+            sr_neu = sr.get("neutral_sources") or []
+            sr_expl = _x((sr.get("explanation") or "").strip())
 
-            # Score bar for this sub-claim
-            sb_w    = PAGE_W * 0.52 - 20
-            sb_fill = max(3, int(sb_w * sc / 100))
+            rows = []
 
-            left_col = Table(
-                [
-                    [Paragraph(f'<font color="#{sv_tc.hexval()[2:]}">{sv}</font>',
-                               ParagraphStyle("svc", fontSize=11, fontName="Helvetica-Bold",
-                                              alignment=TA_CENTER))],
-                    [Paragraph(f"{sc} / 100", ParagraphStyle("ssc", fontSize=9,
-                               fontName="Helvetica-Bold", textColor=_INK2, alignment=TA_CENTER))],
-                    [Table([[
-                        Table([[""]], colWidths=[sb_fill],
-                              style=TableStyle([("BACKGROUND",(0,0),(-1,-1),sv_tc),
-                                                ("TOPPADDING",(0,0),(-1,-1),3),
-                                                ("BOTTOMPADDING",(0,0),(-1,-1),3)])),
-                        Table([[""]], colWidths=[max(1, sb_w - sb_fill)],
-                              style=TableStyle([("BACKGROUND",(0,0),(-1,-1),_BORDER),
-                                                ("TOPPADDING",(0,0),(-1,-1),3),
-                                                ("BOTTOMPADDING",(0,0),(-1,-1),3)])),
-                    ]], colWidths=[sb_fill, max(1, sb_w - sb_fill)],
-                    style=TableStyle([("TOPPADDING",(0,0),(-1,-1),0),("BOTTOMPADDING",(0,0),(-1,-1),0),
-                                       ("LEFTPADDING",(0,0),(-1,-1),0),("RIGHTPADDING",(0,0),(-1,-1),0)]))],
-                ],
-                colWidths=[PAGE_W * 0.52],
-                style=TableStyle([
-                    ("BACKGROUND",(0,0),(-1,-1),sv_bg),
-                    ("BOX",(0,0),(-1,-1),0.5,_BORDER),
-                    ("ROUNDEDCORNERS",[5]),
-                    ("ALIGN",(0,0),(-1,-1),"CENTER"),
-                    ("VALIGN",(0,0),(-1,-1),"MIDDLE"),
-                    ("TOPPADDING",(0,0),(-1,-1),8),
-                    ("BOTTOMPADDING",(0,0),(-1,-1),8),
-                    ("LEFTPADDING",(0,0),(-1,-1),8),
-                    ("RIGHTPADDING",(0,0),(-1,-1),8),
-                ]),
-            )
+            # Header: CLAIM #i  |  VERDICT · score · confidence
+            meta_txt = f"{sv} · {sc}/100" + (f" · {conf}" if conf else "")
+            rows.append([Table(
+                [[
+                    Paragraph(f'<font color="#{hexc}"><b>CLAIM #{i}</b></font>',
+                              ParagraphStyle("chl", fontSize=9, fontName="Helvetica-Bold",
+                                             textColor=sv_tc)),
+                    Paragraph(f'<font color="#{hexc}"><b>{meta_txt}</b></font>',
+                              ParagraphStyle("chr", fontSize=9, fontName="Helvetica-Bold",
+                                             textColor=sv_tc, alignment=TA_RIGHT)),
+                ]],
+                colWidths=[innerw * 0.28, innerw * 0.72],
+                style=TableStyle([("TOPPADDING",(0,0),(-1,-1),0),("BOTTOMPADDING",(0,0),(-1,-1),0),
+                                  ("LEFTPADDING",(0,0),(-1,-1),0),("RIGHTPADDING",(0,0),(-1,-1),0),
+                                  ("VALIGN",(0,0),(-1,-1),"MIDDLE")]),
+            )])
 
-            # Sources compact list
-            src_lines = []
-            for s in (sr_sup[:3]):
-                pub = (s.get("publisher") or "")[:35]
-                url = s.get("url","")
-                lnk = f'<link href="{url}" color="#15803d">{pub}</link>' if url else pub
-                src_lines.append(Paragraph(f"✓ {lnk}", ParagraphStyle("srcs", fontSize=8,
-                                  fontName="Helvetica", textColor=colors.HexColor("#15803d"), leading=11)))
-            for s in (sr_con[:2]):
-                pub = (s.get("publisher") or "")[:35]
-                url = s.get("url","")
-                lnk = f'<link href="{url}" color="#b91c1c">{pub}</link>' if url else pub
-                src_lines.append(Paragraph(f"✗ {lnk}", ParagraphStyle("srcc", fontSize=8,
-                                  fontName="Helvetica", textColor=colors.HexColor("#b91c1c"), leading=11)))
-            if not src_lines:
-                src_lines.append(Paragraph("No sources", S["small"]))
+            # Claim text
+            rows.append([Paragraph(f"<b>{_x(sr.get('claim',''))}</b>",
+                         ParagraphStyle("scl", fontSize=10.5, fontName="Helvetica-Bold",
+                                        textColor=_INK, leading=14, spaceBefore=5))])
 
-            right_col_content = [
-                [Paragraph(f"<b>{i}. {sr.get('claim','')[:110]}</b>", S["body"])],
-            ]
+            # Explanation
             if sr_expl:
-                right_col_content.append([Paragraph(sr_expl, S["small"])])
-            right_col_content.append([Spacer(1, 4)])
-            for sl in src_lines:
-                right_col_content.append([sl])
+                rows.append([Paragraph(sr_expl[:500],
+                             ParagraphStyle("sex", fontSize=9, fontName="Helvetica",
+                                            textColor=_INK2, leading=13, spaceBefore=3))])
 
-            right_col = Table(right_col_content, colWidths=[PAGE_W * 0.44])
-            right_col.setStyle(TableStyle([
-                ("BACKGROUND",(0,0),(-1,-1),_BGLIGHT),
-                ("BOX",(0,0),(-1,-1),0.5,_BORDER),
-                ("ROUNDEDCORNERS",[5]),
-                ("TOPPADDING",(0,0),(-1,-1),8),
-                ("BOTTOMPADDING",(0,0),(-1,-1),6),
-                ("LEFTPADDING",(0,0),(-1,-1),10),
-                ("RIGHTPADDING",(0,0),(-1,-1),8),
-                ("VALIGN",(0,0),(-1,-1),"TOP"),
+            # Score bar (full width)
+            bw   = innerw
+            bfil = max(3, int(bw * sc / 100))
+            rows.append([Spacer(1, 4)])
+            rows.append([Table(
+                [[
+                    Table([[""]], colWidths=[bfil],
+                          style=TableStyle([("BACKGROUND",(0,0),(-1,-1),sv_tc),
+                                            ("TOPPADDING",(0,0),(-1,-1),3),("BOTTOMPADDING",(0,0),(-1,-1),3)])),
+                    Table([[""]], colWidths=[max(1, bw - bfil)],
+                          style=TableStyle([("BACKGROUND",(0,0),(-1,-1),_BORDER),
+                                            ("TOPPADDING",(0,0),(-1,-1),3),("BOTTOMPADDING",(0,0),(-1,-1),3)])),
+                ]], colWidths=[bfil, max(1, bw - bfil)],
+                style=TableStyle([("TOPPADDING",(0,0),(-1,-1),0),("BOTTOMPADDING",(0,0),(-1,-1),0),
+                                  ("LEFTPADDING",(0,0),(-1,-1),0),("RIGHTPADDING",(0,0),(-1,-1),0)]),
+            )])
+
+            # Supporting sources
+            if sr_sup:
+                rows.append([Paragraph(
+                    f'<font color="#15803d"><b>✓ SUPPORTING SOURCES ({len(sr_sup)})</b></font>',
+                    ParagraphStyle("ssh", fontSize=8, fontName="Helvetica-Bold",
+                                   textColor=colors.HexColor("#15803d"), spaceBefore=9, spaceAfter=3))])
+                for s in sr_sup[:4]:
+                    rows.append([_src_line(s, True)])
+
+            # Contradicting sources
+            if sr_con:
+                rows.append([Paragraph(
+                    f'<font color="#b91c1c"><b>✗ CONTRADICTING SOURCES ({len(sr_con)})</b></font>',
+                    ParagraphStyle("csh", fontSize=8, fontName="Helvetica-Bold",
+                                   textColor=colors.HexColor("#b91c1c"), spaceBefore=9, spaceAfter=3))])
+                for s in sr_con[:4]:
+                    rows.append([_src_line(s, False)])
+
+            # Neutral fallback when no directional evidence
+            if not sr_sup and not sr_con:
+                if sr_neu:
+                    rows.append([Paragraph(
+                        f'<font color="#6b7280"><b>— RELEVANT SOURCES ({len(sr_neu)})</b></font>',
+                        ParagraphStyle("nsh", fontSize=8, fontName="Helvetica-Bold",
+                                       textColor=_INK2, spaceBefore=9, spaceAfter=3))])
+                    for s in sr_neu[:3]:
+                        rows.append([_src_line(s, True)])
+                else:
+                    rows.append([Paragraph("No direct sources found for this claim.",
+                                 ParagraphStyle("nosrc", fontSize=8, fontName="Helvetica-Oblique",
+                                                textColor=_INK2, spaceBefore=8))])
+
+            card = Table(rows, colWidths=[PAGE_W])
+            card.setStyle(TableStyle([
+                ("BACKGROUND",   (0,0),(-1,-1), _BGLIGHT),
+                ("BOX",          (0,0),(-1,-1), 0.5, _BORDER),
+                ("LINEBEFORE",   (0,0),(0,-1),  3, sv_tc),   # colored left accent
+                ("ROUNDEDCORNERS",[6]),
+                ("TOPPADDING",   (0,0),(-1,-1), 12),
+                ("BOTTOMPADDING",(0,0),(-1,-1), 12),
+                ("LEFTPADDING",  (0,0),(-1,-1), 14),
+                ("RIGHTPADDING", (0,0),(-1,-1), 14),
+                ("VALIGN",       (0,0),(-1,-1), "TOP"),
             ]))
+            story.append(card)
+            story.append(Spacer(1, 10))
+        story.append(Spacer(1, 4))
 
-            row_tbl = Table(
-                [[left_col, Spacer(PAGE_W*0.02,1), right_col]],
-                colWidths=[PAGE_W*0.52, PAGE_W*0.02, PAGE_W*0.46],
-                style=TableStyle([
-                    ("TOPPADDING",(0,0),(-1,-1),0),("BOTTOMPADDING",(0,0),(-1,-1),0),
-                    ("LEFTPADDING",(0,0),(-1,-1),0),("RIGHTPADDING",(0,0),(-1,-1),0),
-                    ("VALIGN",(0,0),(-1,-1),"TOP"),
-                ]),
-            )
-            story.append(row_tbl)
-            story.append(Spacer(1, 8))
-        story.append(Spacer(1, 6))
 
     # ── Sources ───────────────────────────────────────────────────────
     def _sources_section(srcs, label, badge_color, badge_bg):
@@ -319,10 +353,10 @@ def generate_pdf_report(d: dict) -> bytes:
             return
         rows = []
         for s in srcs[:8]:
-            pub   = (s.get("publisher") or s.get("source") or "Source")[:40]
-            title = (s.get("title") or "")[:90]
+            pub   = _x((s.get("publisher") or s.get("source") or "Source"))[:40]
+            title = _x((s.get("title") or ""))[:90]
             url   = s.get("url") or ""
-            snip  = (s.get("snippet") or "")[:100]
+            snip  = _x((s.get("snippet") or ""))[:100]
             pub_link = f'<link href="{url}">{pub}</link>' if url else pub
             rows.append([
                 Table(
@@ -357,7 +391,9 @@ def generate_pdf_report(d: dict) -> bytes:
         story.append(tbl)
         story.append(Spacer(1, 8))
 
-    if sup or con or neu:
+    # Aggregate evidence — only for single claims (per-claim cards already
+    # show their own sources, so this would be redundant when sub_res exists).
+    if (sup or con or neu) and not sub_res:
         story.append(Paragraph("EVIDENCE SOURCES", S["section"]))
         _sources_section(sup, "SUPPORTS",     colors.HexColor("#15803d"), colors.HexColor("#dcfce7"))
         _sources_section(con, "CONTRADICTS",  colors.HexColor("#b91c1c"), colors.HexColor("#fee2e2"))

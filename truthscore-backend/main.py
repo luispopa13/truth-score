@@ -1851,7 +1851,11 @@ async def admin_dashboard_data(user=Depends(require_admin)):
 
 
 @app.get("/admin", response_class=HTMLResponse, include_in_schema=False)
-async def admin_dashboard(user=Depends(require_admin)):
+async def admin_dashboard():
+    # Serve the admin shell freely — it contains no data. The page fetches
+    # /admin/data (require_admin) with the JWT from localStorage, so real
+    # protection stays on the data endpoint. Gating the shell on the header
+    # broke direct URL navigation (browser sends no Authorization header).
     return HTMLResponse(_ADMIN_HTML)
 
 
