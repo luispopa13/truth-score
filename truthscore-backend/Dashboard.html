@@ -1808,8 +1808,22 @@ async function revokeApiKey(id,btn){
   }catch(e){toast('Error: '+e.message,'err');}
 }
 function copyNewKey(){
-  const v=document.getElementById('newKeyValue').textContent;
-  navigator.clipboard&&navigator.clipboard.writeText(v).then(()=>toast('Copied!','ok')).catch(()=>prompt('Copy key:',v));
+  const v=document.getElementById('newKeyValue').textContent.trim();
+  if(!v)return;
+  _copyText(v,'API key copied!');
+}
+function _copyText(text,msg){
+  if(navigator.clipboard&&window.isSecureContext){
+    navigator.clipboard.writeText(text).then(()=>toast(msg||'Copied!','ok')).catch(()=>_copyFallback(text,msg));
+  } else { _copyFallback(text,msg); }
+}
+function _copyFallback(text,msg){
+  const ta=document.createElement('textarea');
+  ta.value=text; ta.style.cssText='position:fixed;top:-9999px;left:-9999px;opacity:0';
+  document.body.appendChild(ta); ta.focus(); ta.select();
+  try{ document.execCommand('copy'); toast(msg||'Copied!','ok'); }
+  catch(e){ prompt('Copy this key:',text); }
+  document.body.removeChild(ta);
 }
 window._lastBatchResults=[];
 async function runBatch(){
