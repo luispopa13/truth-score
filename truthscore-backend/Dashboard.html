@@ -1780,9 +1780,9 @@ async function loadApiKeys(){
       <div style="padding:10px 12px;border-radius:8px;border:1px solid var(--border2);display:flex;justify-content:space-between;align-items:center;gap:10px">
         <div style="flex:1;min-width:0">
           <div style="font-size:13px;color:var(--text);font-weight:600">${esc(k.name||'Key')}</div>
-          <div style="font-size:11px;color:var(--text2);font-family:monospace;margin-top:3px">${esc(k.key_prefix||'')}… · ${k.use_count||0} calls</div>
+          <div style="font-size:11px;color:var(--text2);font-family:monospace;margin-top:3px">${esc((k.key_id||'').slice(0,8))}… · ${k.plan||'free'} · ${k.last_used?('used '+new Date(k.last_used*1000).toLocaleDateString()):'never used'}</div>
         </div>
-        <button class="fbbtn" style="font-size:11px;color:var(--red);flex-shrink:0" onclick="revokeApiKey('${k.id}',this)">Revoke</button>
+        <button class="fbbtn" style="font-size:11px;color:var(--red);flex-shrink:0" onclick="revokeApiKey('${k.key_id}',this)">Revoke</button>
       </div>`).join('');
   }catch(e){list.innerHTML=`<div style="color:var(--red);font-size:13px">${esc(e.message)}</div>`;}
 }
