@@ -2492,6 +2492,28 @@ async def pdf(req: VerifyRequest, user=Depends(require_user)):
     return await verify_and_pdf(req, user)
 
 
+@app.post("/generate-pdf", include_in_schema=False)
+async def generate_pdf_from_result(request: Request, user=Depends(require_user)):
+    """Generate PDF from an already-computed result dict (instant — no re-verification)."""
+    from fastapi.responses import Response as FResponse
+    if not PDF_AVAILABLE:
+        raise HTTPException(503, "PDF not configured")
+    plan_name = user.get("plan", "free")
+    plan = PLANS.get(plan_name, PLANS["free"])
+    if not plan["pdf"]:
+        raise HTTPException(403, "PDF reports require Pro plan or higher")
+    body = await request.json()
+    from pdf_report import generate_pdf_report
+    pdf_bytes = generate_pdf_report(body)
+    verdict = (body.get("verdict") or "report").lower()
+    score   = body.get("score", 0)
+    return FResponse(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="truthscore_{verdict}_{score}.pdf"'},
+    )
+
+
 # ── Telegram Bot Webhook ───────────────────────────────────────
 
 @app.post("/telegram/webhook")

@@ -1,203 +1,320 @@
 """
-TruthScore — PDF Report Generator
-Generates a professional PDF fact-check report using ReportLab.
+TruthScore — PDF Report Generator  (professional light-theme layout)
 """
 from io import BytesIO
+from datetime import datetime, timezone
+
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
+    HRFlowable, KeepTogether,
 )
-from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 
-_VERDICT_COLORS = {
-    "TRUE":      colors.HexColor("#22c55e"),
-    "FALSE":     colors.HexColor("#ef4444"),
-    "UNCERTAIN": colors.HexColor("#f59e0b"),
-    "MIXED":     colors.HexColor("#a855f7"),
-}
-_BG       = colors.HexColor("#0d0d1a")
-_CARD     = colors.HexColor("#1a1a2e")
-_ACCENT   = colors.HexColor("#7c3aed")
-_TEXT     = colors.HexColor("#e5e7eb")
-_TEXT2    = colors.HexColor("#9ca3af")
+# ── Palette ───────────────────────────────────────────────────────────
+_INK      = colors.HexColor("#111827")   # near-black text
+_INK2     = colors.HexColor("#6b7280")   # secondary text
+_BORDER   = colors.HexColor("#e5e7eb")   # card borders
+_BGLIGHT  = colors.HexColor("#f9fafb")   # card fill
+_PURPLE   = colors.HexColor("#7c3aed")   # brand accent
+_PURPLE_L = colors.HexColor("#ede9fe")   # light purple tint
 _WHITE    = colors.white
+_BLACK    = colors.black
+
+_V_COLORS = {
+    "TRUE":      (colors.HexColor("#15803d"), colors.HexColor("#dcfce7")),  # text, bg
+    "FALSE":     (colors.HexColor("#b91c1c"), colors.HexColor("#fee2e2")),
+    "UNCERTAIN": (colors.HexColor("#b45309"), colors.HexColor("#fef9c3")),
+    "MIXED":     (colors.HexColor("#6d28d9"), colors.HexColor("#ede9fe")),
+}
+
+PAGE_W = A4[0] - 40*mm   # usable width
+
+
+# ── Styles ────────────────────────────────────────────────────────────
+def _styles():
+    return {
+        "title":   ParagraphStyle("title",   fontSize=9,  fontName="Helvetica",
+                                   textColor=_WHITE, alignment=TA_LEFT),
+        "brand":   ParagraphStyle("brand",   fontSize=14, fontName="Helvetica-Bold",
+                                   textColor=_WHITE, alignment=TA_LEFT),
+        "section": ParagraphStyle("section", fontSize=9,  fontName="Helvetica-Bold",
+                                   textColor=_INK2, spaceAfter=6,
+                                   wordWrap='CJK'),
+        "body":    ParagraphStyle("body",    fontSize=10, fontName="Helvetica",
+                                   textColor=_INK, leading=15, spaceAfter=4),
+        "small":   ParagraphStyle("small",   fontSize=8,  fontName="Helvetica",
+                                   textColor=_INK2, leading=12),
+        "claim":   ParagraphStyle("claim",   fontSize=12, fontName="Helvetica-Bold",
+                                   textColor=_INK, leading=18, spaceAfter=0),
+        "vword":   ParagraphStyle("vword",   fontSize=26, fontName="Helvetica-Bold",
+                                   alignment=TA_CENTER),
+        "vscore":  ParagraphStyle("vscore",  fontSize=13, fontName="Helvetica-Bold",
+                                   textColor=_INK2, alignment=TA_CENTER),
+        "pub":     ParagraphStyle("pub",     fontSize=8,  fontName="Helvetica-Bold",
+                                   textColor=_PURPLE),
+        "srcttl":  ParagraphStyle("srcttl",  fontSize=9,  fontName="Helvetica",
+                                   textColor=_INK, leading=12),
+        "footer":  ParagraphStyle("footer",  fontSize=7,  fontName="Helvetica",
+                                   textColor=_INK2, alignment=TA_CENTER),
+    }
+
+
+def _card(content_rows, col_widths, padding=10, bg=_BGLIGHT, border=_BORDER):
+    tbl = Table(content_rows, colWidths=col_widths)
+    tbl.setStyle(TableStyle([
+        ("BACKGROUND",    (0, 0), (-1, -1), bg),
+        ("BOX",           (0, 0), (-1, -1), 0.5, border),
+        ("ROUNDEDCORNERS", [6]),
+        ("TOPPADDING",    (0, 0), (-1, -1), padding),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), padding),
+        ("LEFTPADDING",   (0, 0), (-1, -1), padding),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), padding),
+        ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+    ]))
+    return tbl
 
 
 def generate_pdf_report(d: dict) -> bytes:
-    buf = BytesIO()
+    buf    = BytesIO()
+    verdict = (d.get("verdict") or "UNCERTAIN").upper()
+    score   = int(d.get("score") or 50)
+    claim   = d.get("claim") or ""
+    expl    = d.get("explanation") or ""
+    conf    = (d.get("confidence") or "").upper()
+    topic   = (d.get("topic") or "").title()
+    sub_res = d.get("sub_claim_results") or []
+    sup     = d.get("supporting") or []
+    con     = d.get("contradicting") or []
+    neu     = d.get("neutral_sources") or []
+    latency = ((d.get("latency") or {}).get("total_ms") or 0)
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+    v_text_c, v_bg_c = _V_COLORS.get(verdict, _V_COLORS["UNCERTAIN"])
+    S = _styles()
+
     doc = SimpleDocTemplate(
-        buf,
-        pagesize=A4,
+        buf, pagesize=A4,
         leftMargin=20*mm, rightMargin=20*mm,
-        topMargin=18*mm, bottomMargin=18*mm,
+        topMargin=0, bottomMargin=16*mm,
         title="TruthScore Fact-Check Report",
+        author="TruthScore",
     )
-
-    styles = getSampleStyleSheet()
-    H1 = ParagraphStyle("h1", fontSize=20, textColor=_WHITE, fontName="Helvetica-Bold",
-                         spaceAfter=6, alignment=TA_CENTER)
-    H2 = ParagraphStyle("h2", fontSize=13, textColor=_ACCENT, fontName="Helvetica-Bold",
-                         spaceBefore=10, spaceAfter=4)
-    BODY = ParagraphStyle("body", fontSize=10, textColor=_TEXT, fontName="Helvetica",
-                           leading=15, spaceAfter=4)
-    SMALL = ParagraphStyle("small", fontSize=8, textColor=_TEXT2, fontName="Helvetica",
-                            leading=12)
-    CLAIM_STYLE = ParagraphStyle("claim", fontSize=11, textColor=_WHITE,
-                                  fontName="Helvetica-Oblique", leading=16,
-                                  leftIndent=8, rightIndent=8, spaceAfter=6)
-
-    verdict  = (d.get("verdict") or "UNCERTAIN").upper()
-    score    = d.get("score", 50)
-    claim    = d.get("claim", "")
-    explanation = d.get("explanation", "")
-    confidence  = d.get("confidence", "")
-    topic       = d.get("topic", "")
-    v_color     = _VERDICT_COLORS.get(verdict, _VERDICT_COLORS["UNCERTAIN"])
 
     story = []
 
-    # Header
-    story.append(Paragraph("🔍 TruthScore Fact-Check Report", H1))
-    story.append(HRFlowable(width="100%", thickness=1, color=_ACCENT, spaceAfter=10))
-
-    # Claim box
-    story.append(Paragraph("Claim", H2))
-    claim_table = Table(
-        [[Paragraph(f'"{claim}"', CLAIM_STYLE)]],
-        colWidths=[170*mm],
-    )
-    claim_table.setStyle(TableStyle([
-        ("BACKGROUND", (0,0), (-1,-1), _CARD),
-        ("ROUNDEDCORNERS", [6]),
-        ("TOPPADDING", (0,0), (-1,-1), 10),
-        ("BOTTOMPADDING", (0,0), (-1,-1), 10),
-        ("LEFTPADDING", (0,0), (-1,-1), 12),
-        ("RIGHTPADDING", (0,0), (-1,-1), 12),
-    ]))
-    story.append(claim_table)
-    story.append(Spacer(1, 8))
-
-    # Verdict + score row
-    score_bar_w = 130  # pts
-    filled_w    = max(4, int(score_bar_w * score / 100))
-
-    verdict_tbl = Table(
+    # ── Header bar ────────────────────────────────────────────────────
+    hdr = Table(
         [[
-            Paragraph(f"<b>{verdict}</b>", ParagraphStyle(
-                "verd", fontSize=22, textColor=v_color,
-                fontName="Helvetica-Bold", alignment=TA_CENTER)),
-            Table(
-                [
-                    [Paragraph(f"<b>{score}/100</b>", ParagraphStyle(
-                        "sc", fontSize=18, textColor=_WHITE,
-                        fontName="Helvetica-Bold", alignment=TA_CENTER))],
-                    [Table([[""]], colWidths=[filled_w],
-                           style=TableStyle([("BACKGROUND",(0,0),(-1,-1),v_color),
-                                             ("TOPPADDING",(0,0),(-1,-1),3),
-                                             ("BOTTOMPADDING",(0,0),(-1,-1),3)]))],
-                    [Paragraph(f"Confidence: {confidence} · Topic: {topic}", SMALL)],
-                ],
-                colWidths=[score_bar_w],
-                style=TableStyle([("ALIGN",(0,0),(-1,-1),"CENTER"),
-                                   ("VALIGN",(0,0),(-1,-1),"MIDDLE")]),
-            ),
+            Paragraph("<b>TruthScore</b>", S["brand"]),
+            Paragraph(f"Fact-Check Report<br/>{now_str}", S["title"]),
         ]],
-        colWidths=[55*mm, 115*mm],
+        colWidths=[PAGE_W * 0.55, PAGE_W * 0.45],
     )
-    verdict_tbl.setStyle(TableStyle([
-        ("BACKGROUND",    (0,0), (-1,-1), _CARD),
-        ("ALIGN",         (0,0), (0,-1),  "CENTER"),
-        ("VALIGN",        (0,0), (-1,-1), "MIDDLE"),
-        ("TOPPADDING",    (0,0), (-1,-1), 14),
-        ("BOTTOMPADDING", (0,0), (-1,-1), 14),
-        ("LEFTPADDING",   (0,0), (-1,-1), 12),
-        ("RIGHTPADDING",  (0,0), (-1,-1), 12),
-        ("LINEAFTER",     (0,0), (0,-1),  1, colors.HexColor("#2d2d4e")),
+    hdr.setStyle(TableStyle([
+        ("BACKGROUND",    (0, 0), (-1, -1), _PURPLE),
+        ("TOPPADDING",    (0, 0), (-1, -1), 14),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 14),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 16),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 16),
+        ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+        ("ALIGN",         (1, 0), (1, 0),   "RIGHT"),
     ]))
-    story.append(verdict_tbl)
-    story.append(Spacer(1, 12))
+    story.append(hdr)
+    story.append(Spacer(1, 14))
 
-    # Explanation
-    story.append(Paragraph("Explanation", H2))
-    story.append(Paragraph(explanation, BODY))
-    story.append(Spacer(1, 8))
+    # ── Claim card ────────────────────────────────────────────────────
+    story.append(Paragraph("CLAIM UNDER REVIEW", S["section"]))
+    story.append(_card(
+        [[Paragraph(f"“{claim}”", S["claim"])]],
+        col_widths=[PAGE_W], padding=14,
+    ))
+    story.append(Spacer(1, 14))
 
-    # Sub-claims
-    sub_results = d.get("sub_claim_results") or []
-    if sub_results:
-        story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#2d2d4e"), spaceAfter=8))
-        story.append(Paragraph("Sub-claim Breakdown", H2))
-        for i, sr in enumerate(sub_results, 1):
+    # ── Verdict + score side by side ──────────────────────────────────
+    story.append(Paragraph("VERDICT", S["section"]))
+
+    v_emoji = {"TRUE": "✓", "FALSE": "✗", "UNCERTAIN": "?", "MIXED": "~"}.get(verdict, "?")
+    verdict_cell = Table(
+        [
+            [Paragraph(f'<font color="#{v_text_c.hexval()[2:]}">{v_emoji} {verdict}</font>', S["vword"])],
+            [Paragraph(f"{score} / 100", S["vscore"])],
+            [Paragraph(f"Confidence: {conf}", S["small"])],
+        ],
+        colWidths=[PAGE_W * 0.38],
+    )
+    verdict_cell.setStyle(TableStyle([
+        ("BACKGROUND",    (0, 0), (-1, -1), v_bg_c),
+        ("BOX",           (0, 0), (-1, -1), 0.5, _BORDER),
+        ("ROUNDEDCORNERS", [6]),
+        ("ALIGN",         (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING",    (0, 0), (-1, -1), 12),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
+    ]))
+
+    # Score bar
+    bar_w    = PAGE_W * 0.56 - 24
+    filled   = max(4, int(bar_w * score / 100))
+    meta_rows = [
+        [Paragraph("EXPLANATION", S["section"])],
+        [Paragraph(expl[:600] + ("…" if len(expl) > 600 else ""), S["body"])],
+        [Spacer(1, 6)],
+        [Table(
+            [[
+                Table([[""]], colWidths=[filled],
+                      style=TableStyle([("BACKGROUND", (0,0),(-1,-1), v_text_c),
+                                        ("TOPPADDING",(0,0),(-1,-1),4),
+                                        ("BOTTOMPADDING",(0,0),(-1,-1),4)])),
+                Table([[""]], colWidths=[max(1, bar_w - filled)],
+                      style=TableStyle([("BACKGROUND",(0,0),(-1,-1),_BORDER),
+                                        ("TOPPADDING",(0,0),(-1,-1),4),
+                                        ("BOTTOMPADDING",(0,0),(-1,-1),4)])),
+            ]],
+            colWidths=[filled, max(1, bar_w - filled)],
+            style=TableStyle([("TOPPADDING",(0,0),(-1,-1),0),
+                               ("BOTTOMPADDING",(0,0),(-1,-1),0),
+                               ("LEFTPADDING",(0,0),(-1,-1),0),
+                               ("RIGHTPADDING",(0,0),(-1,-1),0)]),
+        )],
+        [Paragraph(f"Topic: {topic or '—'}  ·  "
+                   f"{len(sup)} supporting  ·  {len(con)} contradicting  ·  "
+                   f"{len(neu)} neutral", S["small"])],
+    ]
+    meta_cell = Table(meta_rows, colWidths=[PAGE_W * 0.56])
+    meta_cell.setStyle(TableStyle([
+        ("BACKGROUND",    (0, 0), (-1, -1), _BGLIGHT),
+        ("BOX",           (0, 0), (-1, -1), 0.5, _BORDER),
+        ("ROUNDEDCORNERS", [6]),
+        ("TOPPADDING",    (0, 0), (-1, -1), 12),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 14),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 14),
+        ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+    ]))
+
+    verdict_row = Table(
+        [[verdict_cell, Spacer(PAGE_W * 0.03, 1), meta_cell]],
+        colWidths=[PAGE_W * 0.38, PAGE_W * 0.03, PAGE_W * 0.59],
+    )
+    verdict_row.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING",    (0,0),(-1,-1),0),
+        ("BOTTOMPADDING", (0,0),(-1,-1),0),
+        ("LEFTPADDING",   (0,0),(-1,-1),0),
+        ("RIGHTPADDING",  (0,0),(-1,-1),0),
+    ]))
+    story.append(verdict_row)
+    story.append(Spacer(1, 14))
+
+    # ── Sub-claims ────────────────────────────────────────────────────
+    if sub_res:
+        story.append(KeepTogether([
+            Paragraph("SUB-CLAIM BREAKDOWN", S["section"]),
+            HRFlowable(width=PAGE_W, thickness=0.5, color=_BORDER, spaceAfter=6),
+        ]))
+        rows = []
+        for i, sr in enumerate(sub_res, 1):
             sv = (sr.get("verdict") or "UNCERTAIN").upper()
-            sc = sr.get("score", 50)
-            sc_color = _VERDICT_COLORS.get(sv, _VERDICT_COLORS["UNCERTAIN"])
-            row = Table(
-                [[
-                    Paragraph(f"<font color='#{sc_color.hexval()[2:]}'>●</font> <b>{sv}</b> {sc}/100",
-                               ParagraphStyle("sv", fontSize=9, textColor=_WHITE,
-                                              fontName="Helvetica", leading=13)),
-                    Paragraph(sr.get("claim",""), SMALL),
-                ]],
-                colWidths=[35*mm, 135*mm],
+            sc = int(sr.get("score") or 50)
+            sv_tc, sv_bg = _V_COLORS.get(sv, _V_COLORS["UNCERTAIN"])
+            v_chip = Table(
+                [[Paragraph(f'<font color="#{sv_tc.hexval()[2:]}">{sv}</font>',
+                             ParagraphStyle("vc", fontSize=8, fontName="Helvetica-Bold",
+                                            alignment=TA_CENTER))]],
+                colWidths=[25*mm],
             )
-            row.setStyle(TableStyle([
-                ("VALIGN", (0,0),(-1,-1),"TOP"),
-                ("TOPPADDING", (0,0),(-1,-1),4),
-                ("BOTTOMPADDING",(0,0),(-1,-1),4),
-                ("LEFTPADDING",(0,0),(-1,-1),6),
+            v_chip.setStyle(TableStyle([
+                ("BACKGROUND", (0,0),(-1,-1), sv_bg),
+                ("BOX",        (0,0),(-1,-1), 0.3, sv_tc),
+                ("ROUNDEDCORNERS", [4]),
+                ("TOPPADDING", (0,0),(-1,-1), 3),
+                ("BOTTOMPADDING",(0,0),(-1,-1),3),
+                ("LEFTPADDING",(0,0),(-1,-1),4),
+                ("RIGHTPADDING",(0,0),(-1,-1),4),
             ]))
-            story.append(row)
-        story.append(Spacer(1, 8))
+            rows.append([
+                Paragraph(f"{i}.", S["small"]),
+                v_chip,
+                Paragraph(f"{sc}/100", ParagraphStyle("sc2", fontSize=8,
+                           fontName="Helvetica-Bold", textColor=_INK2)),
+                Paragraph(sr.get("claim", "")[:120], S["small"]),
+            ])
+        sub_tbl = Table(rows, colWidths=[8*mm, 28*mm, 16*mm, PAGE_W-52*mm])
+        sub_tbl.setStyle(TableStyle([
+            ("BACKGROUND",   (0,0),(-1,-1), _BGLIGHT),
+            ("BOX",          (0,0),(-1,-1), 0.5, _BORDER),
+            ("INNERGRID",    (0,0),(-1,-1), 0.3, _BORDER),
+            ("TOPPADDING",   (0,0),(-1,-1), 6),
+            ("BOTTOMPADDING",(0,0),(-1,-1), 6),
+            ("LEFTPADDING",  (0,0),(-1,-1), 6),
+            ("RIGHTPADDING", (0,0),(-1,-1), 6),
+            ("VALIGN",       (0,0),(-1,-1), "MIDDLE"),
+        ]))
+        story.append(sub_tbl)
+        story.append(Spacer(1, 14))
 
-    # Sources
-    supporting   = d.get("supporting", [])
-    contradicting= d.get("contradicting", [])
-
-    def _src_table(srcs, label, col):
+    # ── Sources ───────────────────────────────────────────────────────
+    def _sources_section(srcs, label, badge_color, badge_bg):
         if not srcs:
             return
-        story.append(Paragraph(label, H2))
         rows = []
-        for s in srcs[:10]:
-            pub   = s.get("publisher") or s.get("source","")
-            title = (s.get("title") or "")[:80]
-            url   = s.get("url","")
-            link  = f'<link href="{url}" color="#818cf8">{pub}</link>' if url else pub
+        for s in srcs[:8]:
+            pub   = (s.get("publisher") or s.get("source") or "Source")[:40]
+            title = (s.get("title") or "")[:90]
+            url   = s.get("url") or ""
+            snip  = (s.get("snippet") or "")[:100]
+            pub_link = f'<link href="{url}">{pub}</link>' if url else pub
             rows.append([
-                Paragraph(link, ParagraphStyle("pub", fontSize=8, textColor=_ACCENT,
-                                                fontName="Helvetica-Bold", leading=11)),
-                Paragraph(title, SMALL),
+                Table(
+                    [[Paragraph(label, ParagraphStyle("badge", fontSize=7,
+                                fontName="Helvetica-Bold", textColor=badge_color,
+                                alignment=TA_CENTER))]],
+                    colWidths=[16*mm],
+                    style=TableStyle([
+                        ("BACKGROUND",   (0,0),(-1,-1), badge_bg),
+                        ("BOX",          (0,0),(-1,-1), 0.3, badge_color),
+                        ("ROUNDEDCORNERS",[3]),
+                        ("TOPPADDING",   (0,0),(-1,-1),2),
+                        ("BOTTOMPADDING",(0,0),(-1,-1),2),
+                    ])
+                ),
+                Paragraph(pub_link, S["pub"]),
+                Paragraph(title + (f'<br/><font color="#9ca3af">{snip}</font>' if snip else ""),
+                          S["srcttl"]),
             ])
-        tbl = Table(rows, colWidths=[45*mm, 125*mm])
+
+        tbl = Table(rows, colWidths=[18*mm, 36*mm, PAGE_W - 54*mm])
         tbl.setStyle(TableStyle([
-            ("BACKGROUND", (0,0), (-1,-1), _CARD),
-            ("ROWBACKGROUNDS", (0,0), (-1,-1), [_CARD, colors.HexColor("#16162a")]),
-            ("TOPPADDING", (0,0),(-1,-1), 4),
-            ("BOTTOMPADDING",(0,0),(-1,-1),4),
-            ("LEFTPADDING",(0,0),(-1,-1),6),
-            ("LINEBELOW",(0,0),(-1,-2),0.3,colors.HexColor("#2d2d4e")),
+            ("BACKGROUND",   (0,0),(-1,-1), _WHITE),
+            ("BOX",          (0,0),(-1,-1), 0.5, _BORDER),
+            ("LINEBELOW",    (0,0),(-1,-2), 0.3, _BORDER),
+            ("TOPPADDING",   (0,0),(-1,-1), 7),
+            ("BOTTOMPADDING",(0,0),(-1,-1), 7),
+            ("LEFTPADDING",  (0,0),(-1,-1), 8),
+            ("RIGHTPADDING", (0,0),(-1,-1), 8),
+            ("VALIGN",       (0,0),(-1,-1), "TOP"),
         ]))
         story.append(tbl)
-        story.append(Spacer(1,6))
+        story.append(Spacer(1, 8))
 
-    if supporting or contradicting:
-        story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#2d2d4e"), spaceAfter=8))
-        story.append(Paragraph("Evidence Sources", H2))
-        _src_table(supporting,    f"✓ Supporting ({len(supporting)})", "#22c55e")
-        _src_table(contradicting, f"✗ Contradicting ({len(contradicting)})", "#ef4444")
+    if sup or con or neu:
+        story.append(Paragraph("EVIDENCE SOURCES", S["section"]))
+        _sources_section(sup, "SUPPORTS",     colors.HexColor("#15803d"), colors.HexColor("#dcfce7"))
+        _sources_section(con, "CONTRADICTS",  colors.HexColor("#b91c1c"), colors.HexColor("#fee2e2"))
+        _sources_section(neu[:4], "NEUTRAL",  colors.HexColor("#6b7280"), colors.HexColor("#f3f4f6"))
+        story.append(Spacer(1, 6))
 
-    # Footer
-    story.append(Spacer(1, 10))
-    story.append(HRFlowable(width="100%", thickness=1, color=_ACCENT, spaceAfter=6))
-    latency_ms = (d.get("latency") or {}).get("total_ms", 0)
+    # ── Footer ────────────────────────────────────────────────────────
+    story.append(HRFlowable(width=PAGE_W, thickness=0.5, color=_BORDER, spaceAfter=6))
     story.append(Paragraph(
-        f"Generated by TruthScore · truthscore.app · "
-        f"Verified in {latency_ms}ms · "
-        f"This report is auto-generated and should be independently verified for critical decisions.",
-        SMALL,
+        f"Generated by <b>TruthScore</b> · truthscore.app · {now_str}"
+        + (f" · Verified in {latency}ms" if latency else "")
+        + " · Auto-generated — independently verify before using in critical decisions.",
+        S["footer"],
     ))
 
     doc.build(story)

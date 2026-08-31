@@ -2291,8 +2291,8 @@ async function submitFbNote(){
 async function downloadPDF(){
   if(!lastResult)return;
   const t=token();if(!t){showPricing();return;}
-  const text=lastResult.claim||document.getElementById('claimInput').value.trim();
-  const r=await fetch(`${API}/verify-pdf`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+t},body:JSON.stringify({text})});
+  // Send the already-computed result directly — no re-verification, instant PDF.
+  const r=await fetch(`${API}/generate-pdf`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+t},body:JSON.stringify(lastResult)});
   if(!r.ok){toast((I18N[LANG]||I18N.en).pdfError||I18N.en.pdfError,'err');return;}
   const blob=await r.blob();
   const url=URL.createObjectURL(blob);
