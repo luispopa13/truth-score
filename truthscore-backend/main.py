@@ -1855,6 +1855,27 @@ async def admin_dashboard(user=Depends(require_admin)):
     return HTMLResponse(_ADMIN_HTML)
 
 
+class _SetPlanBody(BaseModel):
+    email: str
+    plan: str
+
+@app.post("/admin/set-plan", include_in_schema=False)
+async def admin_set_plan(body: _SetPlanBody, user=Depends(require_admin)):
+    """Manually set a user's plan (admin only — for testing without Stripe)."""
+    from auth import PLANS
+    if body.plan not in PLANS:
+        raise HTTPException(400, f"Unknown plan '{body.plan}'. Valid: {list(PLANS)}")
+    db = get_db()
+    result = await db.users.update_one(
+        {"email": body.email.lower().strip()},
+        {"$set": {"plan": body.plan, "stripe_subscription_id": f"manual_{body.plan}"}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(404, f"User '{body.email}' not found")
+    return {"ok": True, "email": body.email, "plan": body.plan}
+
+
+
 _ADMIN_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
