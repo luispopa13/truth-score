@@ -24,23 +24,23 @@ async def widget_script(user_key: str = ""):
     var s = document.createElement('style');
     s.id = 'ts-widget-css';
     s.textContent = [
-      ".ts-widget { font-family: system-ui, sans-serif; max-width: 480px; border: 1px solid #2a2a4a;",
-      "border-radius: 12px; background: #0d0d1a; color: #e2e2f0; padding: 16px; margin: 8px 0; }",
-      ".ts-widget-header { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }",
-      ".ts-widget-logo { font-size: 16px; }",
-      ".ts-widget-title { font-weight: 700; font-size: 14px; }",
-      ".ts-widget-input { width: 100%; padding: 10px; background: #12121f; border: 1px solid #2a2a4a;",
-      "border-radius: 8px; color: #e2e2f0; font-size: 13px; font-family: inherit; resize: none; outline: none; }",
-      ".ts-widget-btn { margin-top: 8px; padding: 8px 16px; background: #5b5bff; color: white;",
-      "border: none; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; width: 100%; }",
-      ".ts-widget-btn:hover { background: #7c74ff; }",
-      ".ts-widget-result { margin-top: 12px; padding: 12px; background: #12121f;",
-      "border-radius: 8px; font-size: 13px; display: none; }",
-      ".ts-widget-result.show { display: block; }",
-      ".ts-widget-score { font-size: 20px; font-weight: 800; }",
-      ".ts-widget-verdict { font-weight: 700; margin-left: 6px; }",
-      ".ts-widget-expl { font-size: 12px; color: #8080a8; margin-top: 6px; line-height: 1.4; }",
-      ".ts-widget-powered { font-size: 10px; color: #5050a0; margin-top: 8px; text-align: right; }"
+      ".ts-widget {{ font-family: system-ui, sans-serif; max-width: 480px; border: 1px solid #2a2a4a;",
+      "border-radius: 12px; background: #0d0d1a; color: #e2e2f0; padding: 16px; margin: 8px 0; }}",
+      ".ts-widget-header {{ display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }}",
+      ".ts-widget-logo {{ font-size: 16px; }}",
+      ".ts-widget-title {{ font-weight: 700; font-size: 14px; }}",
+      ".ts-widget-input {{ width: 100%; padding: 10px; background: #12121f; border: 1px solid #2a2a4a;",
+      "border-radius: 8px; color: #e2e2f0; font-size: 13px; font-family: inherit; resize: none; outline: none; }}",
+      ".ts-widget-btn {{ margin-top: 8px; padding: 8px 16px; background: #5b5bff; color: white;",
+      "border: none; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; width: 100%; }}",
+      ".ts-widget-btn:hover {{ background: #7c74ff; }}",
+      ".ts-widget-result {{ margin-top: 12px; padding: 12px; background: #12121f;",
+      "border-radius: 8px; font-size: 13px; display: none; }}",
+      ".ts-widget-result.show {{ display: block; }}",
+      ".ts-widget-score {{ font-size: 20px; font-weight: 800; }}",
+      ".ts-widget-verdict {{ font-weight: 700; margin-left: 6px; }}",
+      ".ts-widget-expl {{ font-size: 12px; color: #8080a8; margin-top: 6px; line-height: 1.4; }}",
+      ".ts-widget-powered {{ font-size: 10px; color: #5050a0; margin-top: 8px; text-align: right; }}"
     ].join("");
     document.head.appendChild(s);
   }}

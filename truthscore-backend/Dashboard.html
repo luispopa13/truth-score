@@ -1801,14 +1801,19 @@ async function createApiKey(){
 }
 async function revokeApiKey(id,btn){
   if(!confirm('Revoke this API key? Apps using it will stop working.'))return;
+  btn.disabled=true;btn.textContent='…';
   try{
     const r=await fetch(`${API}/api-keys/${id}`,{method:'DELETE',headers:{'Authorization':'Bearer '+token()}});
     if(!r.ok)throw new Error(await r.text());
     document.getElementById('newKeyReveal').style.display='none';
     document.getElementById('newKeyValue').textContent='';
+    // Optimistic UI: drop the row instantly (no full-list reload / "Loading…" flash).
+    const row=btn.closest('div[style*="justify-content"]')||btn.parentElement;
+    if(row)row.remove();
+    const list=document.getElementById('apiKeysList');
+    if(list&&!list.querySelector('button')){list.innerHTML='<div style="color:var(--text2);font-size:13px;padding:10px 0">No API keys yet.</div>';}
     toast('Key revoked','ok');
-    loadApiKeys();
-  }catch(e){toast('Error: '+e.message,'err');}
+  }catch(e){btn.disabled=false;btn.textContent='Revoke';toast('Error: '+e.message,'err');}
 }
 function copyNewKey(){
   const v=document.getElementById('newKeyValue').textContent.trim();
