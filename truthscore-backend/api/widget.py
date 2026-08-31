@@ -11,7 +11,7 @@ async def widget_script(user_key: str = ""):
         # Widget can't function without knowing the API URL. Return a stub that
         # logs the error in the browser console so operators notice immediately.
         stub = "console.error('[TruthScore widget] WIDGET_API_URL not configured on server — widget disabled.');"
-        return FResponse(content=stub, media_type="application/javascript",
+        return FResponse(content=stub, media_type="application/javascript; charset=utf-8",
                          headers={"Access-Control-Allow-Origin": "*"})
     js = f"""
 (function() {{
@@ -55,8 +55,8 @@ async def widget_script(user_key: str = ""):
       '<span class="ts-widget-title">TruthScore Fact Checker</span>' +
       '</div>' +
       '<textarea class="ts-widget-input" rows="3"' +
-      'placeholder="Introdu o afirmație pentru verificare..."></textarea>' +
-      '<button class="ts-widget-btn">Verifică</button>' +
+      'placeholder="Enter a claim to fact-check..."></textarea>' +
+      '<button class="ts-widget-btn">Verify</button>' +
       '<div class="ts-widget-result"></div>' +
       '<div class="ts-widget-powered">' +
       '<a href="{api_url}" target="_blank" style="color:#5050a0;text-decoration:none">' +
@@ -73,7 +73,7 @@ async def widget_script(user_key: str = ""):
     btn.addEventListener('click', function() {{
       var text = textarea.value.trim();
       if (!text) return;
-      btn.textContent = '[loading] Se verifică...';
+      btn.textContent = '[loading] Verifying...';
       btn.disabled = true;
       result.className = 'ts-widget-result';
 
@@ -88,19 +88,19 @@ async def widget_script(user_key: str = ""):
       .then(function(r) {{ return r.json(); }})
       .then(function(d) {{
         var color = d.verdict === 'TRUE' ? '#22d47a' : d.verdict === 'FALSE' ? '#ff4d6d' : '#f0b429';
-        var lbl   = d.verdict === 'TRUE' ? 'ADEVĂRAT' : d.verdict === 'FALSE' ? 'FALS' : 'INCERT';
+        var lbl   = d.verdict === 'TRUE' ? 'TRUE' : d.verdict === 'FALSE' ? 'FALSE' : 'UNCERTAIN';
         result.innerHTML =
           '<span class="ts-widget-score" style="color:' + color + '">' + (d.score||50) + '</span>' +
           '<span class="ts-widget-verdict" style="color:' + color + '">' + lbl + '</span>' +
           '<div class="ts-widget-expl">' + (d.explanation||'').slice(0,200) + '</div>';
         result.className = 'ts-widget-result show';
-        btn.textContent = 'Verifică';
+        btn.textContent = 'Verify';
         btn.disabled = false;
       }})
       .catch(function() {{
-        result.innerHTML = '<span style="color:#ff4d6d">Eroare de conexiune</span>';
+        result.innerHTML = '<span style="color:#ff4d6d">Connection error</span>';
         result.className = 'ts-widget-result show';
-        btn.textContent = 'Verifică';
+        btn.textContent = 'Verify';
         btn.disabled = false;
       }});
     }});
@@ -117,7 +117,7 @@ async def widget_script(user_key: str = ""):
   window.TruthScore = {{ init: createWidget }};
 }})();
 """.strip()
-    return FResponse(content=js, media_type="application/javascript",
+    return FResponse(content=js, media_type="application/javascript; charset=utf-8",
                      headers={"Access-Control-Allow-Origin": "*",
                                "Cache-Control": "public, max-age=3600"})
 

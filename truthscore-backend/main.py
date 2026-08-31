@@ -96,7 +96,10 @@ if not _origins:
 app.add_middleware(
     CORSMiddleware,
     allow_origins       = _origins,
-    allow_origin_regex  = r"^(chrome-extension|moz-extension)://.*$",
+    # The embeddable widget lives on arbitrary customer sites, so its API calls
+    # come from any http(s) origin. Auth is Bearer-token only (no cookies), so
+    # reflecting the origin is safe. Extension origins matched by the same regex.
+    allow_origin_regex  = r"^(https?|chrome-extension|moz-extension)://.*$",
     allow_methods       = ["*"],
     allow_headers       = ["*"],
     allow_credentials   = True,
@@ -3226,6 +3229,47 @@ async def widget(user_key: str = ""):
         except Exception:
             pass
     return await widget_script(user_key)
+
+
+@app.get("/widget-demo")
+async def widget_demo(user_key: str = ""):
+    """Same-origin demo page for testing the embeddable widget.
+
+    Open http://localhost:8000/widget-demo?user_key=ts_... — because the page
+    is served by the API itself, the widget's fetch to /verify is same-origin,
+    so there are no CORS/file:// issues. Use this to verify a key end-to-end
+    before embedding on a real site.
+    """
+    from fastapi.responses import HTMLResponse
+    from html import escape
+    key = escape(user_key)
+    html = f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TruthScore Widget Demo</title>
+  <style>
+    body {{ font-family: system-ui, sans-serif; background:#0a0a14; color:#e2e2f0;
+           max-width:640px; margin:40px auto; padding:0 20px; }}
+    h1 {{ font-size:20px; }}
+    code {{ background:#12121f; padding:2px 6px; border-radius:4px; color:#9898ff; }}
+    .note {{ font-size:13px; color:#8080a8; line-height:1.6; }}
+  </style>
+</head>
+<body>
+  <h1>TruthScore Widget Demo</h1>
+  <p class="note">This page is served over http by the TruthScore API, so the
+  widget below talks to <code>/verify</code> same-origin — no CORS or
+  <code>file://</code> problems. Type a claim and press Verify.</p>
+  <div data-truthscore></div>
+  <p class="note">Embed on your own site with:<br>
+  <code>&lt;div data-truthscore&gt;&lt;/div&gt;<br>
+  &lt;script src="/widget.js?user_key=YOUR_KEY"&gt;&lt;/script&gt;</code></p>
+  <script src="/widget.js?user_key={key}"></script>
+</body>
+</html>"""
+    return HTMLResponse(content=html)
 
 
 # ── Temporal Truth Drift ──────────────────────────────────────────────────────
