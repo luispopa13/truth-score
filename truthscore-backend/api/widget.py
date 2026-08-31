@@ -140,7 +140,7 @@ async def widget_script(user_key: str = ""):
           '<div class="ts-widget-expl">' + esc(d.explanation || '') + '</div>';
 
         // Correct answer / context when the claim is false or misleading.
-        var correct = d.corrected_context || '';
+        var correct = d.correct_answer || d.corrected_context || '';
         if (correct) {{
           html += '<div class="ts-widget-correct"><b>Correct answer:</b> ' + esc(correct) + '</div>';
         }}

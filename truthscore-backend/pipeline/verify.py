@@ -385,6 +385,7 @@ async def _verify_compute(claim: str, key: str, eco: bool, t_total_start: float,
     t3 = _t.time()
     # Per-sub-claim breakdown for compound claims (filled by FActScore below).
     sub_results = []
+    correct_answer = ""   # accurate fact for FALSE claims; set by Path A reasoning
     is_compound = len(sub_claims) > 1
     if gemini_client and top_k:
         # Wikidata SPARQL is independent of the LLM verdict chain (it only adds
@@ -404,13 +405,13 @@ async def _verify_compute(claim: str, key: str, eco: bool, t_total_start: float,
             claim_for_llm = claim_en if claim_en != claim else claim
             chosen_model = pick_model(claim, topic, eco)
 
-            score, verdict, confidence, explanation, supporting, contradicting, neutral = \
+            score, verdict, confidence, explanation, supporting, contradicting, neutral, correct_answer = \
                 await reason_with_gpt(claim_for_llm, top_k, rest, model_hint=chosen_model)
             models_used.append(chosen_model)
 
             if not eco and chosen_model not in ("gemini",) and (verdict == "UNCERTAIN" or confidence == "LOW"):
                 print(f"  [ROUTE] cheap result weak ({verdict}/{confidence}) -> escalating to Gemini")
-                score, verdict, confidence, explanation, supporting, contradicting, neutral = \
+                score, verdict, confidence, explanation, supporting, contradicting, neutral, correct_answer = \
                     await reason_with_gpt(claim_for_llm, top_k, rest, model_hint="gemini")
                 models_used.append("gemini-escalation")
 
@@ -731,6 +732,7 @@ async def _verify_compute(claim: str, key: str, eco: bool, t_total_start: float,
     result = VerifyResponse(
         claim=claim, score=score, verdict=verdict,
         confidence=confidence, explanation=explanation,
+        correct_answer=correct_answer if verdict == "FALSE" else "",
         topic=topic,
         supporting=supporting, contradicting=contradicting,
         neutral_sources=neutral,

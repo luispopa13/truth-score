@@ -542,7 +542,7 @@ Evidence collected from {len(top_evidence)} sources:
 {evidence_block}
 
 Analyze and respond with exact JSON:
-{{"verdict":"TRUE or FALSE or UNCERTAIN","score":0-100,"confidence":"HIGH or MEDIUM or LOW","explanation":"3-5 sentences. MANDATORY: cite specific sources BY NAME (e.g. 'According to PubMed [1]...', 'Britannica [2] states...', 'Reuters [3] reports...'). Include specific numbers, dates, or facts. Explain WHY the claim is true/false using direct evidence from the sources.","supporting_indices":[indices of supporting sources, e.g.[1,3]],"contradicting_indices":[indices of contradicting, e.g.[2]],"neutral_indices":[neutral/partial indices],"irrelevant_indices":[completely irrelevant source indices]}}
+{{"verdict":"TRUE or FALSE or UNCERTAIN","score":0-100,"confidence":"HIGH or MEDIUM or LOW","explanation":"3-5 sentences. MANDATORY: cite specific sources BY NAME (e.g. 'According to PubMed [1]...', 'Britannica [2] states...', 'Reuters [3] reports...'). Include specific numbers, dates, or facts. Explain WHY the claim is true/false using direct evidence from the sources.","correct_answer":"ONLY when verdict is FALSE (or partly false): state the accurate fact in ONE clear sentence, with the specific correct value/name/date (e.g. 'Mount Everest is the highest peak in the world at 8,849 m.'). Empty string \"\" for TRUE or UNCERTAIN verdicts. Same language as the explanation.","supporting_indices":[indices of supporting sources, e.g.[1,3]],"contradicting_indices":[indices of contradicting, e.g.[2]],"neutral_indices":[neutral/partial indices],"irrelevant_indices":[completely irrelevant source indices]}}
 
 CALIBRATION EXAMPLES (from 900+ verified evaluations):
 
@@ -573,7 +573,7 @@ Hard claims requiring extra care:
         raw = await call_llm_raw(full_prompt, max_tokens=1000, use_search=False,
                                  model=model_hint)
         if not raw:
-            return 50, "UNCERTAIN", "LOW", "LLM unavailable.", [], [], top_evidence[:3]
+            return 50, "UNCERTAIN", "LOW", "LLM unavailable.", [], [], top_evidence[:3], ""
         print(f"  [GEMINI-RAW] {repr(raw[:400])}")
 
         # Robust JSON cleanup
@@ -598,6 +598,8 @@ Hard claims requiring extra care:
             if cm: data["confidence"] = cm.group(1).upper()
             em = re.search(r'"explanation"\s*:\s*"(.*?)(?:"|$)', raw, re.DOTALL)
             if em: data["explanation"] = em.group(1).replace("\\n"," ")[:500]
+            cam = re.search(r'"correct_answer"\s*:\s*"(.*?)(?:"|$)', raw, re.DOTALL)
+            if cam: data["correct_answer"] = cam.group(1).replace("\\n"," ")[:300]
             import json as _json2
             for _k in ["supporting_indices","contradicting_indices","neutral_indices","irrelevant_indices"]:
                 _m = re.search(rf'"{_k}"\s*:\s*(\[[^\]]*\]?)', raw)
@@ -614,14 +616,19 @@ Hard claims requiring extra care:
 
     except Exception as e:
         print(f"  [GEMINI] Error: {e}")
-        return 50, "UNCERTAIN", "LOW", f"Eroare Gemini: {str(e)[:100]}", [], [], top_evidence[:3]
+        return 50, "UNCERTAIN", "LOW", f"Eroare Gemini: {str(e)[:100]}", [], [], top_evidence[:3], ""
 
     verdict     = data.get("verdict", "UNCERTAIN").upper()
     score       = max(0, min(100, int(data.get("score", 50))))
     confidence  = data.get("confidence", "LOW").upper()
     explanation = data.get("explanation", "")
+    # Accurate fact for FALSE claims (empty for TRUE/UNCERTAIN). Guard against the
+    # model leaking a value on non-FALSE verdicts.
+    correct_answer = (data.get("correct_answer") or "").strip()[:300]
     if verdict not in ("TRUE", "FALSE", "UNCERTAIN"):
         verdict = "UNCERTAIN"
+    if verdict != "FALSE":
+        correct_answer = ""
 
     # Parse source indices -- safe conversion
     def safe_indices(key):
@@ -704,7 +711,7 @@ Hard claims requiring extra care:
             s.stance = "neutral"
         neutral = real_neutral
 
-    return score, verdict, confidence, explanation, supporting, contradicting, neutral
+    return score, verdict, confidence, explanation, supporting, contradicting, neutral, correct_answer
 
 
 # ── Multi-model consensus ─────────────────────────────────────────────────────

@@ -29,7 +29,7 @@ async def batch_verify(req: BatchVerifyRequest, user=Depends(require_user)):
                 # Shared retrieval+rank pipeline (same as /verify): per-source
                 # budgets, dedup, counter-evidence, embedding + cross-encoder.
                 rr = await retrieve_and_rank(claim)
-                score, verdict, confidence, explanation, supporting, contradicting, neutral = \
+                score, verdict, confidence, explanation, supporting, contradicting, neutral, _correct = \
                     await reason_with_gpt(claim, rr.top_k, rr.rest)
                 return {
                     "claim": claim, "verdict": verdict, "score": score,
@@ -77,7 +77,7 @@ async def verify_and_pdf(req: VerifyRequest, user=Depends(require_user)):
     t0 = time.time()
     rr = await retrieve_and_rank(text)
     topic = rr.topic
-    score, verdict, confidence, explanation, supporting, contradicting, neutral = \
+    score, verdict, confidence, explanation, supporting, contradicting, neutral, correct_answer = \
         await reason_with_gpt(text, rr.top_k, rr.rest)
     sub_claims  = await split_claims(text)
     word_imp    = compute_word_importance(text, verdict, score)
@@ -85,6 +85,7 @@ async def verify_and_pdf(req: VerifyRequest, user=Depends(require_user)):
     result_dict = {
         "claim": text, "verdict": verdict, "score": score,
         "confidence": confidence, "explanation": explanation,
+        "correct_answer": correct_answer,
         "topic": topic, "supporting": [s.dict() for s in supporting],
         "contradicting": [s.dict() for s in contradicting],
         "neutral_sources": [s.dict() for s in neutral],

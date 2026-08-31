@@ -1595,8 +1595,15 @@ async def search_nominatim(claim: str) -> list[Source]:
             if lat: snippet += f", Coordinates: {lat}°N {lon}°E"
             if wiki: snippet += f", Wikipedia: {wiki}"
             if not name: continue
-            sources.append(Source(type="academic", title=name[:120], url=url,
-                snippet=snippet[:300], publisher="OpenStreetMap / Nominatim"))
+            # A Nominatim hit only confirms a place EXISTS at some coordinates —
+            # it never supports/contradicts a factual assertion about that place
+            # (e.g. "is the highest peak in the world"). So it's low-authority
+            # web-tier evidence (not "academic", which carries weight 1.6 and
+            # wrongly floated bare geocodes to the top of geography claims), and
+            # its stance is pinned neutral so it can't be miscounted as support.
+            sources.append(Source(type="web", title=name[:120], url=url,
+                snippet=snippet[:300], publisher="OpenStreetMap / Nominatim",
+                stance="neutral"))
         print(f"  [OSM] {len(sources)} results for {query!r}")
         return sources[:3]
 

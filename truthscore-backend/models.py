@@ -62,6 +62,11 @@ class VerifyResponse(BaseModel):
     verdict:               str
     confidence:            str
     explanation:           str
+    # When the verdict is FALSE (or MIXED), the accurate fact stated plainly in
+    # one sentence — e.g. claim "Mount Omu is the highest peak in the world" →
+    # correct_answer "Mount Everest is the highest peak in the world (8,849 m)."
+    # Empty for TRUE/UNCERTAIN claims. Surfaced by the widget/UI as "Correct answer".
+    correct_answer:        str              = ""
     topic:                 str              = "general"
     supporting:            list[Source]     = Field(default_factory=list)
     contradicting:         list[Source]     = Field(default_factory=list)
@@ -111,6 +116,7 @@ class SubClaimResult(BaseModel):
     verdict:             str
     confidence:          str
     explanation:         str          # always set, never empty
+    correct_answer:      str          = ""   # accurate fact when this sub-claim is FALSE
     topic:               str          = "general"
     supporting:          list[Source] = Field(default_factory=list)
     contradicting:       list[Source] = Field(default_factory=list)

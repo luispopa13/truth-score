@@ -170,6 +170,19 @@ def generate_pdf_report(d: dict) -> bytes:
     meta_rows = [
         [Paragraph("EXPLANATION", S["section"])],
         [Paragraph(_x(expl[:600]) + ("…" if len(expl) > 600 else ""), S["body"])],
+    ]
+    # Correct answer for false claims — stated plainly so the reader sees the
+    # accurate fact, not just that the claim was wrong.
+    correct_answer = (d.get("correct_answer") or "").strip()
+    if correct_answer:
+        meta_rows += [
+            [Spacer(1, 4)],
+            [Paragraph("CORRECT ANSWER", S["section"])],
+            [Paragraph("<b>" + _x(correct_answer[:400]) + "</b>",
+                       ParagraphStyle("ca", fontSize=10, fontName="Helvetica-Bold",
+                                      textColor=colors.HexColor("#15803d"), leading=14))],
+        ]
+    meta_rows += [
         [Spacer(1, 6)],
         [Table(
             [[
