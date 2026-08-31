@@ -42,7 +42,18 @@ async def widget_script(user_key: str = ""):
       ".ts-widget-result.show {{ display: block; }}",
       ".ts-widget-score {{ font-size: 20px; font-weight: 800; }}",
       ".ts-widget-verdict {{ font-weight: 700; margin-left: 6px; }}",
-      ".ts-widget-expl {{ font-size: 12px; color: #8080a8; margin-top: 6px; line-height: 1.4; }}",
+      ".ts-widget-expl {{ font-size: 12px; color: #8080a8; margin-top: 6px; line-height: 1.5; }}",
+      ".ts-widget-correct {{ font-size: 12px; color: #e2e2f0; margin-top: 10px; padding: 9px 11px;",
+      "background: #14142a; border-left: 3px solid #22d47a; border-radius: 6px; line-height: 1.5; }}",
+      ".ts-widget-srcs {{ margin-top: 10px; }}",
+      ".ts-widget-srcs-title {{ font-size: 10px; font-weight: 700; color: #8080a8; text-transform: uppercase;",
+      "letter-spacing: 0.04em; margin: 10px 0 4px; }}",
+      ".ts-widget-src {{ display: block; font-size: 12px; color: #9898ff; text-decoration: none; padding: 5px 0;",
+      "border-bottom: 1px solid #1e1e33; line-height: 1.4; }}",
+      ".ts-widget-src:hover {{ color: #b7b0ff; }}",
+      ".ts-widget-src-badge {{ font-size: 9px; font-weight: 800; padding: 1px 5px; border-radius: 3px;",
+      "margin-right: 6px; vertical-align: middle; }}",
+      ".ts-widget-src-pub {{ color: #6b6b95; }}",
       ".ts-widget-powered {{ font-size: 10px; color: #5050a0; margin-top: 8px; text-align: right; }}"
     ].join("");
     document.head.appendChild(s);
@@ -90,12 +101,57 @@ async def widget_script(user_key: str = ""):
       }})
       .then(function(r) {{ return r.json(); }})
       .then(function(d) {{
+        function esc(s) {{
+          return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }}
+        // API-level error (quota, plan, bad key) — surface it plainly.
+        if (d && (d.detail || d.error) && d.verdict == null) {{
+          result.innerHTML = '<span style="color:#ff4d6d">' + esc(d.detail || d.error) + '</span>';
+          result.className = 'ts-widget-result show';
+          btn.textContent = 'Verify';
+          btn.disabled = false;
+          return;
+        }}
+        function srcList(arr, label, bc, bg) {{
+          if (!arr || !arr.length) return '';
+          var h = '<div class="ts-widget-srcs-title">' + label + ' (' + arr.length + ')</div>';
+          arr.slice(0, 5).forEach(function(s) {{
+            var pub   = esc(s.publisher || s.source || '');
+            var title = esc(s.title || s.url || 'source');
+            var url   = s.url || '';
+            var badge = '<span class="ts-widget-src-badge" style="color:' + bc +
+                        ';background:' + bg + '">' + label.charAt(0) + '</span>';
+            var inner = badge + (pub ? '<span class="ts-widget-src-pub">' + pub + '</span> ' : '') + title;
+            h += url
+              ? '<a class="ts-widget-src" href="' + esc(url) + '" target="_blank" rel="noopener">' + inner + '</a>'
+              : '<div class="ts-widget-src">' + inner + '</div>';
+          }});
+          return h;
+        }}
+
         var color = d.verdict === 'TRUE' ? '#22d47a' : d.verdict === 'FALSE' ? '#ff4d6d' : '#f0b429';
         var lbl   = d.verdict === 'TRUE' ? 'TRUE' : d.verdict === 'FALSE' ? 'FALSE' : 'UNCERTAIN';
-        result.innerHTML =
-          '<span class="ts-widget-score" style="color:' + color + '">' + (d.score||50) + '</span>' +
+
+        var html =
+          '<span class="ts-widget-score" style="color:' + color + '">' + (d.score != null ? d.score : 50) + '</span>' +
           '<span class="ts-widget-verdict" style="color:' + color + '">' + lbl + '</span>' +
-          '<div class="ts-widget-expl">' + (d.explanation||'').slice(0,200) + '</div>';
+          '<div class="ts-widget-expl">' + esc(d.explanation || '') + '</div>';
+
+        // Correct answer / context when the claim is false or misleading.
+        var correct = d.corrected_context || '';
+        if (correct) {{
+          html += '<div class="ts-widget-correct"><b>Correct answer:</b> ' + esc(correct) + '</div>';
+        }}
+
+        // Sources with clickable links, grouped by stance.
+        var srcs = srcList(d.supporting, 'Supporting sources', '#22d47a', 'rgba(34,212,122,0.15)') +
+                   srcList(d.contradicting, 'Contradicting sources', '#ff4d6d', 'rgba(255,77,109,0.15)');
+        if (!srcs) srcs = srcList(d.neutral_sources, 'Related sources', '#8080a8', 'rgba(128,128,168,0.15)');
+        if (srcs) html += '<div class="ts-widget-srcs">' + srcs + '</div>';
+
+        result.innerHTML = html;
         result.className = 'ts-widget-result show';
         btn.textContent = 'Verify';
         btn.disabled = false;
