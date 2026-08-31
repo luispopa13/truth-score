@@ -1904,7 +1904,7 @@ function renderScore(d){
   const topic=d.topic||'general';
   const circ=2*Math.PI*38,offset=circ-(score/100)*circ;
   const sup=(d.supporting||[]).length,con=(d.contradicting||[]).length,neu=(d.neutral_sources||[]).length;
-  const pdfBtn=currentUser&&['pro','enterprise'].includes(currentUser.plan)?`<button class="fbbtn" onclick="downloadPDF()" style="margin-left:auto">📄 PDF</button>`:'';
+  const pdfBtn=currentUser&&['pro','annual_pro','monitor','annual_monitor','business','annual_business','enterprise'].includes(currentUser.plan)?`<button class="fbbtn" onclick="downloadPDF()" title="Export PDF">📄</button>`:'';
   const _exAll=[...(d.supporting||[]),...(d.contradicting||[]),...(d.neutral_sources||[])];
   const _exCnt=_exAll.filter(s=>s.type==='academic'||s.type==='factcheck').length;
   const _exSup=(d.supporting||[]).filter(s=>s.type==='academic'||s.type==='factcheck').length;
@@ -2292,7 +2292,7 @@ async function downloadPDF(){
   if(!lastResult)return;
   const t=token();if(!t){showPricing();return;}
   const text=lastResult.claim||document.getElementById('claimInput').value.trim();
-  const r=await fetch(`${API}/verify/pdf`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+t},body:JSON.stringify({text})});
+  const r=await fetch(`${API}/verify-pdf`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+t},body:JSON.stringify({text})});
   if(!r.ok){toast((I18N[LANG]||I18N.en).pdfError||I18N.en.pdfError,'err');return;}
   const blob=await r.blob();
   const url=URL.createObjectURL(blob);
