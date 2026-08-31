@@ -3213,9 +3213,9 @@ async def widget(user_key: str = ""):
     if user_key:
         try:
             from auth import get_db
-            import hashlib as _hl
+            from utils.api_keys import hash_api_key
             db = get_db()
-            doc = await db.api_keys.find_one({"key_hash": _hl.sha256(user_key.encode()).hexdigest(), "active": True})
+            doc = await db.api_keys.find_one({"hashed_key": hash_api_key(user_key), "revoked": False})
             if doc:
                 u = await db.users.find_one({"_id": __import__("bson").ObjectId(doc["user_id"])})
                 plan_name = (u or {}).get("plan", "free")
