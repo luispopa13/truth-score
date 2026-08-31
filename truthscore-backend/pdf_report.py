@@ -87,11 +87,14 @@ def generate_pdf_report(d: dict) -> bytes:
     buf    = BytesIO()
     verdict = (d.get("verdict") or "UNCERTAIN").upper()
     score   = int(d.get("score") or 50)
-    claim   = d.get("claim") or ""
+    claim   = d.get("claim") or d.get("text") or ""
     expl    = d.get("explanation") or ""
     conf    = (d.get("confidence") or "").upper()
     topic   = (d.get("topic") or "").title()
-    sub_res = d.get("sub_claim_results") or []
+    # Per-claim breakdown: single-claim mode uses `sub_claim_results`,
+    # paragraph mode (/analyze-text) uses `results` — both are lists of
+    # objects carrying claim/score/verdict/confidence/explanation + sources.
+    sub_res = d.get("sub_claim_results") or d.get("results") or []
     sup     = d.get("supporting") or []
     con     = d.get("contradicting") or []
     neu     = d.get("neutral_sources") or []
